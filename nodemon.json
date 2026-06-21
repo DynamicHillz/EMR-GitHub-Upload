@@ -1,0 +1,9 @@
+{
+  "watch": ["src/backend"],
+  "ext": "ts,json",
+  "ignore": ["src/backend/**/*.test.ts"],
+  "exec": "ts-node --project tsconfig.backend.json src/backend/server.ts",
+  "env": {
+    "NODE_ENV": "development"
+  }
+}
