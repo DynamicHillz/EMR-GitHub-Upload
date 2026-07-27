@@ -17,9 +17,10 @@ import { logger } from '../../config/logger';
  */
 export const getPublicBranding = async (_req: Request, res: Response) => {
   try {
-    // For public access, get the first active tenant
+    // For public access, get the most recently updated active tenant
     const firstTenant = await prisma.tenant.findFirst({
       where: { status: 'ACTIVE' },
+      orderBy: { updatedAt: 'desc' },
       select: { id: true }
     });
 
@@ -85,7 +86,6 @@ export const getBranding = async (req: Request, res: Response) => {
     res.status(500).json({
       success: false,
       message: 'Failed to fetch branding settings',
-      error: error.message
     });
   }
 };
@@ -134,14 +134,14 @@ export const updateBranding = async (req: Request, res: Response) => {
     res.status(500).json({
       success: false,
       message: 'Failed to update branding',
-      error: error.message
     });
   }
 };
 
 /**
  * POST /api/branding/upload-logo
- * Upload clinic logo (placeholder for file upload)
+ * Upload clinic logo — actual file upload via uploadLogoMiddleware (multer),
+ * mounted in branding.routes.ts before this handler runs.
  */
 export const uploadLogo = async (req: Request, res: Response) => {
   try {
@@ -162,16 +162,14 @@ export const uploadLogo = async (req: Request, res: Response) => {
       });
     }
 
-    // TODO: Implement file upload using multer or similar
-    // For now, we'll accept a URL
-    const { logoUrl } = req.body;
-
-    if (!logoUrl) {
+    if (!req.file) {
       return res.status(400).json({
         success: false,
-        message: 'Logo URL is required'
+        message: 'Logo file is required'
       });
     }
+
+    const logoUrl = `/uploads/logos/${req.file.filename}`;
 
     const useCase = new UpdateBrandingUseCase(prisma);
     const branding = await useCase.execute(tenantId, { logoUrl });
@@ -186,7 +184,6 @@ export const uploadLogo = async (req: Request, res: Response) => {
     res.status(500).json({
       success: false,
       message: 'Failed to upload logo',
-      error: error.message
     });
   }
 };

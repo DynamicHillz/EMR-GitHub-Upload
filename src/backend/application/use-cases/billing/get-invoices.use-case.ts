@@ -22,7 +22,9 @@ export class GetInvoicesUseCase {
   constructor(private prisma: PrismaClient) {}
 
   async execute(tenantId: string, filters: GetInvoicesFilters = {}) {
-    const where: any = { tenantId };
+    const where: any = { 
+      tenantId
+    };
 
     if (filters.patientId) {
       where.patientId = filters.patientId;
@@ -30,6 +32,13 @@ export class GetInvoicesUseCase {
 
     if (filters.status) {
       where.status = filters.status;
+      if (filters.status === 'CANCELLED') {
+        // Cancelled invoices are soft-deleted, so we must not filter out isDeleted
+      } else {
+        where.isDeleted = false;
+      }
+    } else {
+      where.isDeleted = false;
     }
 
     if (filters.paymentStatus) {
@@ -48,9 +57,9 @@ export class GetInvoicesUseCase {
 
     if (filters.search) {
       where.OR = [
-        { invoiceNumber: { contains: filters.search, } },
-        { patient: { firstName: { contains: filters.search, } } },
-        { patient: { lastName: { contains: filters.search, } } }
+        { invoiceNumber: { contains: filters.search, mode: 'insensitive' } },
+        { patient: { firstName: { contains: filters.search, mode: 'insensitive' } } },
+        { patient: { lastName: { contains: filters.search, mode: 'insensitive' } } }
       ];
     }
 
@@ -82,7 +91,8 @@ export class GetInvoicesUseCase {
               paymentDate: true,
               paymentMethod: true
             }
-          }
+          },
+          items: true
         },
         orderBy: { invoiceDate: 'desc' },
         take: filters.limit || 50,
@@ -92,10 +102,7 @@ export class GetInvoicesUseCase {
     ]);
 
     return {
-      invoices: invoices.map(inv => ({
-        ...inv,
-        lineItems: JSON.parse(inv.lineItems)
-      })),
+      invoices,
       total,
       limit: filters.limit || 50,
       offset: filters.offset || 0

@@ -13,22 +13,31 @@ import {
   submitLabResults,
   reviewLabResults,
   updateSpecimenDetails,
+  getLabDictionary,
+  createLabDictionaryItem,
+  updateLabDictionaryItem,
 } from '../controllers/lab-test.controller';
 
 const router = Router();
 
-// View lab tests: ADMIN, DOCTOR, NURSE, LAB_TECH
-const CAN_VIEW = requireRole(['SUPER_ADMIN', 'ADMIN', 'DOCTOR', 'NURSE', 'LAB_TECH']);
+// View lab tests: ADMIN, DOCTOR, NURSE, LAB_TECH, CASHIER
+const CAN_VIEW = requireRole(['SUPER_ADMIN', 'ADMIN', 'DOCTOR', 'NURSE', 'LAB_TECH', 'CASHIER']);
 
-// Order lab tests: ADMIN, DOCTOR
-const CAN_ORDER = requireRole(['SUPER_ADMIN', 'ADMIN', 'DOCTOR']);
+// Order lab tests: DOCTOR only
+const CAN_ORDER = requireRole(['DOCTOR']);
 
-// Process lab tests (status, specimen, results): ADMIN, LAB_TECH
-const CAN_PROCESS = requireRole(['SUPER_ADMIN', 'ADMIN', 'LAB_TECH']);
+// Process samples and enter results: LAB_TECH only
+const CAN_PROCESS = requireRole(['LAB_TECH']);
 
-// Review results: ADMIN, DOCTOR
-const CAN_REVIEW = requireRole(['SUPER_ADMIN', 'ADMIN', 'DOCTOR']);
+// Review and verify final results: DOCTOR only
+const CAN_REVIEW = requireRole(['DOCTOR']);
 
+// Manage catalog: ADMIN, LAB_TECH
+const CAN_MANAGE_CATALOG = requireRole(['SUPER_ADMIN', 'ADMIN', 'LAB_TECH']);
+
+router.get('/dictionary', CAN_VIEW, asyncHandler(getLabDictionary));
+router.post('/dictionary', CAN_MANAGE_CATALOG, asyncHandler(createLabDictionaryItem));
+router.put('/dictionary/:id', CAN_MANAGE_CATALOG, asyncHandler(updateLabDictionaryItem));
 router.get('/tests', CAN_VIEW, asyncHandler(getLabTestQueue));
 router.get('/tests/:id', CAN_VIEW, asyncHandler(getLabTestById));
 router.post('/tests', CAN_ORDER, asyncHandler(createLabTest));

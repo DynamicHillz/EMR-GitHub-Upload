@@ -16,15 +16,23 @@ export interface User {
   updatedAt: Date;
 }
 
+export interface UserSession {
+  id: string;
+  ipAddress: string | null;
+  userAgent: string | null;
+  createdAt: string;
+  expiresAt: string;
+}
+
 export type UserRole =
   | 'SUPER_ADMIN'
   | 'ADMIN'
-  | 'MANAGER'
   | 'DOCTOR'
   | 'NURSE'
+  | 'LAB_TECH'
   | 'PHARMACIST'
-  | 'RECEPTIONIST'
-  | 'PATIENT';
+  | 'CASHIER'
+  | 'RECEPTIONIST';
 
 export type UserStatus = 'ACTIVE' | 'INACTIVE' | 'SUSPENDED';
 
@@ -46,24 +54,6 @@ export interface LoginResponse {
     role: string;
     tenantId: string;
   };
-  token: string;
-  refreshToken?: string;
-}
-
-// Register
-export interface RegisterDto {
-  email: string;
-  password: string;
-  firstName: string;
-  lastName: string;
-  phone?: string;
-  role: string;
-  tenantId: string;
-}
-
-export interface RegisterResponse {
-  message: string;
-  user: User;
   token: string;
   refreshToken?: string;
 }

@@ -11,6 +11,7 @@ import {
   ServiceCategory,
 } from '../../types/billing.types';
 import billingService from '../../services/billing.service';
+import Dropdown from '../common/Dropdown';
 
 interface ServiceCatalogFormProps {
   service?: ServiceCatalog;
@@ -147,7 +148,7 @@ const ServiceCatalogForm: React.FC<ServiceCatalogFormProps> = ({
           <label htmlFor="category" className="block text-sm font-medium text-gray-700">
             Category *
           </label>
-          <select
+          <Dropdown
             id="category"
             name="category"
             value={formData.category}
@@ -161,7 +162,7 @@ const ServiceCatalogForm: React.FC<ServiceCatalogFormProps> = ({
             <option value="PROCEDURE">Procedure</option>
             <option value="IMAGING">Imaging</option>
             <option value="OTHER">Other</option>
-          </select>
+          </Dropdown>
         </div>
 
         {/* Base Price */}

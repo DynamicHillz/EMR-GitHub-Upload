@@ -30,6 +30,11 @@ const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children, requiredRoles
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
 
+  // Enforce mandatory password change for new/expired users
+  if (user?.requirePasswordChange && location.pathname !== '/force-change-password') {
+    return <Navigate to="/force-change-password" replace />;
+  }
+
   // Check role permissions if required
   if (requiredRoles && requiredRoles.length > 0) {
     if (!user || !requiredRoles.includes(user.role)) {

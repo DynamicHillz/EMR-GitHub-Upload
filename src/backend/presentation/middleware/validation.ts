@@ -34,6 +34,11 @@ export const validateRequest = (schema: Joi.Schema, source: ValidationSource = '
         message: detail.message,
       }));
 
+      // Log only which fields failed, never the payload itself — this runs
+      // on every failed patient/consultation/etc create-or-update, and the
+      // payload routinely contains PII (name, DOB, phone, address, allergies).
+      console.error('Validation failed:', JSON.stringify(errors.map(e => e.field)));
+
       return res.status(400).json({
         success: false,
         message: 'Validation failed',

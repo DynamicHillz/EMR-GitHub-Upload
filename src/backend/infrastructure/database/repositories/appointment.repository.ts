@@ -11,7 +11,7 @@
  * - Calendar date range queries
  */
 
-import { PrismaClient, Prisma, Appointment as PrismaAppointment } from '@prisma/client';
+import { PrismaClient, Prisma } from '@prisma/client';
 import {
   IAppointmentRepository,
   AppointmentCreateData,
@@ -20,6 +20,7 @@ import {
   OverlappingAppointmentQuery,
 } from '../../../domain/interfaces/IAppointmentRepository';
 import { Appointment, AppointmentStatus } from '../../../domain/entities/Appointment';
+import { ConflictError } from '../../../shared/errors/AppError';
 
 export class AppointmentRepository implements IAppointmentRepository {
   constructor(private prisma: PrismaClient) {}
@@ -32,6 +33,7 @@ export class AppointmentRepository implements IAppointmentRepository {
       where: {
         id,
         tenantId,
+        isDeleted: false,
       },
     });
 
@@ -46,6 +48,7 @@ export class AppointmentRepository implements IAppointmentRepository {
       where: {
         patientId,
         tenantId,
+        isDeleted: false,
       },
       orderBy: {
         appointmentDate: 'desc',
@@ -63,6 +66,7 @@ export class AppointmentRepository implements IAppointmentRepository {
       where: {
         doctorId,
         tenantId,
+        isDeleted: false,
       },
       orderBy: {
         appointmentDate: 'desc',
@@ -80,6 +84,7 @@ export class AppointmentRepository implements IAppointmentRepository {
 
     const whereClause: Prisma.AppointmentWhereInput = {
       tenantId,
+      isDeleted: false,
     };
 
     if (doctorId) {
@@ -155,6 +160,7 @@ export class AppointmentRepository implements IAppointmentRepository {
     const whereClause: Prisma.AppointmentWhereInput = {
       doctorId,
       tenantId,
+      isDeleted: false,
       appointmentDate: {
         gte: startOfDay,
         lte: endOfDay,
@@ -196,6 +202,7 @@ export class AppointmentRepository implements IAppointmentRepository {
       where: {
         doctorId,
         tenantId,
+        isDeleted: false,
         status: 'CHECKED_IN',
         appointmentDate: {
           gte: today,
@@ -205,6 +212,15 @@ export class AppointmentRepository implements IAppointmentRepository {
       orderBy: {
         checkedInAt: 'asc',
       },
+      include: {
+        patient: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true
+          }
+        }
+      }
     });
 
     return appointments.map(a => this.mapToEntity(a));
@@ -218,6 +234,7 @@ export class AppointmentRepository implements IAppointmentRepository {
       where: {
         doctorId,
         tenantId,
+        isDeleted: false,
         appointmentDate: {
           gte: startDate,
           lte: endDate,
@@ -258,9 +275,21 @@ export class AppointmentRepository implements IAppointmentRepository {
   /**
    * Update an appointment
    */
-  async update(id: string, tenantId: string, data: AppointmentUpdateData): Promise<Appointment> {
+  async update(id: string, tenantId: string, data: AppointmentUpdateData, expectedVersion?: number): Promise<Appointment> {
     // Verify appointment belongs to tenant
     await this.findById(id, tenantId);
+
+    if (expectedVersion !== undefined) {
+      const versionCheck = await this.prisma.appointment.updateMany({
+        where: { id, tenantId, version: expectedVersion },
+        data: { version: { increment: 1 } },
+      });
+      if (versionCheck.count === 0) {
+        throw new ConflictError('This appointment was changed by someone else. Please reload and try again.');
+      }
+    } else {
+      await this.prisma.appointment.update({ where: { id }, data: { version: { increment: 1 } } });
+    }
 
     const appointment = await this.prisma.appointment.update({
       where: { id },
@@ -320,16 +349,20 @@ export class AppointmentRepository implements IAppointmentRepository {
   /**
    * Delete an appointment (soft delete - set to cancelled)
    */
-  async delete(id: string, tenantId: string): Promise<void> {
+  async delete(id: string, tenantId: string, userId?: string): Promise<void> {
     // Verify appointment belongs to tenant
     await this.findById(id, tenantId);
 
+    // Soft delete
     await this.prisma.appointment.update({
       where: { id },
       data: {
+        isDeleted: true,
+        deletedAt: new Date(),
+        deletedBy: userId,
         status: 'CANCELLED',
         cancelledAt: new Date(),
-        cancellationReason: 'Deleted',
+        cancellationReason: 'Deleted by Admin',
         updatedAt: new Date(),
       },
     });
@@ -353,9 +386,23 @@ export class AppointmentRepository implements IAppointmentRepository {
           lte: targetTime,
         },
       },
+      include: {
+        patient: { select: { id: true, firstName: true, lastName: true, phone: true } },
+      },
     });
 
     return appointments.map(a => this.mapToEntity(a));
+  }
+
+  /**
+   * Mark the 24h or 2h reminder as sent for an appointment
+   */
+  async markReminderSent(id: string, hours: number): Promise<void> {
+    const reminderField = hours === 24 ? 'reminderSent24h' : 'reminderSent2h';
+    await this.prisma.appointment.update({
+      where: { id },
+      data: { [reminderField]: true },
+    });
   }
 
   /**
@@ -392,7 +439,7 @@ export class AppointmentRepository implements IAppointmentRepository {
   /**
    * Map Prisma appointment to domain entity
    */
-  private mapToEntity(appointment: PrismaAppointment): Appointment {
+  private mapToEntity(appointment: any): Appointment {
     return {
       id: appointment.id,
       tenantId: appointment.tenantId,
@@ -412,6 +459,7 @@ export class AppointmentRepository implements IAppointmentRepository {
       reminderSent2h: appointment.reminderSent2h,
       createdAt: appointment.createdAt,
       updatedAt: appointment.updatedAt,
+      patient: appointment.patient,
     };
   }
 }

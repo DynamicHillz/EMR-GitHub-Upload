@@ -7,8 +7,6 @@ import axios, { AxiosInstance } from 'axios';
 import {
   LoginDto,
   LoginResponse,
-  RegisterDto,
-  RegisterResponse,
   ForgotPasswordDto,
   ForgotPasswordResponse,
   ResetPasswordDto,
@@ -21,9 +19,10 @@ import {
   ListUsersResponse,
   SuspendUserDto,
   ApiResponse,
+  UserSession,
 } from '../types/auth.types';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000/api';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || `${window.location.protocol}//${window.location.hostname}:3000/api`;
 
 class AuthService {
   private api: AxiosInstance;
@@ -108,22 +107,6 @@ class AuthService {
       }
       if (response.data.user) {
         this.setCurrentUser(response.data.user as any);
-      }
-    }
-
-    return response.data;
-  }
-
-  async register(data: RegisterDto): Promise<RegisterResponse> {
-    const response = await this.api.post<RegisterResponse>('/auth/register', data);
-
-    if (response.data.token) {
-      this.setToken(response.data.token);
-      if (response.data.refreshToken) {
-        this.setRefreshToken(response.data.refreshToken);
-      }
-      if (response.data.user) {
-        this.setCurrentUser(response.data.user);
       }
     }
 
@@ -223,6 +206,21 @@ class AuthService {
 
   async changePassword(data: ChangePasswordDto): Promise<ApiResponse> {
     const response = await this.api.post<ApiResponse>('/users/change-password', data);
+    return response.data;
+  }
+
+  async forceResetPassword(id: string): Promise<ApiResponse<{ temporaryPassword?: string, note?: string }>> {
+    const response = await this.api.post<ApiResponse<{ temporaryPassword?: string, note?: string }>>(`/users/${id}/force-reset-password`);
+    return response.data;
+  }
+
+  async listUserSessions(id: string): Promise<{ sessions: UserSession[] }> {
+    const response = await this.api.get<{ sessions: UserSession[] }>(`/users/${id}/sessions`);
+    return response.data;
+  }
+
+  async revokeUserSession(id: string, sessionId: string): Promise<ApiResponse> {
+    const response = await this.api.post<ApiResponse>(`/users/${id}/sessions/${sessionId}/revoke`);
     return response.data;
   }
 }

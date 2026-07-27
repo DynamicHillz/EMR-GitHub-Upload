@@ -7,10 +7,12 @@ import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import authService from '../../services/auth.service';
+import { formatDate } from '../../utils/formatters';
 import { User, UserFilters } from '../../types/auth.types';
 import ErrorAlert from '../../components/common/ErrorAlert';
 import ConfirmDialog from '../../components/common/ConfirmDialog';
 import { useConfirm } from '../../hooks/useConfirm';
+import Dropdown from '../../components/common/Dropdown';
 
 const UserListPage: React.FC = () => {
   const { user: currentUser, hasRole } = useAuth();
@@ -173,7 +175,7 @@ const UserListPage: React.FC = () => {
   };
 
   const totalPages = Math.ceil(total / itemsPerPage);
-  const canManageUsers = hasRole(['SUPER_ADMIN', 'ADMIN', 'MANAGER']);
+  const canManageUsers = hasRole(['SUPER_ADMIN', 'ADMIN']);
 
   return (
     <div className="p-6">
@@ -223,22 +225,24 @@ const UserListPage: React.FC = () => {
             />
           </div>
           <div>
-            <select value={filters.role} onChange={handleRoleFilter} className="input w-full">
+            <Dropdown value={filters.role} onChange={handleRoleFilter} className="input w-full">
               <option value="">All Roles</option>
               <option value="ADMIN">Admin</option>
               <option value="DOCTOR">Doctor</option>
               <option value="NURSE">Nurse</option>
               <option value="PHARMACIST">Pharmacist</option>
               <option value="RECEPTIONIST">Receptionist</option>
-            </select>
+              <option value="CASHIER">Cashier</option>
+              <option value="LAB_TECH">Lab Technician</option>
+            </Dropdown>
           </div>
           <div>
-            <select value={filters.status} onChange={handleStatusFilter} className="input w-full">
+            <Dropdown value={filters.status} onChange={handleStatusFilter} className="input w-full">
               <option value="">All Statuses</option>
               <option value="ACTIVE">Active</option>
               <option value="INACTIVE">Inactive</option>
               <option value="SUSPENDED">Suspended</option>
-            </select>
+            </Dropdown>
           </div>
         </div>
       </div>
@@ -326,7 +330,7 @@ const UserListPage: React.FC = () => {
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                         {user.lastLogin
-                          ? new Date(user.lastLogin).toLocaleDateString()
+                          ? formatDate(user.lastLogin)
                           : 'Never'}
                       </td>
                       {canManageUsers && (

@@ -13,6 +13,9 @@ import { SubmitLabResultsUseCase } from '../../application/use-cases/lab/submit-
 import { ReviewLabResultsUseCase } from '../../application/use-cases/lab/review-lab-results.use-case';
 import { UpdateSpecimenDetailsUseCase } from '../../application/use-cases/lab/update-specimen-details.use-case';
 import { OrderLabTestUseCase } from '../../application/use-cases/consultation/order-lab-test.use-case';
+import { GetLabDictionaryUseCase } from '../../application/use-cases/lab/get-lab-dictionary.use-case';
+import { CreateLabDictionaryItemUseCase } from '../../application/use-cases/lab/create-lab-dictionary-item.use-case';
+import { UpdateLabDictionaryItemUseCase } from '../../application/use-cases/lab/update-lab-dictionary-item.use-case';
 import { PatientRepository } from '../../infrastructure/database/repositories/patient.repository';
 import { prisma } from '../../infrastructure/database/prisma.client';
 
@@ -27,6 +30,9 @@ const submitLabResultsUseCase = new SubmitLabResultsUseCase(prisma);
 const reviewLabResultsUseCase = new ReviewLabResultsUseCase(prisma);
 const updateSpecimenDetailsUseCase = new UpdateSpecimenDetailsUseCase(prisma);
 const orderLabTestUseCase = new OrderLabTestUseCase(prisma, patientRepository);
+const getLabDictionaryUseCase = new GetLabDictionaryUseCase(prisma);
+const createLabDictionaryItemUseCase = new CreateLabDictionaryItemUseCase(prisma);
+const updateLabDictionaryItemUseCase = new UpdateLabDictionaryItemUseCase(prisma);
 
 /**
  * GET /api/lab-tests
@@ -44,7 +50,7 @@ export const getLabTestQueue = async (req: Request, res: Response) => {
       });
     }
 
-    const { status, urgency, limit } = req.query;
+    const { status, urgency, limit, patientId, billingStatus } = req.query;
 
     const filters: any = {};
 
@@ -60,6 +66,14 @@ export const getLabTestQueue = async (req: Request, res: Response) => {
       filters.limit = parseInt(limit as string);
     }
 
+    if (patientId) {
+      filters.patientId = patientId as string;
+    }
+
+    if (billingStatus) {
+      filters.billingStatus = billingStatus as any;
+    }
+
     const labTests = await getLabTestQueueUseCase.execute(tenantId, filters);
 
     return res.status(200).json({
@@ -73,7 +87,103 @@ export const getLabTestQueue = async (req: Request, res: Response) => {
     return res.status(500).json({
       success: false,
       message: 'Failed to get lab test queue',
-      error: error.message,
+    });
+  }
+};
+
+/**
+ * GET /api/lab-tests/dictionary
+ * Get lab dictionary with dynamic parameters and reference ranges
+ */
+export const getLabDictionary = async (req: Request, res: Response) => {
+  try {
+    const tenantId = req.user?.tenantId;
+
+    if (!tenantId) {
+      return res.status(401).json({
+        success: false,
+        message: 'Unauthorized: No tenant ID found',
+      });
+    }
+
+    const { testCode } = req.query;
+
+    const dictionary = await getLabDictionaryUseCase.execute(tenantId, testCode as string);
+    logger.info(`getLabDictionary returning ${Array.isArray(dictionary) ? dictionary.length : 1} tests`);
+
+    return res.status(200).json({
+      success: true,
+      data: dictionary,
+    });
+  } catch (error: any) {
+    logger.error('Error getting lab dictionary:', error);
+
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to get lab dictionary',
+    });
+  }
+};
+
+/**
+ * POST /api/lab/dictionary
+ * Create a new lab test dictionary item
+ */
+export const createLabDictionaryItem = async (req: Request, res: Response) => {
+  try {
+    const tenantId = req.user?.tenantId;
+
+    if (!tenantId) {
+      return res.status(401).json({
+        success: false,
+        message: 'Unauthorized: No tenant ID found',
+      });
+    }
+
+    const test = await createLabDictionaryItemUseCase.execute(tenantId, req.body);
+
+    return res.status(201).json({
+      success: true,
+      message: 'Lab test created successfully',
+      data: test,
+    });
+  } catch (error: any) {
+    logger.error('Error creating lab dictionary item:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to create lab test',
+    });
+  }
+};
+
+/**
+ * PUT /api/lab/dictionary/:id
+ * Update an existing lab test dictionary item
+ */
+export const updateLabDictionaryItem = async (req: Request, res: Response) => {
+  try {
+    const tenantId = req.user?.tenantId;
+    const { id } = req.params;
+
+    if (!tenantId) {
+      return res.status(401).json({
+        success: false,
+        message: 'Unauthorized: No tenant ID found',
+      });
+    }
+
+    const test = await updateLabDictionaryItemUseCase.execute(tenantId, id, req.body);
+
+    return res.status(200).json({
+      success: true,
+      message: 'Lab test updated successfully',
+      data: test,
+    });
+  } catch (error: any) {
+    logger.error('Error updating lab dictionary item:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to update lab test',
     });
   }
 };
@@ -114,7 +224,6 @@ export const getLabTestById = async (req: Request, res: Response) => {
     return res.status(500).json({
       success: false,
       message: 'Failed to get lab test',
-      error: error.message,
     });
   }
 };
@@ -163,7 +272,6 @@ export const updateLabTestStatus = async (req: Request, res: Response) => {
     return res.status(500).json({
       success: false,
       message: 'Failed to update lab test status',
-      error: error.message,
     });
   }
 };
@@ -213,7 +321,6 @@ export const submitLabResults = async (req: Request, res: Response) => {
     return res.status(500).json({
       success: false,
       message: 'Failed to submit lab results',
-      error: error.message,
     });
   }
 };
@@ -266,7 +373,6 @@ export const reviewLabResults = async (req: Request, res: Response) => {
     return res.status(500).json({
       success: false,
       message: 'Failed to review lab results',
-      error: error.message,
     });
   }
 };
@@ -318,7 +424,6 @@ export const updateSpecimenDetails = async (req: Request, res: Response) => {
     return res.status(500).json({
       success: false,
       message: 'Failed to update specimen details',
-      error: error.message,
     });
   }
 };
@@ -369,7 +474,6 @@ export const createLabTest = async (req: Request, res: Response) => {
     return res.status(500).json({
       success: false,
       message: 'Failed to create lab test order',
-      error: error.message,
     });
   }
 };

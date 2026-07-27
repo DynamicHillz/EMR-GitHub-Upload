@@ -1,51 +1,30 @@
 import React, { useState, useEffect, useCallback, KeyboardEvent } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Plus, Search, User, Calendar, Phone, AlertCircle, X } from 'lucide-react';
 import PatientDetailView from '../components/PatientDetailView';
 import { useToast } from '../components/ToastContainer';
 import ErrorAlert from '../components/common/ErrorAlert';
+import ConfirmDialog from '../components/common/ConfirmDialog';
+import { useConfirm } from '../hooks/useConfirm';
+import { useDraftPersistence } from '../hooks/useDraftPersistence';
+import TriageAssessmentModal from '../components/triage/TriageAssessmentModal';
+import { NIGERIA_LGA_MAP, NIGERIAN_STATES } from '../utils/nigeria-states';
+import Dropdown from '../components/common/Dropdown';
+import { useAuth } from '../contexts/AuthContext';
+import { offlineFetch } from '../services/offlineFetch';
 
-// ── Nigeria State → LGA map ──────────────────────────────────────────────────
-const NIGERIA_LGA_MAP: Record<string, string[]> = {
-  'Abia': ['Aba North','Aba South','Arochukwu','Bende','Ikwuano','Isiala Ngwa North','Isiala Ngwa South','Isuikwuato','Obi Ngwa','Ohafia','Osisioma Ngwa','Ugwunagbo','Ukwa East','Ukwa West','Umu Nneochi','Umuahia North','Umuahia South'],
-  'Adamawa': ['Demsa','Fufore','Ganye','Gayuk','Gombi','Grie','Hong','Jada','Lamurde','Madagali','Maiha','Mayo-Belwa','Michika','Mubi North','Mubi South','Numan','Shelleng','Song','Toungo','Yola North','Yola South'],
-  'Akwa Ibom': ['Abak','Eastern Obolo','Eket','Esit Eket','Essien Udim','Etim Ekpo','Etinan','Ibeno','Ibesikpo Asutan','Ibiono-Ibom','Ika','Ikono','Ikot Abasi','Ikot Ekpene','Ini','Itu','Mbo','Mkpat-Enin','Nsit-Atai','Nsit-Ibom','Nsit-Ubium','Obot Akara','Okobo','Onna','Oron','Oruk Anam','Udung-Uko','Ukanafun','Uruan','Urue-Offong/Oruko','Uyo'],
-  'Anambra': ['Aguata','Anambra East','Anambra West','Anaocha','Awka North','Awka South','Ayamelum','Dunukofia','Ekwusigo','Idemili North','Idemili South','Ihiala','Njikoka','Nnewi North','Nnewi South','Ogbaru','Onitsha North','Onitsha South','Orumba North','Orumba South','Oyi'],
-  'Bauchi': ['Alkaleri','Bauchi','Bogoro','Damban','Darazo','Dass','Gamawa','Ganjuwa','Giade','Itas/Gadau',"Jama'are",'Katagum','Kirfi','Misau','Ningi','Shira','Tafawa Balewa','Toro','Warji','Zaki'],
-  'Bayelsa': ['Brass','Ekeremor','Kolokuma/Opokuma','Nembe','Ogbia','Sagbama','Southern Ijaw','Yenagoa'],
-  'Benue': ['Ado','Agatu','Apa','Buruku','Gboko','Guma','Gwer East','Gwer West','Katsina-Ala','Konshisha','Kwande','Logo','Makurdi','Obi','Ogbadibo','Ohimini','Oju','Okpokwu','Otukpo','Tarka','Ukum','Ushongo','Vandeikya'],
-  'Borno': ['Abadam','Askira/Uba','Bama','Bayo','Biu','Chibok','Damboa','Dikwa','Gubio','Guzamala','Gwoza','Hawul','Jere','Kaga','Kala/Balge','Konduga','Kukawa','Kwaya Kusar','Mafa','Magumeri','Maiduguri','Marte','Mobbar','Monguno','Ngala','Nganzai','Shani'],
-  'Cross River': ['Abi','Akamkpa','Akpabuyo','Bakassi','Bekwarra','Biase','Boki','Calabar Municipal','Calabar South','Etung','Ikom','Obanliku','Obubra','Obudu','Odukpani','Ogoja','Yakurr','Yala'],
-  'Delta': ['Aniocha North','Aniocha South','Bomadi','Burutu','Ethiope East','Ethiope West','Ika North East','Ika South','Isoko North','Isoko South','Ndokwa East','Ndokwa West','Okpe','Oshimili North','Oshimili South','Patani','Sapele','Udu','Ughelli North','Ughelli South','Ukwuani','Uvwie','Warri North','Warri South','Warri South West'],
-  'Ebonyi': ['Abakaliki','Afikpo North','Afikpo South','Ebonyi','Ezza North','Ezza South','Ikwo','Ishielu','Ivo','Izzi','Ohaozara','Ohaukwu','Onicha'],
-  'Edo': ['Akoko-Edo','Egor','Esan Central','Esan North-East','Esan South-East','Esan West','Etsako Central','Etsako East','Etsako West','Igueben','Ikpoba-Okha','Oredo','Orhionmwon','Ovia North-East','Ovia South-West','Owan East','Owan West','Uhunmwonde'],
-  'Ekiti': ['Ado-Ekiti','Efon','Ekiti East','Ekiti South-West','Ekiti West','Emure','Gbonyin','Ido-Osi','Ijero','Ikere','Ikole','Ilejemeje','Irepodun/Ifelodun','Ise/Orun','Moba','Oye'],
-  'Enugu': ['Aninri','Awgu','Enugu East','Enugu North','Enugu South','Ezeagu','Igbo-Etiti','Igbo-Eze North','Igbo-Eze South','Isi-Uzo','Nkanu East','Nkanu West','Nsukka','Oji River','Udenu','Udi','Uzo-Uwani'],
-  'FCT - Abuja': ['Abaji','Bwari','Gwagwalada','Kuje','Kwali','Municipal'],
-  'Gombe': ['Akko','Balanga','Billiri','Dukku','Funakaye','Gombe','Kaltungo','Kwami','Nafada','Shongom','Yamaltu/Deba'],
-  'Imo': ['Aboh Mbaise','Ahiazu Mbaise','Ehime Mbano','Ezinihitte Mbaise','Ideato North','Ideato South','Ihitte/Uboma','Ikeduru','Isiala Mbano','Isu','Mbaitoli','Ngor-Okpala','Njaba','Nkwerre','Nwangele','Obowo','Oguta','Ohaji/Egbema','Okigwe','Onuimo','Orlu','Orsu','Oru East','Oru West','Owerri Municipal','Owerri North','Owerri West'],
-  'Jigawa': ['Auyo','Babura','Biriniwa','Birnin Kudu','Buji','Dutse','Gagarawa','Garki','Gumel','Guri','Gwaram','Gwiwa','Hadejia','Jahun','Kafin Hausa','Kaugama','Kazaure','Kiri Kasama','Kiyawa','Maigatari','Malam Madori','Miga','Ringim','Roni','Sule Tankarkar','Taura','Yankwashi'],
-  'Kaduna': ['Birnin Gwari','Chikun','Giwa','Igabi','Ikara','Jaba',"Jema'a",'Kachia','Kaduna North','Kaduna South','Kagarko','Kajuru','Kaura','Kauru','Kubau','Kudan','Lere','Makarfi','Sabon Gari','Sanga','Soba','Zangon Kataf','Zaria'],
-  'Kano': ['Ajingi','Albasu','Bagwai','Bebeji','Bichi','Bunkure','Dala','Dambatta','Dawakin Kudu','Dawakin Tofa','Doguwa','Fagge','Gabasawa','Garko','Garun Mallam','Gaya','Gezawa','Gwale','Gwarzo','Kabo','Kano Municipal','Karaye','Kibiya','Kiru','Kumbotso','Kunchi','Kura','Madobi','Makoda','Minjibir','Nassarawa','Rano','Rimin Gado','Rogo','Shanono','Sumaila','Takai','Tarauni','Tofa','Tsanyawa','Tudun Wada','Ungogo','Warawa','Wudil'],
-  'Katsina': ['Bakori','Batagarawa','Batsari','Baure','Bindawa','Charanchi','Dan Musa','Dandume','Danja','Daura','Dutsi','Dutsin-Ma','Faskari','Funtua','Ingawa','Jibia','Kafur','Kaita','Kankara','Kankia','Katsina','Kurfi','Kusada',"Mai'Adua",'Malumfashi','Mani','Mashi','Matazu','Musawa','Rimi','Sabuwa','Safana','Sandamu','Zango'],
-  'Kebbi': ['Aleiro','Arewa Dandi','Argungu','Augie','Bagudo','Birnin Kebbi','Bunza','Dandi','Fakai','Gwandu','Jega','Kalgo','Koko/Besse','Maiyama','Ngaski','Sakaba','Shanga','Suru','Wasagu/Danko','Yauri','Zuru'],
-  'Kogi': ['Adavi','Ajaokuta','Ankpa','Bassa','Dekina','Ibaji','Idah','Igalamela-Odolu','Ijumu','Kabba/Bunu','Kogi','Lokoja','Mopa-Muro','Ofu','Ogori/Magongo','Okehi','Okene','Olamaboro','Omala','Yagba East','Yagba West'],
-  'Kwara': ['Asa','Baruten','Edu','Ekiti','Ifelodun','Ilorin East','Ilorin South','Ilorin West','Irepodun','Isin','Kaiama','Moro','Offa','Oke Ero','Oyun','Patigi'],
-  'Lagos': ['Agege','Ajeromi-Ifelodun','Alimosho','Amuwo-Odofin','Apapa','Badagry','Epe','Eti-Osa','Ibeju-Lekki','Ifako-Ijaiye','Ikeja','Ikorodu','Kosofe','Lagos Island','Lagos Mainland','Mushin','Ojo','Oshodi-Isolo','Shomolu','Surulere'],
-  'Nasarawa': ['Akwanga','Awe','Doma','Karu','Keana','Keffi','Kokona','Lafia','Nasarawa','Nasarawa Egon','Obi','Toto','Wamba'],
-  'Niger': ['Agaie','Agwara','Bida','Borgu','Bosso','Chanchaga','Edati','Gbako','Gurara','Katcha','Kontagora','Lapai','Lavun','Magama','Mariga','Mashegu','Mokwa','Munya','Paikoro','Rafi','Rijau','Shiroro','Suleja','Tafa','Wushishi'],
-  'Ogun': ['Abeokuta North','Abeokuta South','Ado-Odo/Ota','Egbado North','Egbado South','Ewekoro','Ifo','Ijebu East','Ijebu North','Ijebu North East','Ijebu Ode','Ikenne','Imeko Afon','Ipokia','Obafemi Owode','Odeda','Odogbolu','Ogun Waterside','Remo North','Sagamu'],
-  'Ondo': ['Akoko North-East','Akoko North-West','Akoko South-East','Akoko South-West','Akure North','Akure South','Ese-Odo','Idanre','Ifedore','Ilaje','Ile Oluji/Okeigbo','Irele','Odigbo','Okitipupa','Ondo East','Ondo West','Ose','Owo'],
-  'Osun': ['Aiyedaade','Aiyedire','Atakunmosa East','Atakunmosa West','Boluwaduro','Boripe','Ede North','Ede South','Egbedore','Ejigbo','Ife Central','Ife East','Ife North','Ife South','Ifedayo','Ifelodun','Ila','Ilesa East','Ilesa West','Irepodun','Irewole','Isokan','Iwo','Obokun','Odo Otin','Ola Oluwa','Olorunda','Oriade','Orolu','Osogbo'],
-  'Oyo': ['Afijio','Akinyele','Atiba','Atisbo','Egbeda','Ibadan North','Ibadan North-East','Ibadan North-West','Ibadan South-East','Ibadan South-West','Ibarapa Central','Ibarapa East','Ibarapa North','Ido','Irepo','Iseyin','Itesiwaju','Iwajowa','Kajola','Lagelu','Ogbomoso North','Ogbomoso South','Ogo Oluwa','Olorunsogo','Oluyole','Ona Ara','Orelope','Ori Ire','Oyo East','Oyo West','Saki East','Saki West','Surulere'],
-  'Plateau': ['Barkin Ladi','Bassa','Bokkos','Jos East','Jos North','Jos South','Kanam','Kanke','Langtang North','Langtang South','Mangu','Mikang','Pankshin',"Qua'an Pan",'Riyom','Shendam','Wase'],
-  'Rivers': ['Abua/Odual','Ahoada East','Ahoada West','Akuku-Toru','Andoni','Asari-Toru','Bonny','Degema','Eleme','Emohua','Etche','Gokana','Ikwerre','Khana','Obio/Akpor','Ogba/Egbema/Ndoni','Ogu/Bolo','Okrika','Omuma','Opobo/Nkoro','Oyigbo','Port Harcourt','Tai'],
-  'Sokoto': ['Binji','Bodinga','Dange Shuni','Gada','Goronyo','Gudu','Gwadabawa','Illela','Isa','Kebbe','Kware','Rabah','Sabon Birni','Shagari','Silame','Sokoto North','Sokoto South','Tambuwal','Tangaza','Tureta','Wamako','Wurno','Yabo'],
-  'Taraba': ['Ardo Kola','Bali','Donga','Gashaka','Gassol','Ibi','Jalingo','Karim Lamido','Kumi','Lau','Sardauna','Takum','Ussa','Wukari','Yorro','Zing'],
-  'Yobe': ['Bade','Bursari','Damaturu','Fika','Fune','Geidam','Gujba','Gulani','Jakusko','Karasuwa','Machina','Nangere','Nguru','Potiskum','Tarmuwa','Yunusari','Yusufari'],
-  'Zamfara': ['Anka','Bakura','Birnin Magaji/Kiyaw','Bukkuyum','Bungudu','Gummi','Gusau','Kaura Namoda','Maradun','Maru','Shinkafi','Talata Mafara','Tsafe','Zurmi'],
-};
+const BLOOD_GROUPS = [
+  { value: 'A_POSITIVE', label: 'A+' },
+  { value: 'A_NEGATIVE', label: 'A-' },
+  { value: 'B_POSITIVE', label: 'B+' },
+  { value: 'B_NEGATIVE', label: 'B-' },
+  { value: 'AB_POSITIVE', label: 'AB+' },
+  { value: 'AB_NEGATIVE', label: 'AB-' },
+  { value: 'O_POSITIVE', label: 'O+' },
+  { value: 'O_NEGATIVE', label: 'O-' },
+];
 
-const NIGERIAN_STATES = Object.keys(NIGERIA_LGA_MAP).sort();
+// Using NIGERIA_LGA_MAP from utils
 
 // ── Tag input component ──────────────────────────────────────────────────────
 const TagInput: React.FC<{
@@ -119,11 +98,17 @@ interface PatientFormData {
   bloodGroup: string;
   genotype: string;
   allergies: string[];
+  patientAllergies: { allergen: string, reactionType: string, severity: string }[];
   chronicConditions: string[];
   pastSurgicalHistory: string;
   emergencyContactName: string;
   emergencyContactPhone: string;
   emergencyContactRelationship: string;
+  patientType: 'PRIVATE' | 'HMO';
+  hmoProvider: string;
+  hmoProviderOther: string;
+  hmoNumber: string;
+  nhisNumber: string;
   consentGiven: boolean;
 }
 
@@ -144,16 +129,21 @@ const EMPTY_FORM: PatientFormData = {
   firstName: '', lastName: '', dateOfBirth: '', dobUnknown: false,
   approximateYear: '', gender: 'MALE', phone: '', email: '',
   address: '', state: '', lga: '', bloodGroup: '', genotype: '',
-  allergies: [], chronicConditions: [], pastSurgicalHistory: '',
+  allergies: [], patientAllergies: [], chronicConditions: [], pastSurgicalHistory: '',
   emergencyContactName: '', emergencyContactPhone: '',
-  emergencyContactRelationship: '', consentGiven: false,
+  emergencyContactRelationship: '', patientType: 'PRIVATE',
+  hmoProvider: '', hmoProviderOther: '', hmoNumber: '', nhisNumber: '', consentGiven: false,
 };
 
 // ── Page ─────────────────────────────────────────────────────────────────────
 const PatientsPage: React.FC = () => {
   const toast = useToast();
+  const { hasRole } = useAuth();
+  const canRegisterPatients = hasRole(['DOCTOR', 'NURSE', 'RECEPTIONIST']);
+  const [searchParams] = useSearchParams();
   const [showModal, setShowModal] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [newAllergy, setNewAllergy] = useState({ allergen: '', reactionType: '', severity: 'MILD' });
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<Patient[]>([]);
   const [isSearching, setIsSearching] = useState(false);
@@ -161,9 +151,48 @@ const PatientsPage: React.FC = () => {
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
   const [error, setError] = useState('');
   const [formData, setFormData] = useState<PatientFormData>(EMPTY_FORM);
+  const [newPatientTriage, setNewPatientTriage] = useState<{ id: string; fullName: string } | null>(null);
+  const [triagePromptPatient, setTriagePromptPatient] = useState<{ id: string; fullName: string } | null>(null);
+  const [hmoProviders, setHmoProviders] = useState<{ id: string; name: string; type: string }[]>([]);
+
+  // Live duplicate detection inside the registration form itself — checks
+  // as the user types rather than as a separate pre-check step.
+  const [duplicateCandidates, setDuplicateCandidates] = useState<Patient[]>([]);
+  const [isCheckingDuplicates, setIsCheckingDuplicates] = useState(false);
+  const [duplicateWarningDismissed, setDuplicateWarningDismissed] = useState(false);
+
+  const { confirm, isOpen: confirmIsOpen, options: confirmOptions, loading: confirmLoading, handleConfirm, handleCancel } = useConfirm();
+  const registrationDraft = useDraftPersistence<PatientFormData>('patient-registration-draft', formData, showModal);
 
   // Derived: LGAs for selected state
   const availableLGAs = formData.state ? (NIGERIA_LGA_MAP[formData.state] ?? []) : [];
+
+  // Deep-link support: /patients?patientId=... jumps straight to that patient's detail view
+  useEffect(() => {
+    const deepLinkedId = searchParams.get('patientId');
+    if (deepLinkedId) {
+      setSelectedPatient({ id: deepLinkedId } as Patient);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    const fetchHmoProviders = async () => {
+      try {
+        const token = localStorage.getItem('token');
+        const res = await fetch(`${window.location.protocol}//${window.location.hostname}:3000/api/insurance/providers`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setHmoProviders(Array.isArray(data) ? data : (data.data || []));
+        }
+      } catch {
+        setHmoProviders([]);
+      }
+    };
+    fetchHmoProviders();
+  }, []);
 
   const searchPatients = useCallback(async (query: string) => {
     if (query.length < 3 && query.length > 0) return;
@@ -173,7 +202,7 @@ const PatientsPage: React.FC = () => {
       const token = localStorage.getItem('token');
       if (!token) return;
       const res = await fetch(
-        `http://localhost:3000/api/patients/search?query=${encodeURIComponent(query)}`,
+        `${window.location.protocol}//${window.location.hostname}:3000/api/patients/search?query=${encodeURIComponent(query)}`,
         { headers: { Authorization: `Bearer ${token}` } }
       );
       const data = await res.json();
@@ -187,6 +216,78 @@ const PatientsPage: React.FC = () => {
     const id = setTimeout(() => searchPatients(searchQuery), 300);
     return () => clearTimeout(id);
   }, [searchQuery, searchPatients]);
+
+  // Live duplicate detection: as the user fills in name, phone, or email,
+  // check for existing patients matching any of those — no separate
+  // pre-check step, just a heads-up right where they're typing.
+  useEffect(() => {
+    if (!showModal) { setDuplicateCandidates([]); return; }
+
+    const phoneDigits = formData.phone.replace(/\D/g, '');
+    const nameReady = formData.firstName.trim().length >= 2 && formData.lastName.trim().length >= 2;
+    const phoneReady = phoneDigits.length >= 7;
+    const emailReady = /\S+@\S+\.\S+/.test(formData.email.trim());
+
+    if (!nameReady && !phoneReady && !emailReady) {
+      setDuplicateCandidates([]);
+      return;
+    }
+
+    const queries: string[] = [];
+    if (nameReady) queries.push(`${formData.firstName.trim()} ${formData.lastName.trim()}`);
+    if (phoneReady) queries.push(formData.phone.trim());
+    if (emailReady) queries.push(formData.email.trim());
+
+    const id = setTimeout(async () => {
+      setIsCheckingDuplicates(true);
+      try {
+        const token = localStorage.getItem('token');
+        const results = await Promise.all(queries.map(q =>
+          fetch(`${window.location.protocol}//${window.location.hostname}:3000/api/patients/search?query=${encodeURIComponent(q)}`,
+            { headers: { Authorization: `Bearer ${token}` } })
+            .then(res => res.ok ? res.json() : { data: [] })
+            .then(data => data.data || [])
+            .catch(() => [])
+        ));
+        const merged = new Map<string, Patient>();
+        results.flat().forEach((p: Patient) => merged.set(p.id, p));
+        setDuplicateCandidates(Array.from(merged.values()));
+        setDuplicateWarningDismissed(false);
+      } finally {
+        setIsCheckingDuplicates(false);
+      }
+    }, 500);
+    return () => clearTimeout(id);
+  }, [formData.firstName, formData.lastName, formData.phone, formData.email, showModal]);
+
+  const openRegistrationModal = async () => {
+    const draft = registrationDraft.restore();
+    const draftHasContent = !!draft && (draft.firstName || draft.lastName || draft.phone);
+    if (draftHasContent) {
+      const restoreConfirmed = await confirm({
+        title: 'Restore unsaved registration?',
+        message: `You have an unsaved registration in progress${draft!.firstName || draft!.lastName ? ` for "${draft!.firstName} ${draft!.lastName}"` : ''}. Restore it, or start fresh?`,
+        confirmText: 'Restore Draft',
+        cancelText: 'Start Fresh',
+        variant: 'info',
+      });
+      if (restoreConfirmed) {
+        setFormData(draft!);
+      } else {
+        registrationDraft.clear();
+        setFormData(EMPTY_FORM);
+      }
+    }
+    setShowModal(true);
+  };
+
+  const closeRegistrationModal = () => {
+    registrationDraft.clear();
+    setShowModal(false);
+    setDuplicateCandidates([]);
+    setFormData(EMPTY_FORM);
+    setError('');
+  };
 
   const handleInputChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
@@ -238,6 +339,7 @@ const PatientsPage: React.FC = () => {
         bloodGroup: formData.bloodGroup || undefined,
         genotype: formData.genotype || undefined,
         allergies: formData.allergies,
+        patientAllergies: formData.patientAllergies,
         chronicConditions: formData.chronicConditions,
         pastSurgicalHistory: formData.pastSurgicalHistory || undefined,
         emergencyContact: hasEmergencyContact ? {
@@ -245,20 +347,70 @@ const PatientsPage: React.FC = () => {
           phone: formData.emergencyContactPhone,
           relationship: formData.emergencyContactRelationship,
         } : undefined,
+        patientType: formData.patientType,
+        hmoProvider: formData.patientType === 'HMO'
+          ? (formData.hmoProvider === 'OTHER' ? formData.hmoProviderOther : formData.hmoProvider)
+          : undefined,
+        hmoNumber: formData.patientType === 'HMO' ? formData.hmoNumber : undefined,
+        nhisNumber: formData.nhisNumber || undefined,
         consentGiven: formData.consentGiven,
       };
 
-      const res = await fetch('http://localhost:3000/api/patients', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify(payload),
-      });
+      // Generated up front so it can double as the idempotency key if this
+      // request fails and gets queued for offline replay (see
+      // sync.controller.ts's applyCreate) — the same id is used whether the
+      // create succeeds immediately or only after reconnecting later, so a
+      // chained offline triage record can safely reference it right away.
+      const entityId = globalThis.crypto?.randomUUID
+        ? globalThis.crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+      const res = await offlineFetch(
+        `${window.location.protocol}//${window.location.hostname}:3000/api/patients`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ ...payload, id: entityId }),
+        },
+        { entityType: 'PATIENT', entityId, operation: 'CREATE' }
+      );
       const data = await res.json();
 
-      if (res.ok) {
-        toast.success('Patient Registered Successfully!', `Patient ID: ${data.data.patientId} has been created.`);
+      if (data.queued) {
+        registrationDraft.clear();
         setShowModal(false);
         setFormData(EMPTY_FORM);
+        toast.success(
+          'Saved offline',
+          `${formData.firstName} ${formData.lastName} will be registered automatically once your connection returns. A Patient ID will be assigned then.`
+        );
+        // The record doesn't exist server-side yet, so there's nothing for
+        // PatientDetailView to fetch — skip navigating into it. Triage can
+        // still be queued right away against the same pre-generated id; it
+        // will replay in order right after this create.
+        const userStr = localStorage.getItem('user');
+        const user = userStr ? JSON.parse(userStr) : null;
+        if (user?.role === 'NURSE') {
+          setTriagePromptPatient({ id: entityId, fullName: `${formData.firstName} ${formData.lastName}` });
+        }
+      } else if (res.ok) {
+        toast.success('Patient Registered Successfully!', `Patient ID: ${data.data.patientId} has been created.`);
+        registrationDraft.clear();
+        setShowModal(false);
+        setFormData(EMPTY_FORM);
+        // Land on the new record immediately — the toast alone isn't enough
+        // to hand a Patient ID off to a nurse before it auto-dismisses.
+        setSelectedPatient({ id: data.data.id } as Patient);
+        // Prompt for immediate triage only for nurses
+        const userStr = localStorage.getItem('user');
+        const user = userStr ? JSON.parse(userStr) : null;
+
+        if (user?.role === 'NURSE') {
+          setTriagePromptPatient({
+            id: data.data.id,
+            fullName: `${data.data.firstName} ${data.data.lastName}`
+          });
+        }
       } else {
         toast.error('Registration Failed', data.message || 'Please try again.');
       }
@@ -273,16 +425,12 @@ const PatientsPage: React.FC = () => {
     <div>
       <div className="flex justify-between items-center mb-6">
         <h2 className="text-2xl font-bold">Patients</h2>
-        <button className="btn btn-primary flex items-center" onClick={() => setShowModal(true)}>
-          <Plus className="w-5 h-5 mr-2" /> Register New Patient
-        </button>
+        {canRegisterPatients && (
+          <button className="btn btn-primary flex items-center" onClick={openRegistrationModal}>
+            <Plus className="w-5 h-5 mr-2" /> Register New Patient
+          </button>
+        )}
       </div>
-
-      {error && (
-        <div className="mb-4">
-          <ErrorAlert message={error} severity="error" onDismiss={() => setError('')} />
-        </div>
-      )}
 
       {/* Search */}
       <div className="card mb-6">
@@ -358,10 +506,16 @@ const PatientsPage: React.FC = () => {
                 </h3>
                 <p className="text-sm text-gray-600 mt-1">Complete the form below to register a new patient</p>
               </div>
-              <button type="button" onClick={() => setShowModal(false)} className="text-gray-400 hover:text-gray-600">
+              <button type="button" onClick={closeRegistrationModal} className="text-gray-400 hover:text-gray-600">
                 <Plus className="w-6 h-6 transform rotate-45" />
               </button>
             </div>
+
+            {error && (
+              <div className="px-6 pt-4">
+                <ErrorAlert message={error} severity="error" onDismiss={() => setError('')} />
+              </div>
+            )}
 
             <form onSubmit={handleSubmit} className="p-6">
 
@@ -398,11 +552,11 @@ const PatientsPage: React.FC = () => {
 
                   <div>
                     <label className="block text-sm font-medium mb-1">Gender *</label>
-                    <select name="gender" value={formData.gender} onChange={handleInputChange} className="input w-full" required>
+                    <Dropdown name="gender" value={formData.gender} onChange={handleInputChange} className="input w-full" required>
                       <option value="MALE">Male</option>
                       <option value="FEMALE">Female</option>
                       <option value="OTHER">Other</option>
-                    </select>
+                    </Dropdown>
                   </div>
                   <div>
                     <label className="block text-sm font-medium mb-1">Phone *</label>
@@ -421,21 +575,74 @@ const PatientsPage: React.FC = () => {
                   {/* State → LGA dynamic dropdown */}
                   <div>
                     <label className="block text-sm font-medium mb-1">State *</label>
-                    <select name="state" value={formData.state} onChange={handleInputChange} className="input w-full" required>
+                    <Dropdown name="state" value={formData.state} onChange={handleInputChange} className="input w-full" required>
                       <option value="">Select state...</option>
                       {NIGERIAN_STATES.map(s => <option key={s} value={s}>{s}</option>)}
-                    </select>
+                    </Dropdown>
                   </div>
                   <div>
                     <label className="block text-sm font-medium mb-1">LGA</label>
-                    <select name="lga" value={formData.lga} onChange={handleInputChange} className="input w-full" disabled={!formData.state}>
+                    <Dropdown name="lga" value={formData.lga} onChange={handleInputChange} className="input w-full" disabled={!formData.state}>
                       <option value="">{formData.state ? 'Select LGA...' : 'Select state first'}</option>
                       {availableLGAs.map(lga => <option key={lga} value={lga}>{lga}</option>)}
-                    </select>
+                    </Dropdown>
                   </div>
 
                 </div>
               </div>
+
+              {/* Live duplicate-patient detection — fires as name/phone/email are typed */}
+              {!duplicateWarningDismissed && (isCheckingDuplicates || duplicateCandidates.length > 0) && (
+                <div className="mb-6 p-4 bg-amber-50 border border-amber-300 rounded-lg">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex items-start gap-2">
+                      <AlertCircle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+                      <div>
+                        <h4 className="font-semibold text-amber-900">
+                          {isCheckingDuplicates ? 'Checking for existing patients...' : 'Possible existing patient found'}
+                        </h4>
+                        {!isCheckingDuplicates && (
+                          <p className="text-sm text-amber-700 mt-0.5">
+                            Someone with a matching name, phone, or email is already registered. Double-check before continuing.
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                    <button type="button" onClick={() => setDuplicateWarningDismissed(true)} className="text-amber-400 hover:text-amber-600 flex-shrink-0">
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+
+                  {duplicateCandidates.length > 0 && (
+                    <div className="mt-3 divide-y divide-amber-200 border border-amber-200 rounded-lg bg-white overflow-hidden">
+                      {duplicateCandidates.map(patient => (
+                        <div key={patient.id} className="p-3 flex items-center justify-between gap-3">
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <User className="w-4 h-4 text-gray-400" />
+                              <span className="font-semibold text-gray-900">{patient.fullName}</span>
+                              <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">{patient.patientId}</span>
+                              {patient.hasAllergies && <AlertCircle className="w-4 h-4 text-red-500" title="Has allergies" />}
+                            </div>
+                            <div className="mt-1 flex items-center gap-4 text-sm text-gray-600 ml-6">
+                              <span className="flex items-center gap-1"><Calendar className="w-3 h-3" />{patient.age} yrs</span>
+                              <span>{patient.gender}</span>
+                              <span className="flex items-center gap-1"><Phone className="w-3 h-3" />{patient.phone}</span>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => { closeRegistrationModal(); setSelectedPatient(patient); }}
+                            className="btn btn-secondary text-sm px-3 py-1.5 flex-shrink-0"
+                          >
+                            View This Record
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Medical History */}
               <div className="mb-6">
@@ -443,30 +650,55 @@ const PatientsPage: React.FC = () => {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
                     <label className="block text-sm font-medium mb-1">Blood Group</label>
-                    <select name="bloodGroup" value={formData.bloodGroup} onChange={handleInputChange} className="input w-full">
+                    <Dropdown name="bloodGroup" value={formData.bloodGroup} onChange={handleInputChange} className="input w-full">
                       <option value="">Select...</option>
-                      {['A+','A-','B+','B-','AB+','AB-','O+','O-'].map(bg => <option key={bg} value={bg}>{bg}</option>)}
-                    </select>
+                      {BLOOD_GROUPS.map(bg => <option key={bg.value} value={bg.value}>{bg.label}</option>)}
+                    </Dropdown>
                   </div>
                   <div>
                     <label className="block text-sm font-medium mb-1">Genotype</label>
-                    <select name="genotype" value={formData.genotype} onChange={handleInputChange} className="input w-full">
+                    <Dropdown name="genotype" value={formData.genotype} onChange={handleInputChange} className="input w-full">
                       <option value="">Select...</option>
                       {['AA','AS','SS','AC','SC'].map(g => <option key={g} value={g}>{g}</option>)}
-                    </select>
+                    </Dropdown>
                   </div>
 
                   <div className="md:col-span-2">
-                    <label className="block text-sm font-medium mb-1">
-                      Known Allergies{' '}
-                      <span className="text-gray-400 font-normal">(type and press Enter or comma to add)</span>
-                    </label>
-                    <TagInput
-                      tags={formData.allergies}
-                      onChange={tags => setFormData(prev => ({ ...prev, allergies: tags }))}
-                      placeholder="e.g. Penicillin, Peanuts, Sulfa drugs..."
-                      chipColor="red"
-                    />
+                    <label className="block text-sm font-medium mb-2">Structured Allergies</label>
+                    
+                    <div className="bg-gray-50 p-3 rounded border border-gray-200 mb-3">
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                        <input type="text" placeholder="Allergen (e.g. Penicillin)" className="input text-sm" value={newAllergy.allergen} onChange={e => setNewAllergy({...newAllergy, allergen: e.target.value})} />
+                        <input type="text" placeholder="Reaction (e.g. Hives, Anaphylaxis)" className="input text-sm" value={newAllergy.reactionType} onChange={e => setNewAllergy({...newAllergy, reactionType: e.target.value})} />
+                        <div className="flex gap-2">
+                          <Dropdown className="input text-sm flex-1" value={newAllergy.severity} onChange={e => setNewAllergy({...newAllergy, severity: e.target.value})}>
+                            <option value="MILD">Mild</option>
+                            <option value="MODERATE">Moderate</option>
+                            <option value="SEVERE">Severe</option>
+                            <option value="LIFE_THREATENING">Life Threatening</option>
+                          </Dropdown>
+                          <button type="button" onClick={() => {
+                            if (newAllergy.allergen && newAllergy.reactionType) {
+                              setFormData(prev => ({ ...prev, patientAllergies: [...prev.patientAllergies, newAllergy] }));
+                              setNewAllergy({ allergen: '', reactionType: '', severity: 'MILD' });
+                            }
+                          }} className="btn btn-secondary text-sm px-3">+</button>
+                        </div>
+                      </div>
+                    </div>
+
+                    {formData.patientAllergies.length > 0 && (
+                      <div className="space-y-2 mb-4">
+                        {formData.patientAllergies.map((alg, idx) => (
+                          <div key={idx} className="flex justify-between items-center bg-red-50 p-2 rounded text-sm text-red-800 border border-red-100">
+                            <div>
+                              <strong>{alg.allergen}</strong> — {alg.reactionType} <span className="ml-2 text-xs font-bold uppercase">({alg.severity})</span>
+                            </div>
+                            <button type="button" onClick={() => setFormData(prev => ({ ...prev, patientAllergies: prev.patientAllergies.filter((_, i) => i !== idx) }))} className="text-red-500 hover:text-red-700 font-bold">&times;</button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
 
                   <div className="md:col-span-2">
@@ -486,6 +718,54 @@ const PatientsPage: React.FC = () => {
                     <label className="block text-sm font-medium mb-1">Past Surgical History / Major Procedures</label>
                     <textarea name="pastSurgicalHistory" value={formData.pastSurgicalHistory} onChange={handleInputChange}
                       placeholder="e.g. Appendectomy (2018), Cesarean Section (2020)" className="input w-full" rows={3} />
+                  </div>
+                </div>
+              </div>
+
+              {/* Insurance & Billing Details */}
+              <div className="mb-6">
+                <h4 className="font-semibold mb-3 text-lg border-b pb-2">Insurance & Billing Details</h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="md:col-span-2">
+                    <label className="block text-sm font-medium mb-2">Patient Type *</label>
+                    <div className="flex gap-4">
+                      <label className="flex items-center gap-2 cursor-pointer bg-white border rounded p-3 flex-1 hover:border-primary-500">
+                        <input type="radio" name="patientType" value="PRIVATE" checked={formData.patientType === 'PRIVATE'} onChange={handleInputChange} className="text-primary-600 focus:ring-primary-500" />
+                        <span className="font-medium text-gray-700">Private Patient (Out of pocket)</span>
+                      </label>
+                      <label className="flex items-center gap-2 cursor-pointer bg-white border rounded p-3 flex-1 hover:border-primary-500">
+                        <input type="radio" name="patientType" value="HMO" checked={formData.patientType === 'HMO'} onChange={handleInputChange} className="text-primary-600 focus:ring-primary-500" />
+                        <span className="font-medium text-gray-700">HMO / Insurance</span>
+                      </label>
+                    </div>
+                  </div>
+                  
+                  {formData.patientType === 'HMO' && (
+                    <>
+                      <div>
+                        <label className="block text-sm font-medium mb-1">HMO Provider Name *</label>
+                        <Dropdown name="hmoProvider" value={formData.hmoProvider} onChange={handleInputChange} className="input w-full" required={formData.patientType === 'HMO'}>
+                          <option value="">Select HMO provider...</option>
+                          {hmoProviders.filter(p => p.type === 'HMO' || p.type === 'NHIA').map(p => (
+                            <option key={p.id} value={p.name}>{p.name}</option>
+                          ))}
+                          <option value="OTHER">Other (specify)</option>
+                        </Dropdown>
+                        {formData.hmoProvider === 'OTHER' && (
+                          <input type="text" name="hmoProviderOther" value={formData.hmoProviderOther} onChange={handleInputChange}
+                            className="input w-full mt-2" placeholder="Enter HMO provider name" required />
+                        )}
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium mb-1">HMO ID / Enrollee Number *</label>
+                        <input type="text" name="hmoNumber" value={formData.hmoNumber} onChange={handleInputChange} className="input w-full" placeholder="e.g. HYG-123456" required={formData.patientType === 'HMO'} />
+                      </div>
+                    </>
+                  )}
+                  
+                  <div className={formData.patientType === 'PRIVATE' ? 'md:col-span-2' : ''}>
+                    <label className="block text-sm font-medium mb-1">NHIS Number <span className="text-gray-400 font-normal">(optional)</span></label>
+                    <input type="text" name="nhisNumber" value={formData.nhisNumber} onChange={handleInputChange} className="input w-full" placeholder="National Health Insurance Number" />
                   </div>
                 </div>
               </div>
@@ -547,13 +827,73 @@ const PatientsPage: React.FC = () => {
 
               {/* Actions */}
               <div className="flex justify-end gap-3">
-                <button type="button" onClick={() => setShowModal(false)} className="btn btn-secondary" disabled={isSubmitting}>Cancel</button>
+                <button type="button" onClick={closeRegistrationModal} className="btn btn-secondary" disabled={isSubmitting}>Cancel</button>
                 <button type="submit" className="btn btn-primary" disabled={isSubmitting}>
                   {isSubmitting ? 'Registering...' : 'Register Patient'}
                 </button>
               </div>
 
             </form>
+          </div>
+        </div>
+      )}
+
+      {newPatientTriage && (
+        <TriageAssessmentModal
+          isOpen={!!newPatientTriage}
+          onClose={() => setNewPatientTriage(null)}
+          patientId={newPatientTriage.id}
+          patientName={newPatientTriage.fullName}
+          onSuccess={() => {
+            setNewPatientTriage(null);
+            toast.success('Triage Completed', 'Patient vitals recorded successfully.');
+          }}
+        />
+      )}
+
+
+      <ConfirmDialog
+        isOpen={confirmIsOpen}
+        onClose={handleCancel}
+        onConfirm={handleConfirm}
+        title={confirmOptions.title}
+        message={confirmOptions.message}
+        confirmText={confirmOptions.confirmText}
+        cancelText={confirmOptions.cancelText}
+        variant={confirmOptions.variant}
+        loading={confirmLoading}
+      />
+
+      {/* Custom Triage Prompt Modal */}
+      {triagePromptPatient && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[60] p-4">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-md p-6 transform transition-all">
+            <div className="flex items-center justify-center w-12 h-12 rounded-full bg-green-100 mx-auto mb-4">
+              <User className="w-6 h-6 text-green-600" />
+            </div>
+            <h3 className="text-xl font-bold text-center mb-2 text-gray-900">Patient Registered Successfully!</h3>
+            <p className="text-gray-600 text-center mb-6">
+              Would you like to take vitals (Triage) for <span className="font-semibold text-gray-800">{triagePromptPatient.fullName}</span> now?
+            </p>
+            <div className="flex justify-center gap-3">
+              <button 
+                type="button" 
+                className="btn btn-secondary px-6" 
+                onClick={() => setTriagePromptPatient(null)}
+              >
+                No, Later
+              </button>
+              <button 
+                type="button" 
+                className="btn btn-primary px-6" 
+                onClick={() => {
+                  setNewPatientTriage(triagePromptPatient);
+                  setTriagePromptPatient(null);
+                }}
+              >
+                Yes, Take Vitals
+              </button>
+            </div>
           </div>
         </div>
       )}

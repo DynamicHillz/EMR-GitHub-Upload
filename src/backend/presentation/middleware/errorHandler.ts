@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { logger } from '../../config/logger';
+import { mapPrismaError } from '../../shared/utils/error-message.util';
 
 export class AppError extends Error {
   statusCode: number;
@@ -76,6 +77,16 @@ export const errorHandler = (
     statusCode = error.statusCode;
     message = error.message;
     isOperational = error.isOperational;
+  } else {
+    const prismaMapping = mapPrismaError(error);
+    if (prismaMapping) {
+      statusCode = prismaMapping.statusCode;
+      message = prismaMapping.message;
+      // Safe to mark operational: these are well-understood, non-sensitive
+      // cases (duplicate/missing/related-record), not an unexpected bug —
+      // this is what lets the specific message survive prod's masking below.
+      isOperational = true;
+    }
   }
 
   // Log error (full technical details)

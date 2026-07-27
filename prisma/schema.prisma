@@ -7,13 +7,98 @@
 // PostgreSQL database
 
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
 }
 
 datasource db {
-  provider  = "postgresql"
-  url       = env("DATABASE_URL")
-  directUrl = env("DIRECT_URL")
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  directUrl  = env("DIRECT_URL")
+  extensions = [pg_trgm]
+}
+
+// ==================== PHASE 2 ENUMS ====================
+enum TriageCategory {
+  RESUSCITATION
+  EMERGENT
+  URGENT
+  SEMI_URGENT
+  NON_URGENT
+  EMERGENCY
+  PRIORITY
+  QUEUE
+  DEAD
+}
+
+enum InsuranceProviderType {
+  NHIA
+  HMO
+  PRIVATE
+}
+
+enum InsurancePlanType {
+  STANDARD
+  COMPREHENSIVE
+  PREMIUM
+}
+
+enum ClaimStatus {
+  DRAFT
+  SUBMITTED
+  APPROVED
+  DENIED
+  PARTIALLY_APPROVED
+  APPEALED
+}
+
+enum ExemptionCriteriaType {
+  AGE
+  CONDITION
+  CUSTOM
+}
+
+enum BloodGroup {
+  A_POSITIVE
+  A_NEGATIVE
+  B_POSITIVE
+  B_NEGATIVE
+  AB_POSITIVE
+  AB_NEGATIVE
+  O_POSITIVE
+  O_NEGATIVE
+  UNKNOWN
+}
+
+enum Genotype {
+  AA
+  AS
+  SS
+  AC
+  SC
+  CC
+  UNKNOWN
+}
+
+enum MaritalStatus {
+  SINGLE
+  MARRIED
+  DIVORCED
+  WIDOWED
+  SEPARATED
+  OTHER
+}
+
+enum PatientType {
+  PRIVATE
+  HMO
+}
+
+enum DiagnosisCertainty {
+  CONFIRMED
+  PROVISIONAL
+  DIFFERENTIAL
+  RULED_OUT
 }
 
 // ==================== MULTI-TENANCY ====================
@@ -44,46 +129,49 @@ model Tenant {
   fontFamily     String  @default("Inter")
 
   // Billing Configuration
-  currency              String  @default("USD")
-  currencySymbol        String  @default("$")
-  taxEnabled            Boolean @default(true)
-  defaultTaxRate        Decimal @default(0)  // Percentage (e.g., 7.50%)
-  taxName               String  @default("VAT")
-  taxId                 String? // Tax identification number
+  currency       String  @default("USD")
+  currencySymbol String  @default("$")
+  taxEnabled     Boolean @default(true)
+  defaultTaxRate Decimal @default(0) // Percentage (e.g., 7.50%)
+  taxName        String  @default("VAT")
+  taxId          String? // Tax identification number
+
+  // Pharmacy Pricing
+  defaultMarkupPercent Decimal @default(40) // Percentage applied to unit cost to suggest a selling price for medication/consumable batches (e.g., 40.00%)
 
   // Payment Methods
-  acceptCash            Boolean @default(true)
-  acceptCard            Boolean @default(true)
-  acceptMobileMoney     Boolean @default(true)
-  acceptBankTransfer    Boolean @default(true)
-  acceptInsurance       Boolean @default(false)
+  acceptCash         Boolean @default(true)
+  acceptCard         Boolean @default(true)
+  acceptMobileMoney  Boolean @default(true)
+  acceptBankTransfer Boolean @default(true)
+  acceptInsurance    Boolean @default(false)
 
   // Invoice Settings
-  invoicePrefix         String  @default("INV")
-  invoiceStartNumber    Int     @default(1000)
-  invoiceFooterText     String?
-  termsAndConditions    String?
+  invoicePrefix      String  @default("INV")
+  invoiceStartNumber Int     @default(1000)
+  invoiceFooterText  String?
+  termsAndConditions String?
 
   // Bank Details
-  bankName              String?
-  accountNumber         String?
-  accountName           String?
-  swiftCode             String?
+  bankName      String?
+  accountNumber String?
+  accountName   String?
+  swiftCode     String?
 
   // Mobile Money Details
-  mobileMoneyProvider   String?
-  mobileMoneyNumber     String?
-  mobileMoneyName       String?
+  mobileMoneyProvider String?
+  mobileMoneyNumber   String?
+  mobileMoneyName     String?
 
   // Payment Gateway Configuration
-  paystackEnabled       Boolean @default(false)
-  paystackPublicKey     String?
-  paystackSecretKey     String?
-  flutterwaveEnabled    Boolean @default(false)
-  flutterwavePublicKey  String?
-  flutterwaveSecretKey  String?
-  moniepointEnabled     Boolean @default(false)
-  moniepointApiKey      String?
+  paystackEnabled        Boolean @default(false)
+  paystackPublicKey      String?
+  paystackSecretKey      String?
+  flutterwaveEnabled     Boolean @default(false)
+  flutterwavePublicKey   String?
+  flutterwaveSecretKey   String?
+  moniepointEnabled      Boolean @default(false)
+  moniepointApiKey       String?
   moniepointContractCode String?
 
   // Settings (JSON)
@@ -93,24 +181,65 @@ model Tenant {
   updatedAt DateTime @updatedAt
 
   // Relations
-  users             User[]
-  patients          Patient[]
-  appointments      Appointment[]
-  consultations     Consultation[]
-  prescriptions     Prescription[]
-  labTests          LabTest[]
-  medications       Medication[]
-  medicationBatches MedicationBatch[]
-  dispensingRecords DispensingRecord[]
-  stockAlerts       StockAlert[]
-  invoices          Invoice[]
-  payments          Payment[]
-  refunds                   Refund[]
-  serviceCatalog            ServiceCatalog[]
-  devices                   SyncDevice[]
-  auditLogs                 AuditLog[]
-  paymentAuditLogs          PaymentAuditLog[]
-  fraudPreventionSettings   FraudPreventionSettings?
+  users                    User[]
+  patients                 Patient[]
+  appointments             Appointment[]
+  consultations            Consultation[]
+  prescriptions            Prescription[]
+  labTests                 LabTest[]
+  labParameters            LabParameter[]
+  imagingTests             ImagingTest[]
+  imagingResults           ImagingResult[]
+  labOrders                LabOrder[]
+  labTestRecords           LabTestRecord[]
+  inventoryCategories      InventoryCategory[]
+  medications              Medication[]
+  medicationBatches        MedicationBatch[]
+  dispensingRecords        DispensingRecord[]
+  stockAlerts              StockAlert[]
+  invoices                 Invoice[]
+  payments                 Payment[]
+  refunds                  Refund[]
+  serviceCatalog           ServiceCatalog[]
+  devices                  SyncDevice[]
+  auditLogs                AuditLog[]
+  paymentAuditLogs         PaymentAuditLog[]
+  fraudPreventionSettings  FraudPreventionSettings?
+  DrugInteraction          DrugInteraction[]
+  Ward                     Ward[]
+  Bed                      Bed[]
+  Admission                Admission[]
+  WardRound                WardRound[]
+  MedicationAdministration MedicationAdministration[]
+  VitalChart               VitalChart[]
+  FluidChart               FluidChart[]
+  TransfusionChart         TransfusionChart[]
+  BloodSugarChart          BloodSugarChart[]
+  AdmissionDiagnosis       AdmissionDiagnosis[]
+  DischargeSummary         DischargeSummary[]
+  BedTransferHistory       BedTransferHistory[]
+  OperationNote            OperationNote[]
+  Consumable               Consumable[]
+  ConsumableBatch          ConsumableBatch[]
+  ConsumableUsage          ConsumableUsage[]
+  Notification             Notification[]
+  DiagnosisCatalog         DiagnosisCatalog[]
+  ConsultationDiagnosis    ConsultationDiagnosis[]
+  Triage                   Triage[]
+  PatientAllergy           PatientAllergy[]
+  NextOfKin                NextOfKin[]
+  insuranceProviders       InsuranceProvider[]
+  patientInsurances        PatientInsurance[]
+  insuranceClaims          InsuranceClaim[]
+  exemptionPolicies        ExemptionPolicy[]
+  LabResultValue           LabResultValue[]
+  AncPregnancy             AncPregnancy[]
+  AncVisit                 AncVisit[]
+  PatientImmunization      PatientImmunization[]
+  ImmunizationSchedule     ImmunizationSchedule[]
+  LaborRecord              LaborRecord[]
+  PartographObservation    PartographObservation[]
+  SyncConflict             SyncConflict[]
 
   @@map("tenants")
 }
@@ -136,35 +265,65 @@ model User {
   status UserStatus @default(ACTIVE)
 
   // Security
-  lastLogin           DateTime?
-  failedLoginAttempts Int       @default(0)
-  lockedUntil         DateTime?
+  lastLogin             DateTime?
+  failedLoginAttempts   Int       @default(0)
+  lockedUntil           DateTime?
+  requirePasswordChange Boolean   @default(true)
+  passwordChangedAt     DateTime?
+  passwordHistory       String[]  @default([])
+
+  // Soft Delete
+  isDeleted Boolean   @default(false)
+  deletedAt DateTime?
+  deletedBy String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   // Relations
-  tenant                    Tenant               @relation(fields: [tenantId], references: [id])
-  consultations             Consultation[]
-  prescriptions             Prescription[]
-  labTestsOrdered           LabTest[]            @relation("OrderedBy")
-  labTestsReviewed          LabTest[]            @relation("ReviewedBy")
-  dispensingRecords         DispensingRecord[]   @relation("PharmacistDispensing")
-  appointments              Appointment[]
-  invoices                  Invoice[]
-  payments                  Payment[]
-  paymentsApproved          Payment[]            @relation("PaymentApprovals")
-  paymentsReconciled        Payment[]            @relation("PaymentReconciliations")
-  paymentsFlagged           Payment[]            @relation("PaymentFlags")
-  paymentsReviewed          Payment[]            @relation("PaymentReviews")
-  paymentAuditLogs          PaymentAuditLog[]
-  refundsRequested          Refund[]             @relation("RefundRequester")
-  refundsApproved           Refund[]             @relation("RefundApprover")
-  refundsRejected           Refund[]             @relation("RefundRejecter")
-  auditLogs                 AuditLog[]
-  passwordResetTokens       PasswordResetToken[]
-  refreshTokens             RefreshToken[]
-  sessions                  Session[]
+  tenant                 Tenant               @relation(fields: [tenantId], references: [id])
+  consultations          Consultation[]
+  prescriptions          Prescription[]
+  labOrdersOrdered       LabOrder[]           @relation("OrderedBy")
+  labTestRecordsReviewed LabTestRecord[]      @relation("ReviewedBy")
+  dispensingRecords      DispensingRecord[]   @relation("PharmacistDispensing")
+  appointments           Appointment[]
+  invoices               Invoice[]
+  payments               Payment[]
+  paymentsApproved       Payment[]            @relation("PaymentApprovals")
+  triageAssessments      Triage[]             @relation("TriageNurse")
+  paymentsReconciled     Payment[]            @relation("PaymentReconciliations")
+  imagingReports         ImagingResult[]      @relation("ImagingReporter")
+  paymentsFlagged        Payment[]            @relation("PaymentFlags")
+  paymentsReviewed       Payment[]            @relation("PaymentReviews")
+  paymentAuditLogs       PaymentAuditLog[]
+  refundsRequested       Refund[]             @relation("RefundRequester")
+  refundsApproved        Refund[]             @relation("RefundApprover")
+  refundsRejected        Refund[]             @relation("RefundRejecter")
+  auditLogs              AuditLog[]
+  passwordResetTokens    PasswordResetToken[]
+  refreshTokens          RefreshToken[]
+  sessions               Session[]
+
+  admissionsAdmitted        Admission[]                @relation("AdmissionsAdmitted")
+  wardRounds                WardRound[]                @relation("WardRoundsConducted")
+  medAdministrations        MedicationAdministration[] @relation("MedAdministrations")
+  vitalChartsRecorded       VitalChart[]               @relation("VitalChartsRecorded")
+  fluidChartsRecorded       FluidChart[]               @relation("FluidChartsRecorded")
+  transfusionChartsRecorded TransfusionChart[]         @relation("TransfusionChartsRecorded")
+  bloodSugarChartsRecorded  BloodSugarChart[]          @relation("BloodSugarChartsRecorded")
+  bedTransfers              BedTransferHistory[]       @relation("BedTransfers")
+  operationNotesRecorded    OperationNote[]            @relation("OperationNotesRecorded")
+  consumableUsageRecorded   ConsumableUsage[]          @relation("ConsumableUsageRecorded")
+  notifications             Notification[]
+
+  laborRecordsStarted            LaborRecord[]           @relation("LaborRecordsStarted")
+  laborRecordsDelivered          LaborRecord[]           @relation("LaborRecordsDelivered")
+  partographObservationsRecorded PartographObservation[] @relation("PartographObservationsRecorded")
+  syncConflictsResolved          SyncConflict[]
+  deletionReason            String?
+  ancVisits                 AncVisit[]
+  administeredImmunizations PatientImmunization[]
 
   @@unique([tenantId, email])
   @@map("users")
@@ -181,30 +340,33 @@ model Patient {
   firstName     String
   lastName      String
   dateOfBirth   DateTime
-  gender Gender
+  gender        Gender
   phone         String
   email         String?
   address       String?
   city          String?
   state         String?
   lga           String? // Local Government Area (Nigeria)
-  country       String   @default("Nigeria")
+  country       String         @default("Nigeria")
   nationality   String?
   occupation    String?
-  maritalStatus String?
+  maritalStatus MaritalStatus?
 
   // Medical History
-  bloodGroup          String?
-  genotype            String? // AA, AS, SS, AC, etc.
-  allergies           String[] // Array of allergy names
+  bloodGroup          BloodGroup?
+  genotype            Genotype? // AA, AS, SS, AC, etc.
+  allergies           String[] // Legacy
   chronicConditions   String[] // Array of chronic conditions
   pastSurgicalHistory String? // Past surgeries and major medical procedures
 
   // Emergency Contact (stored as JSON)
   emergencyContact Json? // { name, relationship, phone, address }
 
-  // NHIS
-  nhisNumber String?
+  // NHIS & HMO
+  patientType PatientType @default(PRIVATE)
+  hmoProvider String?
+  hmoNumber   String?
+  nhisNumber  String?
 
   // Photo
   photoUrl String?
@@ -215,28 +377,52 @@ model Patient {
   consentVersion String?
 
   // Status
-  status PatientStatus @default(ACTIVE)
+  status    AlertStatus @default(ACTIVE)
+  isDeleted Boolean     @default(false)
   deletedAt DateTime? // For soft deletes
+  deletedBy String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   createdBy String?
   updatedBy String?
 
+  // Optimistic concurrency — incremented on every update, checked by callers
+  // that supply an expectedVersion (currently: the offline-sync push path).
+  version Int @default(1)
+
   // Relations
-  tenant        Tenant         @relation(fields: [tenantId], references: [id])
-  appointments  Appointment[]
-  consultations Consultation[]
-  prescriptions Prescription[]
-  labTests      LabTest[]
-  invoices      Invoice[]
-  payments      Payment[]
-  refunds       Refund[]
+  tenant         Tenant                @relation(fields: [tenantId], references: [id])
+  appointments   Appointment[]
+  consultations  Consultation[]
+  prescriptions  Prescription[]
+  labOrders      LabOrder[]
+  invoices       Invoice[]
+  payments       Payment[]
+  refunds        Refund[]
+  Admission      Admission[]
+  Triage         Triage[]
+  PatientAllergy PatientAllergy[]
+  NextOfKin      NextOfKin[]
+  insurances     PatientInsurance[]
+  ancPregnancies AncPregnancy[]
+  immunizations  PatientImmunization[]
+  ImagingResult  ImagingResult[]
+  laborRecords   LaborRecord[]
+  consumableUsageRecords ConsumableUsage[]
 
   @@unique([tenantId, patientId])
   @@unique([tenantId, phone])
   @@index([tenantId, lastName, firstName])
   @@index([tenantId, status])
+  // Trigram GIN indexes — the search repository does `contains`/ILIKE
+  // matching on these four fields, which a plain btree index (above)
+  // can't accelerate. Without these, every search is a sequential scan
+  // that gets linearly worse as the patient table grows.
+  @@index([firstName(ops: raw("gin_trgm_ops"))], type: Gin)
+  @@index([lastName(ops: raw("gin_trgm_ops"))], type: Gin)
+  @@index([patientId(ops: raw("gin_trgm_ops"))], type: Gin)
+  @@index([phone(ops: raw("gin_trgm_ops"))], type: Gin)
   @@map("patients")
 }
 
@@ -256,18 +442,25 @@ model Appointment {
   duration        Int      @default(30) // minutes
 
   // Status
-  status AppointmentStatus @default(SCHEDULED)
+  status             AppointmentStatus @default(SCHEDULED)
   checkedInAt        DateTime?
   completedAt        DateTime?
   cancelledAt        DateTime?
   cancellationReason String?
 
   // Reminders
-  reminderSent24h Boolean @default(false)
-  reminderSent2h  Boolean @default(false)
+  reminderSent24h Boolean   @default(false)
+  reminderSent2h  Boolean   @default(false)
+  // Soft Delete
+  isDeleted       Boolean   @default(false)
+  deletedAt       DateTime?
+  deletedBy       String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  // Optimistic concurrency — see Patient.version for the pattern.
+  version Int @default(1)
 
   // Relations
   tenant  Tenant  @relation(fields: [tenantId], references: [id])
@@ -293,7 +486,9 @@ model Consultation {
   plan       String? // Treatment plan
 
   // Vital Signs
-  bloodPressure String? // e.g., "120/80"
+  bloodPressure String? // e.g., "120/80" (DEPRECATED)
+  systolicBP    Int?
+  diastolicBP   Int?
   heartRate     Int?
   temperature   Float?
   weight        Float?
@@ -305,19 +500,32 @@ model Consultation {
   icd10Codes String? // JSON array
 
   // Status
-  status InvoiceStatus @default(DRAFT)
-  finalizedAt DateTime?
+  status        ConsultationStatus @default(IN_PROGRESS)
+  billingStatus BillingStatus      @default(UNBILLED)
+  finalizedAt   DateTime?
 
-  consultationDate DateTime @default(now())
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  consultationDate DateTime  @default(now())
+  // Soft Delete
+  isDeleted        Boolean   @default(false)
+  deletedAt        DateTime?
+  deletedBy        String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Optimistic concurrency — see Patient.version for the pattern.
+  version Int @default(1)
 
   // Relations
-  tenant        Tenant         @relation(fields: [tenantId], references: [id])
-  patient       Patient        @relation(fields: [patientId], references: [id])
-  doctor        User           @relation(fields: [doctorId], references: [id])
-  prescriptions Prescription[]
-  labTests      LabTest[]
+  tenant           Tenant                  @relation(fields: [tenantId], references: [id])
+  patient          Patient                 @relation(fields: [patientId], references: [id])
+  doctor           User                    @relation(fields: [doctorId], references: [id])
+  prescriptions    Prescription[]
+  labOrders        LabOrder[]
+  diagnoses        ConsultationDiagnosis[]
+  ancVisit         AncVisit?
+  invoiceLineItems InvoiceLineItem[]
+  consumableUsageRecords ConsumableUsage[]
 
   @@index([tenantId, patientId])
   @@index([tenantId, consultationDate])
@@ -332,14 +540,27 @@ model Prescription {
   patientId      String
   consultationId String?
   doctorId       String
+  type           String  @default("OUTPATIENT") // OUTPATIENT, INPATIENT, DISCHARGE
 
   // Prescription Details
+  medicationId   String?
   medicationName String
+  route          AdministrationRoute @default(ORAL)
   dosage         String
   frequency      String
   duration       String
   instructions   String?
   quantity       Int?
+  quantityUnit   String?
+  startDate      DateTime?
+  endDate        DateTime?
+
+  // Refills & Controlled Substances
+  refillsAllowed         Int     @default(0)
+  refillCount            Int     @default(0)
+  originalPrescriptionId String?
+  isControlledSubstance  Boolean @default(false)
+  scheduleClass          String?
 
   // Dispensing
   dispensedAt DateTime?
@@ -348,21 +569,41 @@ model Prescription {
   expiryDate  DateTime?
 
   // Status
-  status PrescriptionStatus @default(PENDING)
+  status        PrescriptionStatus @default(PENDING)
+  billingStatus BillingStatus      @default(UNBILLED)
 
   // Warnings
-  allergyWarning     Boolean @default(false)
-  interactionWarning Boolean @default(false)
+  allergyWarning     Boolean   @default(false)
+  interactionWarning Boolean   @default(false)
+  // Soft Delete
+  isDeleted          Boolean   @default(false)
+  deletedAt          DateTime?
+  deletedBy          String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  // Optimistic concurrency — see Patient.version for the pattern. No
+  // general-purpose "edit prescription" endpoint exists today (only
+  // workflow transitions like dispense/cancel, which are already guarded
+  // by status checks) — this field exists for the sync entity map and
+  // future use, not wired into a specific update path yet.
+  version Int @default(1)
+
   // Relations
-  tenant           Tenant            @relation(fields: [tenantId], references: [id])
-  patient          Patient           @relation(fields: [patientId], references: [id])
-  consultation     Consultation?     @relation(fields: [consultationId], references: [id])
-  doctor           User              @relation(fields: [doctorId], references: [id])
-  dispensingRecord DispensingRecord?
+  tenant                   Tenant                     @relation(fields: [tenantId], references: [id])
+  patient                  Patient                    @relation(fields: [patientId], references: [id])
+  consultation             Consultation?              @relation(fields: [consultationId], references: [id])
+  doctor                   User                       @relation(fields: [doctorId], references: [id])
+  medication               Medication?                @relation(fields: [medicationId], references: [id])
+  dispensingRecord         DispensingRecord?
+  Admission                Admission?                 @relation(fields: [admissionId], references: [id])
+  admissionId              String?
+  ancVisit                 AncVisit?                  @relation(fields: [ancVisitId], references: [id])
+  ancVisitId               String?
+  MedicationAdministration MedicationAdministration[]
+  deletionReason           String?
+  invoiceLineItems         InvoiceLineItem[]
 
   @@index([tenantId, patientId])
   @@index([tenantId, status])
@@ -370,32 +611,159 @@ model Prescription {
   @@map("prescriptions")
 }
 
-// ==================== LABORATORY MANAGEMENT ====================
+// ==================== LABORATORY ARCHITECTURE ====================
 
 model LabTest {
+  id        String  @id @default(cuid())
+  tenantId  String
+  name      String
+  category  String // Hematology | Chemistry | Serology | Hormone | Microbiology | Imaging
+  price     Int     @default(0) // in Naira, no decimals
+  isActive  Boolean @default(true)
+  loincCode String?
+
+  parameters  LabTestParameter[]
+  testRecords LabTestRecord[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  tenant    Tenant   @relation(fields: [tenantId], references: [id])
+
+  @@map("lab_tests")
+}
+
+model LabParameter {
+  id                   String  @id @default(cuid())
+  tenantId             String
+  name                 String
+  unit                 String?
+  refRangeMale         String?
+  refRangeFemale       String?
+  refRangeNotes        String? // free text for ranges that depend on age/phase/method
+  needsClinicalReview  Boolean @default(false)
+  loincCode            String?
+  deltaCheckPercentage Float? // e.g., 20.0 means a 20% change triggers an alert
+
+  tests           LabTestParameter[]
+  resultValues    LabResultValue[]
+  referenceRanges LabReferenceRange[]
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@map("lab_parameters")
+}
+
+model LabReferenceRange {
+  id          String  @id @default(cuid())
+  parameterId String
+  minAgeDays  Int?
+  maxAgeDays  Int?
+  gender      String? // MALE, FEMALE, ANY
+  minNumeric  Float?
+  maxNumeric  Float?
+  textRange   String?
+
+  parameter LabParameter @relation(fields: [parameterId], references: [id], onDelete: Cascade)
+
+  @@map("lab_reference_ranges")
+}
+
+model LabTestParameter {
+  testId       String
+  parameterId  String
+  displayOrder Int
+
+  test      LabTest      @relation(fields: [testId], references: [id], onDelete: Cascade)
+  parameter LabParameter @relation(fields: [parameterId], references: [id], onDelete: Cascade)
+
+  @@id([testId, parameterId])
+  @@map("lab_test_parameters")
+}
+
+model ImagingTest {
+  id       String  @id @default(cuid())
+  tenantId String
+  name     String
+  price    Int     @default(0)
+  active   Boolean @default(true)
+
+  results ImagingResult[]
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@map("imaging_tests")
+}
+
+model ImagingResult {
+  id            String   @id @default(cuid())
+  tenantId      String
+  imagingTestId String
+  patientId     String
+  findings      String // free text
+  images        String[] // file paths/URLs
+  reportedBy    String
+  reportedAt    DateTime @default(now())
+
+  imagingTest ImagingTest @relation(fields: [imagingTestId], references: [id], onDelete: Cascade)
+  patient     Patient     @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  tenant      Tenant      @relation(fields: [tenantId], references: [id])
+  reporter    User        @relation("ImagingReporter", fields: [reportedBy], references: [id])
+
+  @@map("imaging_results")
+}
+
+model LabOrder {
   id             String  @id @default(uuid())
   tenantId       String
   patientId      String
   consultationId String?
+  admissionId    String?
   orderedById    String
 
-  // Test Details
-  testName           String
-  testCode           String?
-  clinicalIndication String?
-  urgency TestUrgency @default(ROUTINE)
+  orderNumber   String?     @unique
+  urgency       TestUrgency @default(ROUTINE)
+  clinicalNotes String?
+
+  status        LabTestStatus @default(PENDING)
+  billingStatus BillingStatus @default(UNBILLED)
+  totalAmount   Int           @default(0) // snapshot of total cost in Naira
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant           Tenant            @relation(fields: [tenantId], references: [id])
+  patient          Patient           @relation(fields: [patientId], references: [id])
+  consultation     Consultation?     @relation(fields: [consultationId], references: [id])
+  admission        Admission?        @relation(fields: [admissionId], references: [id])
+  orderedBy        User              @relation("OrderedBy", fields: [orderedById], references: [id])
+  testRecords      LabTestRecord[]
+  invoiceLineItems InvoiceLineItem[]
+
+  // Soft Delete
+  isDeleted      Boolean   @default(false)
+  deletedAt      DateTime?
+  deletedBy      String?
+  deletionReason String?
+
+  @@index([tenantId, patientId])
+  @@index([tenantId, status])
+  @@map("lab_orders")
+}
+
+model LabTestRecord {
+  id       String @id @default(uuid())
+  tenantId String
+  orderId  String
+  testId   String
+
+  accessionNumber String? @unique
+  unitPrice       Int     @default(0) // snapshot of the test's price at order time
 
   // Specimen
   specimenType    String?
   specimenQuality String?
   collectedAt     DateTime?
   rejectionReason String?
-
-  // Results
-  results         String? // JSON structure
-  resultNotes     String?
-  abnormalFlags   String? // JSON array of flagged results
-  referenceRanges String? // JSON structure
 
   // Review & Approval
   reviewedById String?
@@ -412,19 +780,72 @@ model LabTest {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  // Relations
-  tenant       Tenant        @relation(fields: [tenantId], references: [id])
-  patient      Patient       @relation(fields: [patientId], references: [id])
-  consultation Consultation? @relation(fields: [consultationId], references: [id])
-  orderedBy    User          @relation("OrderedBy", fields: [orderedById], references: [id])
-  reviewedBy   User?         @relation("ReviewedBy", fields: [reviewedById], references: [id])
+  tenant       Tenant           @relation(fields: [tenantId], references: [id])
+  order        LabOrder         @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  test         LabTest          @relation(fields: [testId], references: [id])
+  reviewedBy   User?            @relation("ReviewedBy", fields: [reviewedById], references: [id])
+  resultValues LabResultValue[]
 
-  @@index([tenantId, patientId])
+  // Soft Delete
+  isDeleted      Boolean   @default(false)
+  deletedAt      DateTime?
+  deletedBy      String?
+  deletionReason String?
+
+  @@index([tenantId, orderId])
   @@index([tenantId, status])
-  @@map("lab_tests")
+  @@map("lab_test_records")
+}
+
+model LabResultValue {
+  id           String @id @default(uuid())
+  tenantId     String @default("3ffae4f7-d90b-4d2a-b67e-0f98d35fde70")
+  testRecordId String
+  parameterId  String
+
+  numericValue Float?
+  textValue    String?
+  jsonValue    Json? // For complex microbiology / C&S results
+
+  // Flags dynamically calculated
+  isAbnormal Boolean @default(false)
+  isCritical Boolean @default(false)
+  flagType   String? // HIGH, LOW, CRITICAL_HIGH, CRITICAL_LOW, ABNORMAL
+
+  // Delta Checks
+  hasDeltaAlert   Boolean @default(false)
+  deltaAlertNotes String?
+
+  enteredAt DateTime @default(now())
+
+  testRecord LabTestRecord @relation(fields: [testRecordId], references: [id], onDelete: Cascade)
+  parameter  LabParameter  @relation(fields: [parameterId], references: [id])
+  tenant     Tenant        @relation(fields: [tenantId], references: [id])
+
+  @@unique([testRecordId, parameterId])
+  @@index([tenantId])
+  @@map("lab_result_values")
 }
 
 // ==================== PHARMACY MANAGEMENT ====================
+
+// Backs ManageCategoriesModal.tsx / pharmacy.controller.ts's inventory
+// category endpoints — those referenced `prisma.inventoryCategory` under
+// @ts-ignore with no backing model, so every call to
+// GET/POST/PUT/DELETE /api/pharmacy/categories threw at runtime.
+model InventoryCategory {
+  id          String   @id @default(uuid())
+  tenantId    String
+  name        String
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@unique([tenantId, name])
+  @@map("inventory_categories")
+}
 
 model Medication {
   id       String @id @default(uuid())
@@ -435,27 +856,37 @@ model Medication {
   genericName      String?
   brandName        String?
   activeIngredient String?
-  category ServiceCategory?
-  dosageForm       String? // Tablet, Capsule, Syrup, etc.
-  strength         String?
+  category         String?
+  dosageForm       String // Tablet, Capsule, Syrup, etc. — required so prescribing can rely on it
+  strength         String // required so prescribing can rely on it
   drugClass        String?
   rxcui            String? // RxNorm Concept Unique Identifier
 
   // Inventory
-  stockLevel   Int   @default(0)
-  reorderPoint Int   @default(10)
-  unitPrice    Float
+  stockLevel   Int     @default(0)
+  reorderPoint Int     @default(10)
+  unitPrice    Decimal @db.Decimal(12, 2)
+
+  // Phase 2 Controlled Substance
+  isControlledSubstance Boolean @default(false)
+  scheduleClass         String?
 
   // Status
-  status String @default("AVAILABLE")
+  status    String    @default("AVAILABLE")
+  // Soft Delete
+  isDeleted Boolean   @default(false)
+  deletedAt DateTime?
+  deletedBy String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   // Relations
-  tenant      Tenant            @relation(fields: [tenantId], references: [id])
-  batches     MedicationBatch[]
-  stockAlerts StockAlert[]
+  tenant         Tenant            @relation(fields: [tenantId], references: [id])
+  batches        MedicationBatch[]
+  stockAlerts    StockAlert[]
+  prescriptions  Prescription[]
+  deletionReason String?
 
   @@index([tenantId, name])
   @@index([tenantId, activeIngredient])
@@ -472,24 +903,29 @@ model MedicationBatch {
   batchNumber  String
   expiryDate   DateTime
   quantity     Int
-  unitCost     Float
-  sellingPrice Float
+  unitCost     Decimal  @db.Decimal(12, 2)
+  sellingPrice Decimal  @db.Decimal(12, 2)
 
   // Supplier
   supplier     String?
   purchaseDate DateTime?
 
   // Status
-  status BatchStatus @default(ACTIVE)
+  status    BatchStatus @default(ACTIVE)
+  // Soft Delete
+  isDeleted Boolean     @default(false)
+  deletedAt DateTime?
+  deletedBy String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   // Relations
-  tenant      Tenant             @relation(fields: [tenantId], references: [id])
-  medication  Medication         @relation(fields: [medicationId], references: [id])
-  dispensings DispensingRecord[]
-  stockAlerts StockAlert[]
+  tenant         Tenant             @relation(fields: [tenantId], references: [id])
+  medication     Medication         @relation(fields: [medicationId], references: [id])
+  dispensings    DispensingRecord[]
+  stockAlerts    StockAlert[]
+  deletionReason String?
 
   @@unique([tenantId, medicationId, batchNumber])
   @@index([tenantId, expiryDate])
@@ -514,14 +950,19 @@ model DispensingRecord {
 
   // Notes
   pharmacistNotes String?
+  // Soft Delete
+  isDeleted       Boolean   @default(false)
+  deletedAt       DateTime?
+  deletedBy       String?
 
   createdAt DateTime @default(now())
 
   // Relations
-  tenant       Tenant          @relation(fields: [tenantId], references: [id])
-  prescription Prescription    @relation(fields: [prescriptionId], references: [id])
-  batch        MedicationBatch @relation(fields: [batchId], references: [id])
-  pharmacist   User            @relation("PharmacistDispensing", fields: [pharmacistId], references: [id])
+  tenant         Tenant          @relation(fields: [tenantId], references: [id])
+  prescription   Prescription    @relation(fields: [prescriptionId], references: [id])
+  batch          MedicationBatch @relation(fields: [batchId], references: [id])
+  pharmacist     User            @relation("PharmacistDispensing", fields: [pharmacistId], references: [id])
+  deletionReason String?
 
   @@index([tenantId, dispensedAt])
   @@index([tenantId, pharmacistId])
@@ -529,14 +970,15 @@ model DispensingRecord {
 }
 
 model DrugInteraction {
-  id String @id @default(uuid())
+  id       String @id @default(uuid())
+  tenantId String
 
   // Drug Names (generic or brand)
   drug1 String
   drug2 String
 
   // Interaction Details
-  severity InteractionSeverity
+  severity       AlertSeverity
   description    String
   clinicalEffect String?
   management     String?
@@ -547,10 +989,12 @@ model DrugInteraction {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+  tenant    Tenant   @relation(fields: [tenantId], references: [id])
 
   @@unique([drug1, drug2])
   @@index([drug1])
   @@index([drug2])
+  @@index([tenantId])
   @@map("drug_interactions")
 }
 
@@ -562,12 +1006,12 @@ model StockAlert {
 
   // Alert Details
   alertType String
-  severity InteractionSeverity
+  severity  AlertSeverity
   message   String
   threshold Int?
 
   // Status
-  status PatientStatus @default(ACTIVE)
+  status         AlertStatus @default(ACTIVE)
   acknowledgedBy String?
   acknowledgedAt DateTime?
   resolvedAt     DateTime?
@@ -585,6 +1029,139 @@ model StockAlert {
   @@map("stock_alerts")
 }
 
+// ==================== CONSUMABLES (non-drug supplies: syringes, gloves,
+// gauze, cannula, etc. — stocked and billed like medications, but without
+// dosage form/strength/drug-interaction concepts, and usage is a single
+// step rather than a prescribe-then-dispense flow) ====================
+
+model Consumable {
+  id       String @id @default(uuid())
+  tenantId String
+
+  name        String
+  category    String?
+  unit        String  @default("piece") // piece, box, pack, roll, etc. — how it's counted
+  description String?
+
+  // Inventory
+  stockLevel   Int     @default(0)
+  reorderPoint Int     @default(10)
+  unitPrice    Decimal @db.Decimal(12, 2)
+
+  // Status
+  status    String    @default("AVAILABLE")
+  // Soft Delete
+  isDeleted Boolean   @default(false)
+  deletedAt DateTime?
+  deletedBy String?
+  deletionReason String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  tenant       Tenant            @relation(fields: [tenantId], references: [id])
+  batches      ConsumableBatch[]
+  usageRecords ConsumableUsage[]
+
+  @@index([tenantId, name])
+  @@map("consumables")
+}
+
+model ConsumableBatch {
+  id           String @id @default(uuid())
+  tenantId     String
+  consumableId String
+
+  // Batch Details
+  batchNumber String
+  expiryDate  DateTime? // optional — some consumables (gloves, cotton wool) aren't tracked by expiry
+  quantity    Int
+  unitCost    Decimal  @db.Decimal(12, 2)
+  sellingPrice Decimal @db.Decimal(12, 2)
+
+  // Supplier
+  supplier     String?
+  purchaseDate DateTime?
+
+  // Status
+  status    BatchStatus @default(ACTIVE)
+  // Soft Delete
+  isDeleted Boolean     @default(false)
+  deletedAt DateTime?
+  deletedBy String?
+  deletionReason String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  tenant       Tenant            @relation(fields: [tenantId], references: [id])
+  consumable   Consumable        @relation(fields: [consumableId], references: [id])
+  usageRecords ConsumableUsage[]
+
+  @@unique([tenantId, consumableId, batchNumber])
+  @@index([tenantId, expiryDate])
+  @@index([tenantId, consumableId, status])
+  @@map("consumable_batches")
+}
+
+// The billable record — this is the single-step "used N of these on this
+// patient" action (no prescription/dispense pair like medications), which
+// both deducts stock and creates an UNBILLED charge for invoice generation
+// to pick up later, exactly like Prescription/LabOrder already do.
+model ConsumableUsage {
+  id           String @id @default(uuid())
+  tenantId     String
+  consumableId String
+  batchId      String
+  patientId    String
+  recordedById String
+
+  admissionId    String?
+  consultationId String?
+
+  quantityUsed Int
+  notes        String?
+
+  // Oxygen-therapy detail — populated only when the consumable's category is
+  // "Oxygen" (or any future therapy needing the same shape, e.g. a
+  // nebulizer treatment); null for ordinary consumables (gloves, syringes,
+  // gauze, etc.). Explicit typed columns rather than a JSON blob so this
+  // stays a real, indexable/queryable field.
+  flowRateLpm    Float?  // Liters per minute
+  deliveryMethod String? // "Nasal Cannula" | "Face Mask" | "Non-Rebreather Mask" | "CPAP/BiPAP"
+  spO2Before     Int?    // SpO2 % immediately before starting
+  spO2After      Int?    // SpO2 % after/during administration
+
+  billingStatus BillingStatus @default(UNBILLED)
+
+  usedAt DateTime @default(now())
+
+  // Soft Delete
+  isDeleted Boolean   @default(false)
+  deletedAt DateTime?
+  deletedBy String?
+  deletionReason String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  tenant           Tenant            @relation(fields: [tenantId], references: [id])
+  consumable       Consumable        @relation(fields: [consumableId], references: [id])
+  batch            ConsumableBatch   @relation(fields: [batchId], references: [id])
+  patient          Patient           @relation(fields: [patientId], references: [id])
+  recordedBy       User              @relation("ConsumableUsageRecorded", fields: [recordedById], references: [id])
+  admission        Admission?        @relation(fields: [admissionId], references: [id])
+  consultation     Consultation?     @relation(fields: [consultationId], references: [id])
+  invoiceLineItems InvoiceLineItem[]
+
+  @@index([tenantId, patientId])
+  @@index([tenantId, billingStatus])
+  @@map("consumable_usage")
+}
+
 // ==================== BILLING & PAYMENTS ====================
 
 model Invoice {
@@ -598,20 +1175,20 @@ model Invoice {
   invoiceDate   DateTime  @default(now())
   dueDate       DateTime?
 
-  // Line Items (JSON)
-  lineItems String // JSON array of services
+  // Line Items
+  items InvoiceLineItem[]
 
   // Amounts
-  subtotal    Float
-  taxAmount   Float @default(0)
-  discount    Float @default(0)
-  totalAmount Float
-  paidAmount  Float @default(0)
-  balance     Float
+  subtotal    Decimal @db.Decimal(12, 2)
+  taxAmount   Decimal @default(0) @db.Decimal(12, 2)
+  discount    Decimal @default(0) @db.Decimal(12, 2)
+  totalAmount Decimal @db.Decimal(12, 2)
+  paidAmount  Decimal @default(0) @db.Decimal(12, 2)
+  balance     Decimal @db.Decimal(12, 2)
 
   // Payment
-  paymentStatus PaymentStatus @default(UNPAID)
-  paymentMethod PaymentMethod?
+  paymentStatus    PaymentStatus  @default(UNPAID)
+  paymentMethod    PaymentMethod?
   paymentDate      DateTime?
   paymentReference String?
 
@@ -619,22 +1196,186 @@ model Invoice {
   status InvoiceStatus @default(DRAFT)
 
   // Notes
-  notes String?
+  notes     String?
+  // Soft Delete
+  isDeleted Boolean   @default(false)
+  deletedAt DateTime?
+  deletedBy String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  // Relations
-  tenant   Tenant    @relation(fields: [tenantId], references: [id])
-  patient  Patient   @relation(fields: [patientId], references: [id])
-  issuedBy User      @relation(fields: [issuedById], references: [id])
-  payments Payment[]
-  refunds  Refund[]
+  // Optimistic concurrency — see Patient.version for the pattern.
+  version Int @default(1)
+
+  tenant    Tenant            @relation(fields: [tenantId], references: [id])
+  patient   Patient           @relation(fields: [patientId], references: [id])
+  issuedBy  User              @relation(fields: [issuedById], references: [id])
+  payments  Payment[]
+  refunds   Refund[]
+  claim     InsuranceClaim?
+  auditLogs InvoiceAuditLog[]
 
   @@unique([tenantId, invoiceNumber])
   @@index([tenantId, patientId])
+  @@index([tenantId, status])
   @@index([tenantId, paymentStatus])
   @@map("invoices")
+}
+
+model InvoiceLineItem {
+  id        String @id @default(uuid())
+  invoiceId String
+
+  serviceCode String
+  description String
+  quantity    Int
+  unitPrice   Decimal @db.Decimal(12, 2)
+  discount    Decimal @default(0) @db.Decimal(12, 2)
+  tax         Decimal @default(0) @db.Decimal(12, 2)
+  subtotal    Decimal @db.Decimal(12, 2)
+
+  insuranceCoverage  Decimal @default(0) @db.Decimal(12, 2)
+  patientOutOfPocket Decimal @db.Decimal(12, 2)
+
+  consultationId     String?
+  prescriptionId     String?
+  labOrderId         String?
+  admissionId        String?
+  consumableUsageId  String?
+  transfusionChartId String?
+  operationNoteId    String?
+  laborRecordId      String?
+
+  invoice         Invoice          @relation(fields: [invoiceId], references: [id])
+  consultation    Consultation?    @relation(fields: [consultationId], references: [id], onDelete: Restrict)
+  prescription    Prescription?    @relation(fields: [prescriptionId], references: [id], onDelete: Restrict)
+  labOrder        LabOrder?        @relation(fields: [labOrderId], references: [id], onDelete: Restrict)
+  admission       Admission?       @relation(fields: [admissionId], references: [id], onDelete: Restrict)
+  consumableUsage ConsumableUsage? @relation(fields: [consumableUsageId], references: [id], onDelete: Restrict)
+  transfusionChart TransfusionChart? @relation(fields: [transfusionChartId], references: [id], onDelete: Restrict)
+  operationNote    OperationNote?    @relation(fields: [operationNoteId], references: [id], onDelete: Restrict)
+  laborRecord      LaborRecord?      @relation(fields: [laborRecordId], references: [id], onDelete: Restrict)
+
+  // Soft Delete
+  isDeleted Boolean   @default(false)
+  deletedAt DateTime?
+  deletedBy String?
+
+  @@index([invoiceId])
+  @@map("invoice_line_items")
+}
+
+model InvoiceAuditLog {
+  id        String @id @default(uuid())
+  tenantId  String
+  invoiceId String
+  userId    String
+  action    String // e.g., CREATED, UPDATED, CANCELLED
+
+  previousValues Json?
+  newValues      Json?
+  notes          String?
+
+  createdAt DateTime @default(now())
+
+  invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, invoiceId])
+  @@index([tenantId, createdAt])
+  @@map("invoice_audit_logs")
+}
+
+model InsuranceProvider {
+  id           String                @id @default(uuid())
+  tenantId     String
+  name         String
+  type         InsuranceProviderType
+  contactPhone String?
+  contactEmail String?
+  address      String?
+
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant   Tenant             @relation(fields: [tenantId], references: [id])
+  policies PatientInsurance[]
+  claims   InsuranceClaim[]
+
+  @@index([tenantId, type])
+  @@map("insurance_providers")
+}
+
+model PatientInsurance {
+  id         String @id @default(uuid())
+  tenantId   String
+  patientId  String
+  providerId String
+
+  policyNumber    String
+  groupNumber     String?
+  planType        InsurancePlanType @default(STANDARD)
+  copayPercentage Decimal           @default(0) @db.Decimal(5, 2)
+
+  validFrom DateTime
+  validTo   DateTime
+  isActive  Boolean  @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant   Tenant            @relation(fields: [tenantId], references: [id])
+  patient  Patient           @relation(fields: [patientId], references: [id])
+  provider InsuranceProvider @relation(fields: [providerId], references: [id])
+
+  @@index([patientId, providerId])
+  @@map("patient_insurance")
+}
+
+model InsuranceClaim {
+  id          String @id @default(uuid())
+  tenantId    String
+  invoiceId   String @unique
+  insuranceId String
+
+  amountClaimed  Decimal     @db.Decimal(12, 2)
+  amountApproved Decimal?    @db.Decimal(12, 2)
+  status         ClaimStatus @default(DRAFT)
+
+  submittedAt   DateTime?
+  adjudicatedAt DateTime?
+  denialReason  String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant   Tenant            @relation(fields: [tenantId], references: [id])
+  invoice  Invoice           @relation(fields: [invoiceId], references: [id])
+  provider InsuranceProvider @relation(fields: [insuranceId], references: [id])
+
+  @@index([tenantId, status])
+  @@map("insurance_claims")
+}
+
+model ExemptionPolicy {
+  id                 String                @id @default(uuid())
+  tenantId           String
+  name               String
+  description        String?
+  criteriaType       ExemptionCriteriaType
+  criteriaValue      String // e.g. "<5", ">65", "PREGNANT"
+  discountPercentage Decimal               @db.Decimal(5, 2) // e.g. 100 for free
+
+  isActive Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@index([tenantId, isActive])
+  @@map("exemption_policies")
 }
 
 model Payment {
@@ -647,7 +1388,7 @@ model Payment {
   // Payment Details
   paymentNumber String // Format: PAY-YYYYMMDD-XXXX
   paymentDate   DateTime      @default(now())
-  amount        Float
+  amount        Decimal       @db.Decimal(12, 2)
   paymentMethod PaymentMethod
 
   // Payment Reference
@@ -677,29 +1418,29 @@ model Payment {
 
   // FRAUD PREVENTION & AUDIT TRAIL
   // Proof of payment (especially for manual cash/bank transfer)
-  receiptPhotoUrl String? // Photo of physical receipt or bank slip
+  receiptPhotoUrl  String? // Photo of physical receipt or bank slip
   proofDocumentUrl String? // Additional proof document
 
   // Verification & Approval (for fraud prevention)
-  requiresApproval Boolean @default(false) // True if amount exceeds threshold
-  approvedById     String? // Supervisor who approved the payment
-  approvedAt       DateTime? // When it was approved
+  requiresApproval  Boolean   @default(false) // True if amount exceeds threshold
+  approvedById      String? // Supervisor who approved the payment
+  approvedAt        DateTime? // When it was approved
   verificationNotes String? // Notes from verifier/supervisor
 
   // Enhanced audit trail
-  ipAddress     String? // IP address where payment was recorded
-  userAgent     String? // Browser/device info
-  deviceId      String? // Unique device identifier
-  locationData  Json? // GPS coordinates if available
+  ipAddress    String? // IP address where payment was recorded
+  userAgent    String? // Browser/device info
+  deviceId     String? // Unique device identifier
+  locationData Json? // GPS coordinates if available
 
   // Reconciliation tracking
-  reconciledAt      DateTime? // When payment was reconciled with bank
-  reconciledById    String? // Who reconciled it
-  bankStatementRef  String? // Reference from bank statement
+  reconciledAt        DateTime? // When payment was reconciled with bank
+  reconciledById      String? // Who reconciled it
+  bankStatementRef    String? // Reference from bank statement
   reconciliationNotes String? // Notes during reconciliation
 
   // Flags for suspicious activity
-  flaggedForReview Boolean @default(false)
+  flaggedForReview Boolean   @default(false)
   flagReason       String? // Why it was flagged
   flaggedAt        DateTime?
   flaggedById      String?
@@ -708,22 +1449,34 @@ model Payment {
   reviewNotes      String?
 
   // Notes
-  notes String?
+  notes     String?
+  // Soft Delete
+  isDeleted Boolean   @default(false)
+  deletedAt DateTime?
+  deletedBy String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  // Optimistic concurrency — see Patient.version for the pattern. No
+  // general-purpose "edit payment" endpoint exists today (payments are
+  // recorded once and reversed via Refund, not field-edited) — this field
+  // exists for the sync entity map and future use, not wired into a
+  // specific update path yet.
+  version Int @default(1)
+
   // Relations
-  tenant      Tenant   @relation(fields: [tenantId], references: [id])
-  invoice     Invoice  @relation(fields: [invoiceId], references: [id])
-  patient     Patient  @relation(fields: [patientId], references: [id])
-  processedBy User     @relation(fields: [processedById], references: [id])
-  approver    User?    @relation("PaymentApprovals", fields: [approvedById], references: [id])
-  reconciler  User?    @relation("PaymentReconciliations", fields: [reconciledById], references: [id])
-  flagger     User?    @relation("PaymentFlags", fields: [flaggedById], references: [id])
-  reviewer    User?    @relation("PaymentReviews", fields: [reviewedById], references: [id])
-  refunds     Refund[]
-  auditLogs   PaymentAuditLog[]
+  tenant         Tenant            @relation(fields: [tenantId], references: [id])
+  invoice        Invoice           @relation(fields: [invoiceId], references: [id])
+  patient        Patient           @relation(fields: [patientId], references: [id])
+  processedBy    User              @relation(fields: [processedById], references: [id])
+  approver       User?             @relation("PaymentApprovals", fields: [approvedById], references: [id])
+  reconciler     User?             @relation("PaymentReconciliations", fields: [reconciledById], references: [id])
+  flagger        User?             @relation("PaymentFlags", fields: [flaggedById], references: [id])
+  reviewer       User?             @relation("PaymentReviews", fields: [reviewedById], references: [id])
+  refunds        Refund[]
+  auditLogs      PaymentAuditLog[]
+  deletionReason String?
 
   @@unique([tenantId, paymentNumber])
   @@index([tenantId, invoiceId])
@@ -744,7 +1497,7 @@ model Refund {
   // Refund Details
   refundNumber String // Format: REF-YYYYMMDD-XXXX
   refundDate   DateTime @default(now())
-  amount       Float
+  amount       Decimal  @db.Decimal(12, 2)
   reason       String
 
   // Approval Workflow
@@ -759,7 +1512,7 @@ model Refund {
   status RefundStatus @default(PENDING)
 
   // Refund Method
-  refundMethod String
+  refundMethod    String
   referenceNumber String?
 
   // Notes
@@ -767,6 +1520,11 @@ model Refund {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  // Soft Delete
+  isDeleted Boolean   @default(false)
+  deletedAt DateTime?
+  deletedBy String?
 
   // Relations
   tenant      Tenant   @relation(fields: [tenantId], references: [id])
@@ -785,10 +1543,10 @@ model Refund {
 
 // FRAUD PREVENTION: Detailed audit log for all payment operations
 model PaymentAuditLog {
-  id        String   @id @default(uuid())
+  id        String             @id @default(uuid())
   tenantId  String
   paymentId String
-  userId    String   // Who performed the action
+  userId    String // Who performed the action
   action    PaymentAuditAction // CREATED, APPROVED, FLAGGED, RECONCILED, etc.
 
   // Details of the action
@@ -797,10 +1555,10 @@ model PaymentAuditLog {
   changesSummary String? // Human-readable summary
 
   // Context
-  ipAddress     String?
-  userAgent     String?
-  deviceId      String?
-  locationData  Json?
+  ipAddress    String?
+  userAgent    String?
+  deviceId     String?
+  locationData Json?
 
   // Additional metadata
   metadata Json? // Any additional context
@@ -826,47 +1584,48 @@ model FraudPreventionSettings {
   tenantId String @unique
 
   // Approval thresholds
-  cashApprovalThreshold          Float   @default(50000) // Amount requiring approval for cash
-  bankTransferApprovalThreshold  Float   @default(100000)
-  mobileMoneyApprovalThreshold   Float   @default(75000)
+  cashApprovalThreshold         Float  @default(50000) // Amount requiring approval for cash
+  bankTransferApprovalThreshold Float  @default(100000)
+  mobileMoneyApprovalThreshold  Float  @default(75000)
+  refundAutoApproveThreshold    Float? // Refund requests at or below this amount skip manual approval
 
   // Mandatory fields for manual payments
-  requireReceiptPhotoForCash     Boolean @default(true)
+  requireReceiptPhotoForCash      Boolean @default(true)
   requireReferenceForBankTransfer Boolean @default(true)
-  requireReferenceForMobileMoney Boolean @default(true)
+  requireReferenceForMobileMoney  Boolean @default(true)
 
   // Duplicate detection settings
-  duplicateDetectionEnabled      Boolean @default(true)
-  duplicateTimeWindowMinutes     Int     @default(30) // Check for duplicates within this window
+  duplicateDetectionEnabled       Boolean @default(true)
+  duplicateTimeWindowMinutes      Int     @default(30) // Check for duplicates within this window
   duplicateAmountTolerancePercent Float   @default(0) // 0 means exact match
 
   // Backdating restrictions
-  allowBackdating               Boolean @default(false)
-  maxBackdatingDays             Int     @default(0) // How many days back can payments be dated
+  allowBackdating   Boolean @default(false)
+  maxBackdatingDays Int     @default(0) // How many days back can payments be dated
 
   // Daily limits per user
-  enableDailyLimits             Boolean @default(false)
-  dailyCashLimitPerUser         Float?
-  dailyTotalLimitPerUser        Float?
+  enableDailyLimits      Boolean @default(false)
+  dailyCashLimitPerUser  Float?
+  dailyTotalLimitPerUser Float?
 
   // Auto-flagging rules
-  autoFlagLargeAmounts          Boolean @default(true)
-  autoFlagAmountThreshold       Float   @default(200000)
+  autoFlagLargeAmounts                Boolean @default(true)
+  autoFlagAmountThreshold             Float   @default(200000)
   autoFlagMultiplePaymentsSameInvoice Boolean @default(true)
-  autoFlagRoundAmounts          Boolean @default(false) // Flag suspiciously round amounts
-  autoFlagOffHoursPayments      Boolean @default(false) // Flag payments outside business hours
+  autoFlagRoundAmounts                Boolean @default(false) // Flag suspiciously round amounts
+  autoFlagOffHoursPayments            Boolean @default(false) // Flag payments outside business hours
 
   // Reconciliation requirements
-  requireDailyReconciliation    Boolean @default(true)
-  reconciliationWindowDays      Int     @default(7) // Must reconcile within X days
+  requireDailyReconciliation Boolean @default(true)
+  reconciliationWindowDays   Int     @default(7) // Must reconcile within X days
 
   // Business hours for off-hours detection
-  businessHoursStart            String? @default("08:00") // HH:MM format
-  businessHoursEnd              String? @default("18:00")
+  businessHoursStart String? @default("08:00") // HH:MM format
+  businessHoursEnd   String? @default("18:00")
 
   // Notifications
-  notifyAdminOnFlaggedPayment   Boolean @default(true)
-  notifyAdminOnLargePayment     Boolean @default(true)
+  notifyAdminOnFlaggedPayment Boolean @default(true)
+  notifyAdminOnLargePayment   Boolean @default(true)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -885,11 +1644,11 @@ model ServiceCatalog {
   serviceCode String
   serviceName String
   description String?
-  category ServiceCategory
+  category    ServiceCategory
 
   // Pricing
-  basePrice Float
-  taxRate   Float @default(0) // Percentage (e.g., 7.5 for 7.5%)
+  basePrice Decimal @db.Decimal(12, 2)
+  taxRate   Decimal @default(0) @db.Decimal(5, 2) // Percentage (e.g., 7.5 for 7.5%)
 
   // Status
   isActive Boolean @default(true)
@@ -899,6 +1658,12 @@ model ServiceCatalog {
 
   // Relations
   tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  // Soft Delete
+  isDeleted      Boolean   @default(false)
+  deletedAt      DateTime?
+  deletedBy      String?
+  deletionReason String?
 
   @@unique([tenantId, serviceCode])
   @@index([tenantId, category])
@@ -912,8 +1677,13 @@ model SyncDevice {
   id       String @id @default(uuid())
   tenantId String
 
-  // Device Information
-  deviceId   String @unique
+  // Device Information — deviceId is tenant-scoped (not bare-unique): if a
+  // deviceId were ever reused across two tenants, a bare-unique constraint
+  // would let the second tenant's registration silently reassign that row's
+  // tenantId, spuriously 403ing the first tenant's subsequent pushes. Not
+  // practically reachable given crypto.randomUUID() entropy, but the
+  // constraint should reflect the actual scoping regardless.
+  deviceId   String
   deviceName String
   deviceType String // LAPTOP, DESKTOP, TABLET
 
@@ -922,24 +1692,25 @@ model SyncDevice {
 
   // Sync Status
   lastSyncAt     DateTime?
-  syncStatus String @default("PENDING")
-  pendingChanges Int        @default(0)
+  syncStatus     String    @default("PENDING")
+  pendingChanges Int       @default(0)
 
   // Device Info
   osVersion  String?
   appVersion String?
 
   // Status
-  status PatientStatus @default(ACTIVE)
+  status DeviceStatus @default(ACTIVE)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   // Relations
-  tenant    Tenant      @relation(fields: [tenantId], references: [id])
-  syncQueue SyncQueue[]
+  tenant        Tenant         @relation(fields: [tenantId], references: [id])
+  syncQueue     SyncQueue[]
+  syncConflicts SyncConflict[]
 
-  @@index([tenantId, deviceId])
+  @@unique([tenantId, deviceId])
   @@map("sync_devices")
 }
 
@@ -950,7 +1721,7 @@ model SyncQueue {
   // Sync Details
   entityType String // PATIENT, CONSULTATION, PRESCRIPTION, etc.
   entityId   String
-  operation SyncOperation
+  operation  SyncOperation
   priority   Int           @default(5) // 1 = highest, 10 = lowest
 
   // Data
@@ -958,7 +1729,7 @@ model SyncQueue {
   checksum String?
 
   // Status
-  status SyncStatus @default(PENDING)
+  status        SyncStatus @default(PENDING)
   attempts      Int        @default(0)
   lastAttemptAt DateTime?
   errorMessage  String?
@@ -971,11 +1742,46 @@ model SyncQueue {
   processedAt DateTime?
 
   // Relations
-  device SyncDevice @relation(fields: [deviceId], references: [id])
+  device    SyncDevice     @relation(fields: [deviceId], references: [id])
+  conflicts SyncConflict[]
 
   @@index([deviceId, status])
   @@index([priority, createdAt])
   @@map("sync_queue")
+}
+
+model SyncConflict {
+  id          String  @id @default(uuid())
+  tenantId    String
+  deviceId    String
+  syncQueueId String?
+
+  entityType String // Matches SyncQueue.entityType
+  entityId   String
+
+  // What the client had vs. what the server actually had at push time
+  localPayload  Json
+  serverPayload Json
+  localVersion  Int
+  serverVersion Int
+
+  status     SyncConflictStatus @default(PENDING)
+  resolution String? // e.g. KEEP_LOCAL, KEEP_SERVER, MERGED
+
+  resolvedById String?
+  resolvedAt   DateTime?
+
+  createdAt DateTime @default(now())
+
+  // Relations
+  tenant     Tenant     @relation(fields: [tenantId], references: [id])
+  device     SyncDevice @relation(fields: [deviceId], references: [id])
+  syncQueue  SyncQueue? @relation(fields: [syncQueueId], references: [id])
+  resolvedBy User?      @relation(fields: [resolvedById], references: [id])
+
+  @@index([tenantId, status])
+  @@index([tenantId, entityType, entityId])
+  @@map("sync_conflicts")
 }
 
 // ==================== AUDIT & COMPLIANCE ====================
@@ -1015,8 +1821,8 @@ model AuditLog {
 // ==================== SYSTEM CONFIGURATION ====================
 
 model SystemConfig {
-  id       String  @id @default(uuid())
-  key      String  @unique
+  id       String           @id @default(uuid())
+  key      String           @unique
   value    String // JSON
   category ServiceCategory?
 
@@ -1049,6 +1855,13 @@ model RefreshToken {
   revoked   Boolean  @default(false)
   createdAt DateTime @default(now())
 
+  // Session visibility (admin remediation Phase 5) — the separate `Session`
+  // model exists in this schema but is never written to or read anywhere in
+  // the app; RefreshToken is the one actually populated on every login, so
+  // it's extended here rather than starting to dual-write to Session.
+  ipAddress String?
+  userAgent String?
+
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("refresh_tokens")
@@ -1067,7 +1880,6 @@ model Session {
 
   @@map("sessions")
 }
-
 
 enum TenantStatus {
   ACTIVE
@@ -1223,19 +2035,19 @@ enum PaymentProcessStatus {
 }
 
 enum PaymentAuditAction {
-  CREATED              // Payment initially recorded
-  UPDATED              // Payment details modified
-  APPROVED             // Supervisor approved the payment
-  REJECTED             // Supervisor rejected the payment
-  FLAGGED              // Payment flagged for review
-  UNFLAGGED            // Flag removed
-  REVIEWED             // Payment reviewed after being flagged
-  RECONCILED           // Payment matched with bank statement
-  RECEIPT_UPLOADED     // Proof of payment uploaded
-  VOIDED               // Payment voided/cancelled
-  REFUND_INITIATED     // Refund process started
-  NOTES_ADDED          // Additional notes added
-  ACCESSED             // Payment details viewed
+  CREATED // Payment initially recorded
+  UPDATED // Payment details modified
+  APPROVED // Supervisor approved the payment
+  REJECTED // Supervisor rejected the payment
+  FLAGGED // Payment flagged for review
+  UNFLAGGED // Flag removed
+  REVIEWED // Payment reviewed after being flagged
+  RECONCILED // Payment matched with bank statement
+  RECEIPT_UPLOADED // Proof of payment uploaded
+  VOIDED // Payment voided/cancelled
+  REFUND_INITIATED // Refund process started
+  NOTES_ADDED // Additional notes added
+  ACCESSED // Payment details viewed
 }
 
 enum PaymentGateway {
@@ -1264,6 +2076,7 @@ enum ServiceCategory {
   MEDICATION
   PROCEDURE
   IMAGING
+  ACCOMMODATION
   OTHER
 }
 
@@ -1278,10 +2091,925 @@ enum SyncStatus {
   IN_PROGRESS
   COMPLETED
   FAILED
+  CONFLICT
+}
+
+enum SyncConflictStatus {
+  PENDING
+  RESOLVED
 }
 
 enum SyncOperation {
   CREATE
   UPDATE
   DELETE
+}
+
+enum AdministrationRoute {
+  ORAL
+  INTRAVENOUS
+  INTRAMUSCULAR
+  SUBCUTANEOUS
+  TOPICAL
+  RECTAL
+  SUBLINGUAL
+  INHALATION
+  OPHTHALMIC
+  OTIC
+  NASAL
+  VAGINAL
+  OTHER
+}
+
+enum BillingStatus {
+  UNBILLED
+  BILLED
+}
+
+// ==================== INPATIENT MANAGEMENT ====================
+
+model Ward {
+  id        String @id @default(uuid())
+  tenantId  String
+  name      String
+  type      String // General, Private, ICU, Maternity, Pediatric, etc.
+  capacity  Int
+  dailyCost Float  @default(0) // Daily room cost for billing
+
+  status String @default("ACTIVE") // ACTIVE, INACTIVE, MAINTENANCE
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+  beds   Bed[]
+
+  @@index([tenantId, type])
+  @@map("wards")
+}
+
+model Bed {
+  id             String  @id @default(uuid())
+  tenantId       String
+  wardId         String
+  bedNumber      String
+  type           String? // Standard, ICU, etc.
+  isolationReady Boolean @default(false)
+
+  status String @default("AVAILABLE") // AVAILABLE, OCCUPIED, MAINTENANCE
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant        Tenant               @relation(fields: [tenantId], references: [id])
+  ward          Ward                 @relation(fields: [wardId], references: [id])
+  admissions    Admission[]
+  transfersFrom BedTransferHistory[] @relation("TransferFromBed")
+  transfersTo   BedTransferHistory[] @relation("TransferToBed")
+
+  @@unique([wardId, bedNumber])
+  @@map("beds")
+}
+
+model Admission {
+  id           String @id @default(uuid())
+  tenantId     String
+  patientId    String
+  bedId        String
+  admittedById String
+
+  admissionDate DateTime  @default(now())
+  dischargeDate DateTime?
+  reason        String
+  status        String    @default("ADMITTED") // ADMITTED, DISCHARGED, TRANSFERRED
+  billingStatus String    @default("UNBILLED") // UNBILLED, BILLED
+
+  // Drives which clinical tabs show on the inpatient details page (Operation
+  // Note / Partograph) — see the two override flags below for the "medical
+  // admission that turns into a surgery mid-stay" case.
+  admissionType String @default("MEDICAL") // MEDICAL, SURGERY, CHILD_BIRTH
+
+  // Manual overrides so a tab can be turned on even when admissionType alone
+  // wouldn't show it (e.g. a MEDICAL admission where surgery becomes
+  // necessary partway through the stay) — editable any time, not just at
+  // admission.
+  showOperationNote Boolean @default(false)
+  showPartograph    Boolean @default(false)
+
+  // Manual override for the "Record Oxygen" quick action on the inpatient
+  // details page — off by default since most admissions never need it;
+  // turned on per-admission (any admissionType) when actually needed rather
+  // than shown unconditionally for every patient.
+  showOxygen Boolean @default(false)
+
+  isolationRequired Boolean @default(false)
+  infectionRisk     String?
+
+  notes String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant     Tenant  @relation(fields: [tenantId], references: [id])
+  patient    Patient @relation(fields: [patientId], references: [id])
+  bed        Bed     @relation(fields: [bedId], references: [id])
+  admittedBy User    @relation("AdmissionsAdmitted", fields: [admittedById], references: [id])
+
+  wardRounds                WardRound[]
+  medicationAdministrations MedicationAdministration[]
+  prescriptions             Prescription[]
+  labOrders                 LabOrder[]
+  vitalCharts               VitalChart[]
+  fluidCharts               FluidChart[]
+  transfusionCharts         TransfusionChart[]
+  bloodSugarCharts          BloodSugarChart[]
+  diagnoses                 AdmissionDiagnosis[]
+  dischargeSummary          DischargeSummary?
+  transferHistory           BedTransferHistory[]
+  operationNotes            OperationNote[]
+  consumableUsageRecords    ConsumableUsage[]
+  laborRecord               LaborRecord?
+  invoiceLineItems          InvoiceLineItem[]
+
+  // Soft Delete
+  isDeleted      Boolean   @default(false)
+  deletedAt      DateTime?
+  deletedBy      String?
+  deletionReason String?
+
+  @@index([tenantId, patientId])
+  @@index([tenantId, status])
+  @@map("admissions")
+}
+
+model WardRound {
+  id            String @id @default(uuid())
+  tenantId      String
+  admissionId   String
+  conductedById String
+
+  roundDate DateTime @default(now())
+  notes     String // Clinical notes
+  vitals    Json? // BP, HR, Temp, etc.
+  plan      String? // Plan for the day
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant      Tenant    @relation(fields: [tenantId], references: [id])
+  admission   Admission @relation(fields: [admissionId], references: [id])
+  conductedBy User      @relation("WardRoundsConducted", fields: [conductedById], references: [id])
+
+  // Soft Delete
+  isDeleted      Boolean   @default(false)
+  deletedAt      DateTime?
+  deletedBy      String?
+  deletionReason String?
+
+  @@index([tenantId, admissionId])
+  @@map("ward_rounds")
+}
+
+model MedicationAdministration {
+  id               String  @id @default(uuid())
+  tenantId         String
+  admissionId      String
+  prescriptionId   String?
+  administeredById String
+
+  medicationName String
+  dosage         String
+  route          String?
+  administeredAt DateTime @default(now())
+  notes          String?
+  omissionReason String?
+  status         String   @default("COMPLETED") // COMPLETED, MISSED, REFUSED
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant         Tenant        @relation(fields: [tenantId], references: [id])
+  admission      Admission     @relation(fields: [admissionId], references: [id])
+  prescription   Prescription? @relation(fields: [prescriptionId], references: [id])
+  administeredBy User          @relation("MedAdministrations", fields: [administeredById], references: [id])
+
+  @@index([tenantId, admissionId])
+  @@map("medication_administrations")
+}
+
+model VitalChart {
+  id           String @id @default(uuid())
+  tenantId     String
+  admissionId  String
+  recordedById String
+
+  recordedAt      DateTime @default(now())
+  temperature     Float?
+  systolicBP      Int?
+  diastolicBP     Int?
+  heartRate       Int?
+  respiratoryRate Int?
+  spO2            Int?
+  painScore       Int? // 0-10 scale
+
+  // Anthropometry
+  weight            Float?
+  height            Float?
+  headCircumference Float?
+  muac              Float?
+  bmi               Float?
+
+  notes String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant     Tenant    @relation(fields: [tenantId], references: [id])
+  admission  Admission @relation(fields: [admissionId], references: [id])
+  recordedBy User      @relation("VitalChartsRecorded", fields: [recordedById], references: [id])
+
+  // Soft Delete
+  isDeleted      Boolean   @default(false)
+  deletedAt      DateTime?
+  deletedBy      String?
+  deletionReason String?
+
+  @@index([tenantId, admissionId])
+  @@index([tenantId, recordedAt])
+  @@map("vital_charts")
+}
+
+model FluidChart {
+  id           String @id @default(uuid())
+  tenantId     String
+  admissionId  String
+  recordedById String
+
+  recordedAt DateTime  @default(now())
+  type       FluidType // INTAKE, OUTPUT
+  route      String // Oral, IV, Urine, Vomitus, etc.
+  fluidName  String? // e.g., Normal Saline, Water
+  volumeMl   Float
+
+  notes String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant     Tenant    @relation(fields: [tenantId], references: [id])
+  admission  Admission @relation(fields: [admissionId], references: [id])
+  recordedBy User      @relation("FluidChartsRecorded", fields: [recordedById], references: [id])
+
+  // Soft Delete
+  isDeleted      Boolean   @default(false)
+  deletedAt      DateTime?
+  deletedBy      String?
+  deletionReason String?
+
+  @@index([tenantId, admissionId])
+  @@index([tenantId, recordedAt])
+  @@map("fluid_charts")
+}
+
+model TransfusionChart {
+  id             String @id @default(uuid())
+  tenantId       String
+  admissionId    String
+  transfusedById String
+
+  bloodGroup  String
+  unitNumber  String
+  productType String // PRBC, Whole Blood, Platelets, FFP
+
+  startTime DateTime
+  endTime   DateTime?
+
+  preVitals    Json? // JSON object with baseline vitals
+  duringVitals Json? // Array of JSON objects for 15-min checks
+  postVitals   Json? // JSON object for completion vitals
+
+  reaction      Boolean @default(false)
+  reactionNotes String?
+
+  billingStatus BillingStatus @default(UNBILLED)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant           Tenant            @relation(fields: [tenantId], references: [id])
+  admission        Admission         @relation(fields: [admissionId], references: [id])
+  transfusedBy     User              @relation("TransfusionChartsRecorded", fields: [transfusedById], references: [id])
+  invoiceLineItems InvoiceLineItem[]
+
+  // Soft Delete
+  isDeleted      Boolean   @default(false)
+  deletedAt      DateTime?
+  deletedBy      String?
+  deletionReason String?
+
+  @@index([tenantId, admissionId])
+  @@map("transfusion_charts")
+}
+
+model BloodSugarChart {
+  id           String @id @default(uuid())
+  tenantId     String
+  admissionId  String
+  recordedById String
+
+  recordedAt         DateTime @default(now())
+  bloodGlucose       Float
+  unit               String   @default("mg/dL") // mg/dL or mmol/L
+  measurementContext String? // Fasting, Post-prandial, Random
+
+  insulinGiven String? // e.g., "10 units Actrapid"
+  notes        String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant     Tenant    @relation(fields: [tenantId], references: [id])
+  admission  Admission @relation(fields: [admissionId], references: [id])
+  recordedBy User      @relation("BloodSugarChartsRecorded", fields: [recordedById], references: [id])
+
+  // Soft Delete
+  isDeleted      Boolean   @default(false)
+  deletedAt      DateTime?
+  deletedBy      String?
+  deletionReason String?
+
+  @@index([tenantId, admissionId])
+  @@index([tenantId, recordedAt])
+  @@map("blood_sugar_charts")
+}
+
+model AdmissionDiagnosis {
+  id          String  @id @default(uuid())
+  tenantId    String
+  admissionId String
+  diagnosisId String
+  isPrimary   Boolean @default(false)
+  isAdmission Boolean @default(true) // true = Admission, false = Discharge
+  notes       String?
+
+  tenant    Tenant           @relation(fields: [tenantId], references: [id])
+  admission Admission        @relation(fields: [admissionId], references: [id])
+  diagnosis DiagnosisCatalog @relation(fields: [diagnosisId], references: [id])
+
+  createdAt DateTime @default(now())
+
+  @@index([tenantId, admissionId])
+  @@map("admission_diagnoses")
+}
+
+model DischargeSummary {
+  id             String  @id @default(uuid())
+  tenantId       String
+  admissionId    String  @unique
+  finalNotes     String
+  followUpPlan   String?
+  ttoMedications Json? // To Take Out medications
+
+  tenant    Tenant    @relation(fields: [tenantId], references: [id])
+  admission Admission @relation(fields: [admissionId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Soft Delete
+  isDeleted      Boolean   @default(false)
+  deletedAt      DateTime?
+  deletedBy      String?
+  deletionReason String?
+
+  @@index([tenantId])
+  @@map("discharge_summaries")
+}
+
+model BedTransferHistory {
+  id              String @id @default(uuid())
+  tenantId        String
+  admissionId     String
+  fromBedId       String
+  toBedId         String
+  transferredById String
+
+  transferDate DateTime @default(now())
+  reason       String
+
+  tenant        Tenant    @relation(fields: [tenantId], references: [id])
+  admission     Admission @relation(fields: [admissionId], references: [id])
+  fromBed       Bed       @relation("TransferFromBed", fields: [fromBedId], references: [id])
+  toBed         Bed       @relation("TransferToBed", fields: [toBedId], references: [id])
+  transferredBy User      @relation("BedTransfers", fields: [transferredById], references: [id])
+
+  @@index([tenantId, admissionId])
+  @@map("bed_transfer_history")
+}
+
+model OperationNote {
+  id           String @id @default(uuid())
+  tenantId     String
+  admissionId  String
+  recordedById String
+
+  surgicalProcedure String
+  indication        String?
+  surgeons          String // free text, e.g. "Dr. A, Dr. B" — may include staff not in the system
+  assistants        String?
+  anaesthetics      String?
+  anaesthetist      String?
+  anaesthesis       String?
+  incision          String?
+  findings          String?
+  procedure         String?
+  // Postop plan, folded into this same record so operation note and postop
+  // plan are recorded together as a single form (the standalone PostopPlan
+  // model has been retired — see below).
+  plan              String?
+  others            String?
+
+  operationDate DateTime @default(now())
+
+  billingStatus BillingStatus @default(UNBILLED)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant           Tenant            @relation(fields: [tenantId], references: [id])
+  admission        Admission         @relation(fields: [admissionId], references: [id])
+  recordedBy       User              @relation("OperationNotesRecorded", fields: [recordedById], references: [id])
+  invoiceLineItems InvoiceLineItem[]
+
+  // Soft Delete
+  isDeleted      Boolean   @default(false)
+  deletedAt      DateTime?
+  deletedBy      String?
+  deletionReason String?
+
+  @@index([tenantId, admissionId])
+  @@map("operation_notes")
+}
+
+model Notification {
+  id         String    @id @default(uuid())
+  tenantId   String
+  userId     String
+  type       String // CRITICAL_LAB_RESULT | STOCK_ALERT
+  title      String
+  message    String
+  entityType String?
+  entityId   String?
+  isRead     Boolean   @default(false)
+  readAt     DateTime?
+
+  createdAt DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+  user   User   @relation(fields: [userId], references: [id])
+
+  @@index([tenantId, userId, isRead])
+  @@map("notifications")
+}
+
+model DiagnosisCatalog {
+  id          String  @id @default(uuid())
+  tenantId    String
+  code        String // e.g., 'A00', '1B00'
+  name        String
+  description String?
+  type        String  @default("ICD-11") // ICD-10 or ICD-11
+  isActive    Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant             Tenant                  @relation(fields: [tenantId], references: [id])
+  consultations      ConsultationDiagnosis[]
+  admissionDiagnoses AdmissionDiagnosis[]
+
+  @@unique([tenantId, code])
+  @@index([name])
+  @@index([code])
+  @@map("diagnosis_catalog")
+}
+
+enum FluidType {
+  INTAKE
+  OUTPUT
+}
+
+model ConsultationDiagnosis {
+  id             String @id @default(uuid())
+  tenantId       String
+  consultationId String
+  diagnosisId    String
+
+  isPrimary Boolean            @default(false)
+  certainty DiagnosisCertainty @default(PROVISIONAL)
+  notes     String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant       Tenant           @relation(fields: [tenantId], references: [id])
+  consultation Consultation     @relation(fields: [consultationId], references: [id], onDelete: Cascade)
+  diagnosis    DiagnosisCatalog @relation(fields: [diagnosisId], references: [id])
+
+  @@unique([consultationId, diagnosisId])
+  @@map("consultation_diagnoses")
+}
+
+// ==================== PHASE 2 MODELS ====================
+
+model Triage {
+  id            String  @id @default(uuid())
+  tenantId      String
+  patientId     String
+  appointmentId String?
+
+  // WHO ETAT Assessment
+  chiefComplaint String
+  category       TriageCategory
+  triageNurseId  String
+  triageTime     DateTime       @default(now())
+
+  // Vitals at triage
+  systolicBP         Int?
+  diastolicBP        Int?
+  heartRate          Int?
+  temperature        Float?
+  respiratoryRate    Int?
+  spO2               Int?
+  weight             Float?
+  painScore          Int? // 0-10
+  glucoseLevel       Float?
+  consciousnessLevel String? // AVPU: Alert, Voice, Pain, Unresponsive
+
+  // Pediatric specifics
+  muac         Float?
+  isDehydrated Boolean?
+
+  // Disposition
+  dispositionNotes   String?
+  seenByDoctorAt     DateTime?
+  waitingTimeMinutes Int?
+
+  // Re-triage
+  retriagedAt      DateTime?
+  retriagedById    String?
+  previousCategory TriageCategory?
+
+  // Optimistic-concurrency token — two nurses editing the same triage
+  // record concurrently otherwise silently last-write-wins with no conflict
+  // detection at all (unlike Patient/Consultation/Invoice).
+  version Int @default(1)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  tenant      Tenant  @relation(fields: [tenantId], references: [id])
+  patient     Patient @relation(fields: [patientId], references: [id])
+  triageNurse User    @relation("TriageNurse", fields: [triageNurseId], references: [id])
+
+  @@index([tenantId, createdAt])
+  @@index([tenantId, category])
+  @@map("triage_assessments")
+}
+
+model PatientAllergy {
+  id           String    @id @default(uuid())
+  tenantId     String
+  patientId    String
+  allergen     String
+  reactionType String // Anaphylaxis, Rash, GI distress, etc.
+  severity     String // MILD, MODERATE, SEVERE, LIFE_THREATENING
+  onsetDate    DateTime?
+  isVerified   Boolean   @default(false)
+  verifiedById String?
+  notes        String?
+  createdAt    DateTime  @default(now())
+
+  tenant  Tenant  @relation(fields: [tenantId], references: [id])
+  patient Patient @relation(fields: [patientId], references: [id])
+
+  // Soft Delete
+  isDeleted      Boolean   @default(false)
+  deletedAt      DateTime?
+  deletedBy      String?
+  deletionReason String?
+
+  @@index([tenantId, patientId])
+  @@map("patient_allergies")
+}
+
+model NextOfKin {
+  id           String  @id @default(uuid())
+  tenantId     String
+  patientId    String
+  fullName     String
+  relationship String // SPOUSE, PARENT, SIBLING, CHILD, OTHER
+  phoneNumber  String
+  altPhone     String?
+  address      String?
+  priority     Int     @default(1) // 1 = primary, 2 = secondary, etc.
+
+  tenant  Tenant  @relation(fields: [tenantId], references: [id])
+  patient Patient @relation(fields: [patientId], references: [id])
+
+  // Soft Delete
+  isDeleted      Boolean   @default(false)
+  deletedAt      DateTime?
+  deletedBy      String?
+  deletionReason String?
+
+  @@unique([tenantId, patientId, priority])
+  @@index([tenantId, patientId])
+  @@map("next_of_kin")
+}
+
+// ==================== MATERNAL & CHILD HEALTH (ANC) ====================
+
+model AncPregnancy {
+  id        String @id @default(uuid())
+  tenantId  String
+  patientId String
+
+  // Pregnancy Details (Current)
+  gravidity         Int // Total number of pregnancies
+  parity            Int // Number of viable births
+  lmp               DateTime? // Last Menstrual Period
+  edd               DateTime? // Expected Date of Delivery
+  bloodGroup        BloodGroup?
+  husbandBloodGroup String?
+
+  // Obstetric History (Complications & Outcomes)
+  livingChildren        Int     @default(0)
+  abortionsMiscarriages Int     @default(0)
+  historyOfCSection     Boolean @default(false)
+  historyOfPPH          Boolean @default(false)
+  historyOfPreEclampsia Boolean @default(false)
+  historyOfStillbirth   Boolean @default(false)
+
+  // Medical Risk Profiling
+  preExistingDiabetes     Boolean @default(false)
+  preExistingHypertension Boolean @default(false)
+  cardiacDisease          Boolean @default(false)
+  multipleGestation       Boolean @default(false)
+
+  // Status
+  isActive     Boolean   @default(true)
+  deliveryDate DateTime?
+  outcome      String? // LIVE_BIRTH, STILLBIRTH, MISCARRIAGE, etc.
+
+  // Audit
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  tenant       Tenant        @relation(fields: [tenantId], references: [id])
+  patient      Patient       @relation(fields: [patientId], references: [id])
+  visits       AncVisit[]
+  laborRecords LaborRecord[]
+
+  @@index([tenantId, patientId])
+  @@index([tenantId, isActive])
+  @@map("anc_pregnancies")
+}
+
+model AncVisit {
+  id             String  @id @default(uuid())
+  tenantId       String
+  pregnancyId    String
+  consultationId String? @unique
+  recordedById   String
+
+  // Vitals & Metrics
+  gestationalAgeWeeks Int?
+  weight              Float?
+  systolicBP          Int?
+  diastolicBP         Int?
+  fundalHeight        Float? // in cm
+  fetalHeartRate      Int?
+  presentation        String? // CEPHALIC, BREECH, etc.
+  urineProtein        String? // NEGATIVE, TRACE, 1+, 2+, 3+
+
+  // WHO Standard programmatic fields
+  ironFolicAcidProvided Boolean @default(false)
+  calciumProvided       Boolean @default(false)
+  itnProvided           Boolean @default(false)
+  iptpDose              Int? // 1, 2, 3, etc.
+  ttDosesToDate         Int? // Cumulative Tetanus Toxoid doses
+  ttDoseGivenToday      Boolean @default(false)
+
+  // Disease Screening
+  syphilisTestResult String? // POSITIVE, NEGATIVE, UNKNOWN
+  hivTestResult      String?
+  hepBTestResult     String?
+  malariaRdtResult   String?
+
+  // Scans & Counseling
+  ultrasoundDone                   Boolean @default(false)
+  counselingDone                   Boolean @default(false)
+  counseledOnDangerSigns           Boolean @default(false)
+  birthPreparednessPlanDiscussed   Boolean @default(false)
+  intimatePartnerViolenceScreening Boolean @default(false)
+
+  // Deworming
+  dewormingProvided Boolean @default(false)
+
+  // Notes
+  notes  String?
+  others String?
+
+  // Audit
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  tenant       Tenant         @relation(fields: [tenantId], references: [id])
+  pregnancy    AncPregnancy   @relation(fields: [pregnancyId], references: [id], onDelete: Cascade)
+  consultation Consultation?  @relation(fields: [consultationId], references: [id])
+  recordedBy   User           @relation(fields: [recordedById], references: [id])
+  prescriptions Prescription[]
+
+  @@index([tenantId, pregnancyId])
+  @@map("anc_visits")
+}
+
+// ==================== LABOR & PARTOGRAPH ====================
+
+enum LaborStatus {
+  IN_LABOR
+  DELIVERED
+  TRANSFERRED
+  DISCONTINUED
+}
+
+model LaborRecord {
+  id          String @id @default(uuid())
+  tenantId    String
+  admissionId String @unique
+  patientId   String
+  pregnancyId String? // nullable — walk-in delivery may have no ANC record on file
+  startedById String
+
+  // Labor onset / active-phase / rupture-of-membranes tracking
+  laborOnsetAt       DateTime
+  onsetType          String? // SPONTANEOUS, INDUCED, AUGMENTED
+  activePhaseOnsetAt DateTime? // stamped on first observation with cervicalDilation >= 4cm
+  romAt              DateTime?
+  romType            String? // SPONTANEOUS, ARTIFICIAL
+  liquorAtRom        String? // CLEAR, MECONIUM_STAINED, BLOOD_STAINED
+
+  status LaborStatus @default(IN_LABOR)
+
+  // Delivery Outcome — folded flat onto this model rather than a separate
+  // child model, matching DischargeSummary's flat-fields convention.
+  deliveredAt           DateTime?
+  deliveredById         String?
+  modeOfDelivery        String? // SVD, ASSISTED_VACUUM, ASSISTED_FORCEPS, CESAREAN_SECTION, BREECH
+  perineumStatus        String? // INTACT, EPISIOTOMY, FIRST_DEGREE_TEAR, SECOND_DEGREE_TEAR, THIRD_DEGREE_TEAR, FOURTH_DEGREE_TEAR
+  estimatedBloodLossMl  Int?
+  babyOutcome           String? // LIVE_BIRTH, STILLBIRTH_FRESH, STILLBIRTH_MACERATED
+  babySex               Gender?
+  babyBirthWeightGrams  Int?
+  apgarScore1Min        Int?
+  apgarScore5Min        Int?
+  resuscitationRequired Boolean @default(false)
+  deliveryNotes         String?
+
+  billingStatus BillingStatus @default(UNBILLED)
+
+  // Audit
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  tenant           Tenant                   @relation(fields: [tenantId], references: [id])
+  admission        Admission                @relation(fields: [admissionId], references: [id])
+  patient          Patient                  @relation(fields: [patientId], references: [id])
+  pregnancy        AncPregnancy?            @relation(fields: [pregnancyId], references: [id])
+  startedBy        User                     @relation("LaborRecordsStarted", fields: [startedById], references: [id])
+  deliveredBy      User?                    @relation("LaborRecordsDelivered", fields: [deliveredById], references: [id])
+  observations     PartographObservation[]
+  invoiceLineItems InvoiceLineItem[]
+
+  // Soft Delete
+  isDeleted      Boolean   @default(false)
+  deletedAt      DateTime?
+  deletedBy      String?
+  deletionReason String?
+
+  @@index([tenantId, status])
+  @@index([tenantId, patientId])
+  @@map("labor_records")
+}
+
+model PartographObservation {
+  id            String @id @default(uuid())
+  tenantId      String
+  laborRecordId String
+  recordedById  String
+
+  recordedAt DateTime @default(now())
+
+  // Charted (Dilation Chart)
+  cervicalDilation Int? // cm, 0-10
+
+  // Charted (Fetal Heart Rate Chart)
+  fetalHeartRate Int? // bpm
+
+  // Structured entry — tabular only, not charted (first-cut scope decision)
+  descentOfHead                 String? // station notation, e.g. "3/5" or "-2"
+  liquor                        String? // CLEAR, MECONIUM_LIGHT, MECONIUM_THICK, BLOOD_STAINED, ABSENT
+  moulding                      String? // 0, +1, +2, +3
+  contractionsFrequencyPer10Min Int?
+  contractionsDurationSeconds   Int?
+  maternalPulse                 Int?
+  maternalSystolicBP            Int?
+  maternalDiastolicBP           Int?
+  maternalTemperature           Float?
+  urineProtein                  String? // NEGATIVE, TRACE, 1+, 2+, 3+
+  urineAcetone                  String? // NEGATIVE, TRACE, 1+, 2+, 3+
+  urineVolumeMl                 Int?
+  oxytocinDose                  String? // free text — dosing units vary by protocol
+  drugsGiven                    String?
+  ivFluids                      String?
+  notes                         String?
+
+  // Audit
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  tenant      Tenant      @relation(fields: [tenantId], references: [id])
+  laborRecord LaborRecord @relation(fields: [laborRecordId], references: [id])
+  recordedBy  User        @relation("PartographObservationsRecorded", fields: [recordedById], references: [id])
+
+  // Soft Delete
+  isDeleted      Boolean   @default(false)
+  deletedAt      DateTime?
+  deletedBy      String?
+  deletionReason String?
+
+  @@index([tenantId, laborRecordId])
+  @@index([tenantId, recordedAt])
+  @@map("partograph_observations")
+}
+
+// ==================== IMMUNIZATION ====================
+
+model ImmunizationSchedule {
+  id       String @id @default(uuid())
+  tenantId String
+
+  // Vaccine Details
+  vaccineName    String // e.g., "BCG", "OPV 1", "Pentavalent 1"
+  diseaseTarget  String // e.g., "Tuberculosis", "Polio"
+  targetAgeWeeks Int // Standard WHO timeline (0 = birth, 6 = 6 weeks, etc.)
+  route          String? // ORAL, IM, SUB-Q
+  description    String?
+
+  // Audit
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  tenant       Tenant                @relation(fields: [tenantId], references: [id])
+  administered PatientImmunization[]
+
+  @@unique([tenantId, vaccineName])
+  @@map("immunization_schedule")
+}
+
+model PatientImmunization {
+  id               String @id @default(uuid())
+  tenantId         String
+  patientId        String
+  scheduleId       String
+  administeredById String
+
+  // Administration Details
+  administeredAt     DateTime  @default(now())
+  batchNumber        String?
+  nextDueDate        DateTime? // For multi-dose series
+  notes              String?
+  hasAdverseReaction Boolean   @default(false)
+  reactionNotes      String?
+
+  // Audit
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  tenant         Tenant               @relation(fields: [tenantId], references: [id])
+  patient        Patient              @relation(fields: [patientId], references: [id])
+  schedule       ImmunizationSchedule @relation(fields: [scheduleId], references: [id])
+  administeredBy User                 @relation(fields: [administeredById], references: [id])
+
+  @@unique([patientId, scheduleId])
+  @@index([tenantId, patientId])
+  @@map("patient_immunizations")
 }

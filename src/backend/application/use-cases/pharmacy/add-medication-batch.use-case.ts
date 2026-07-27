@@ -5,7 +5,7 @@
  */
 
 import { PrismaClient } from '@prisma/client';
-import { NotFoundError, ConflictError } from '../../../shared/errors/AppError';
+import { NotFoundError, ConflictError, ValidationError } from '../../../shared/errors/AppError';
 
 export interface AddMedicationBatchDto {
   medicationId: string;
@@ -33,6 +33,15 @@ export class AddMedicationBatchUseCase {
     dto: AddMedicationBatchDto,
     tenantId: string
   ): Promise<MedicationBatchResponse> {
+    // The client only enforces `min` via HTML on the add-batch form — an
+    // already-authorized PHARMACIST/ADMIN calling the API directly could
+    // otherwise submit a negative sellingPrice, which flows straight into
+    // generate-invoice.use-case.ts's pricing and produces a negative line
+    // item.
+    if (dto.quantity < 0 || dto.unitCost < 0 || dto.sellingPrice < 0) {
+      throw new ValidationError('Quantity, unit cost, and selling price must not be negative');
+    }
+
     // Verify medication exists
     const medication = await this.prisma.medication.findFirst({
       where: {

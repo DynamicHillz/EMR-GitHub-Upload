@@ -10,6 +10,8 @@ import {
 import ErrorAlert from '../common/ErrorAlert';
 import ConfirmDialog from '../common/ConfirmDialog';
 import { useConfirm } from '../../hooks/useConfirm';
+import Dropdown from '../common/Dropdown';
+import { getErrorMessage } from '../../utils/errorHandler';
 
 interface InvoiceListProps {
   patientId?: string;
@@ -42,7 +44,7 @@ const InvoiceList: React.FC<InvoiceListProps> = ({
       const data = await billingService.getInvoices(filters);
       setInvoices(data);
     } catch (err: any) {
-      setError(err.message || 'Failed to load invoices');
+      setError(getErrorMessage(err, 'Failed to load invoices'));
     } finally {
       setLoading(false);
     }
@@ -63,7 +65,7 @@ const InvoiceList: React.FC<InvoiceListProps> = ({
       await billingService.cancelInvoice(invoice.id);
       loadInvoices();
     } catch (err: any) {
-      setActionError(err.message || 'Failed to cancel invoice');
+      setActionError(getErrorMessage(err, 'Failed to cancel invoice'));
     }
   };
 
@@ -145,7 +147,7 @@ const InvoiceList: React.FC<InvoiceListProps> = ({
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Invoice Status</label>
-            <select
+            <Dropdown
               value={filters.status || ''}
               onChange={(e) => setFilters({ ...filters, status: e.target.value as InvoiceStatus | undefined })}
               className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -156,11 +158,11 @@ const InvoiceList: React.FC<InvoiceListProps> = ({
               <option value="PAID">Paid</option>
               <option value="OVERDUE">Overdue</option>
               <option value="CANCELLED">Cancelled</option>
-            </select>
+            </Dropdown>
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Payment Status</label>
-            <select
+            <Dropdown
               value={filters.paymentStatus || ''}
               onChange={(e) => setFilters({ ...filters, paymentStatus: e.target.value as PaymentStatus | undefined })}
               className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -170,7 +172,7 @@ const InvoiceList: React.FC<InvoiceListProps> = ({
               <option value="PARTIALLY_PAID">Partially Paid</option>
               <option value="PAID">Paid</option>
               <option value="REFUNDED">Refunded</option>
-            </select>
+            </Dropdown>
           </div>
           <div className="flex items-end">
             <button

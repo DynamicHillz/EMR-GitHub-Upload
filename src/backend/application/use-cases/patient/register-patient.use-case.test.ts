@@ -14,6 +14,7 @@ describe('RegisterPatientUseCase', () => {
   let useCase: RegisterPatientUseCase;
   let mockPatientRepository: jest.Mocked<IPatientRepository>;
   let mockPatientIdGenerator: jest.Mocked<PatientIdGenerator>;
+  let mockPrisma: any;
 
   const tenantId = 'test-tenant-001';
   const mockPatientId = 'P000001';
@@ -33,10 +34,19 @@ describe('RegisterPatientUseCase', () => {
       generatePatientId: jest.fn(),
     } as any;
 
+    // The duplicate-phone check (US-PAT-001) queries prisma.patient directly
+    // rather than going through the repository's search() method.
+    mockPrisma = {
+      patient: {
+        findUnique: jest.fn(),
+      },
+    };
+
     // Instantiate use case with mocks
     useCase = new RegisterPatientUseCase(
       mockPatientRepository,
-      mockPatientIdGenerator
+      mockPatientIdGenerator,
+      mockPrisma
     );
   });
 
@@ -49,7 +59,7 @@ describe('RegisterPatientUseCase', () => {
       phone: '+2348012345678',
       email: 'john.doe@example.com',
       address: '123 Test Street, Lagos',
-      bloodGroup: 'O+',
+      bloodGroup: 'O_POSITIVE',
       allergies: [],
       chronicConditions: [],
       consentGiven: true,
@@ -58,12 +68,7 @@ describe('RegisterPatientUseCase', () => {
     it('should successfully register a new patient', async () => {
       // Arrange
       mockPatientIdGenerator.generatePatientId.mockResolvedValue(mockPatientId);
-      mockPatientRepository.search.mockResolvedValue({
-        total: 0,
-        data: [],
-        skip: 0,
-        take: 1,
-      });
+      mockPrisma.patient.findUnique.mockResolvedValue(null);
 
       const mockCreatedPatient = {
         id: 'patient-uuid-123',
@@ -96,27 +101,35 @@ describe('RegisterPatientUseCase', () => {
 
       // Assert
       expect(mockPatientIdGenerator.generatePatientId).toHaveBeenCalledWith(tenantId);
-      expect(mockPatientRepository.search).toHaveBeenCalledWith({
-        tenantId,
-        query: validDto.phone,
-        take: 1,
+      expect(mockPrisma.patient.findUnique).toHaveBeenCalledWith({
+        where: {
+          tenantId_phone: {
+            tenantId,
+            phone: validDto.phone.trim(),
+          },
+        },
       });
-      expect(mockPatientRepository.create).toHaveBeenCalledWith({
-        patientId: mockPatientId,
-        firstName: validDto.firstName.trim(),
-        lastName: validDto.lastName.trim(),
-        dateOfBirth: new Date(validDto.dateOfBirth),
-        gender: validDto.gender,
-        phone: validDto.phone.trim(),
-        email: validDto.email.trim(),
-        address: validDto.address.trim(),
-        bloodGroup: validDto.bloodGroup,
-        allergies: [],
-        chronicConditions: [],
-        emergencyContact: undefined,
-        consentGiven: true,
-        tenantId,
-      });
+      // objectContaining rather than an exact match — the DTO/use-case have
+      // since grown more optional demographic fields (city, state, lga,
+      // country, nationality, etc.) not exercised by this test.
+      expect(mockPatientRepository.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          patientId: mockPatientId,
+          firstName: validDto.firstName.trim(),
+          lastName: validDto.lastName.trim(),
+          dateOfBirth: new Date(validDto.dateOfBirth),
+          gender: validDto.gender,
+          phone: validDto.phone.trim(),
+          email: validDto.email.trim(),
+          address: validDto.address.trim(),
+          bloodGroup: validDto.bloodGroup,
+          allergies: [],
+          chronicConditions: [],
+          emergencyContact: undefined,
+          consentGiven: true,
+          tenantId,
+        })
+      );
 
       expect(result).toMatchObject({
         id: mockCreatedPatient.id,
@@ -135,18 +148,12 @@ describe('RegisterPatientUseCase', () => {
     it('should throw ConflictError if phone number already exists', async () => {
       // Arrange
       mockPatientIdGenerator.generatePatientId.mockResolvedValue(mockPatientId);
-      mockPatientRepository.search.mockResolvedValue({
-        total: 1,
-        data: [
-          {
-            id: 'existing-patient-id',
-            tenantId,
-            patientId: 'P000000',
-            phone: validDto.phone,
-          } as any,
-        ],
-        skip: 0,
-        take: 1,
+      mockPrisma.patient.findUnique.mockResolvedValue({
+        id: 'existing-patient-id',
+        tenantId,
+        patientId: 'P000000',
+        phone: validDto.phone,
+        isDeleted: false,
       });
 
       // Act & Assert
@@ -170,12 +177,7 @@ describe('RegisterPatientUseCase', () => {
       };
 
       mockPatientIdGenerator.generatePatientId.mockResolvedValue(mockPatientId);
-      mockPatientRepository.search.mockResolvedValue({
-        total: 0,
-        data: [],
-        skip: 0,
-        take: 1,
-      });
+      mockPrisma.patient.findUnique.mockResolvedValue(null);
 
       mockPatientRepository.create.mockResolvedValue({
         id: 'patient-uuid-123',
@@ -228,12 +230,7 @@ describe('RegisterPatientUseCase', () => {
       };
 
       mockPatientIdGenerator.generatePatientId.mockResolvedValue(mockPatientId);
-      mockPatientRepository.search.mockResolvedValue({
-        total: 0,
-        data: [],
-        skip: 0,
-        take: 1,
-      });
+      mockPrisma.patient.findUnique.mockResolvedValue(null);
 
       mockPatientRepository.create.mockResolvedValue({
         id: 'patient-uuid-456',
@@ -263,22 +260,24 @@ describe('RegisterPatientUseCase', () => {
       const result = await useCase.execute(minimalDto, tenantId);
 
       // Assert
-      expect(mockPatientRepository.create).toHaveBeenCalledWith({
-        patientId: mockPatientId,
-        firstName: minimalDto.firstName.trim(),
-        lastName: minimalDto.lastName.trim(),
-        dateOfBirth: new Date(minimalDto.dateOfBirth),
-        gender: minimalDto.gender,
-        phone: minimalDto.phone.trim(),
-        email: undefined,
-        address: undefined,
-        bloodGroup: undefined,
-        allergies: [],
-        chronicConditions: [],
-        emergencyContact: undefined,
-        consentGiven: true,
-        tenantId,
-      });
+      expect(mockPatientRepository.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          patientId: mockPatientId,
+          firstName: minimalDto.firstName.trim(),
+          lastName: minimalDto.lastName.trim(),
+          dateOfBirth: new Date(minimalDto.dateOfBirth),
+          gender: minimalDto.gender,
+          phone: minimalDto.phone.trim(),
+          email: undefined,
+          address: undefined,
+          bloodGroup: undefined,
+          allergies: [],
+          chronicConditions: [],
+          emergencyContact: undefined,
+          consentGiven: true,
+          tenantId,
+        })
+      );
 
       expect(result.email).toBeNull();
       expect(result.address).toBeNull();
@@ -294,12 +293,7 @@ describe('RegisterPatientUseCase', () => {
       };
 
       mockPatientIdGenerator.generatePatientId.mockResolvedValue(mockPatientId);
-      mockPatientRepository.search.mockResolvedValue({
-        total: 0,
-        data: [],
-        skip: 0,
-        take: 1,
-      });
+      mockPrisma.patient.findUnique.mockResolvedValue(null);
 
       mockPatientRepository.create.mockResolvedValue({
         id: 'patient-uuid-789',

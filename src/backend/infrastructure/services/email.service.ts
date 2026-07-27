@@ -144,4 +144,35 @@ export class EmailService {
 
     await this.send({ to: email, subject, text, html });
   }
+
+  /**
+   * Send a payment receipt
+   */
+  static async sendReceiptEmail(
+    email: string,
+    data: { payment: any; branding: any }
+  ): Promise<void> {
+    const { payment, branding } = data;
+    const clinicName = branding?.clinicName || 'SSMC EMR';
+    const patientName = `${payment.patient?.firstName || ''} ${payment.patient?.lastName || ''}`.trim();
+    const amount = Number(payment.amount).toLocaleString();
+
+    const subject = `Receipt ${payment.paymentNumber} — ${clinicName}`;
+    const text = `Hi ${patientName},\n\nThank you for your payment.\n\nReceipt Number: ${payment.paymentNumber}\nAmount: ${amount}\nMethod: ${payment.paymentMethod}\nDate: ${new Date(payment.paymentDate).toLocaleString()}\n\n${clinicName}`;
+
+    const html = `
+      <h2>${clinicName}</h2>
+      <p>Hi ${patientName},</p>
+      <p>Thank you for your payment. Here is your receipt:</p>
+      <table style="border-collapse: collapse;">
+        <tr><td style="padding: 4px 12px 4px 0;"><strong>Receipt Number</strong></td><td>${payment.paymentNumber}</td></tr>
+        <tr><td style="padding: 4px 12px 4px 0;"><strong>Amount</strong></td><td>${amount}</td></tr>
+        <tr><td style="padding: 4px 12px 4px 0;"><strong>Method</strong></td><td>${payment.paymentMethod}</td></tr>
+        <tr><td style="padding: 4px 12px 4px 0;"><strong>Date</strong></td><td>${new Date(payment.paymentDate).toLocaleString()}</td></tr>
+      </table>
+      <p>${clinicName}${branding?.address ? `<br/>${branding.address}` : ''}${branding?.phone ? `<br/>${branding.phone}` : ''}</p>
+    `;
+
+    await this.send({ to: email, subject, text, html });
+  }
 }

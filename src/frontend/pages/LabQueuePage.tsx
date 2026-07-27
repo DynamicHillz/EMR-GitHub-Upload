@@ -7,9 +7,11 @@
  */
 
 import React, { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import { Beaker, AlertTriangle, Clock, User, Search, Filter, Plus } from 'lucide-react';
 import LabTestDetailsModal from '../components/lab/LabTestDetailsModal';
 import NewLabTestModal from '../components/lab/NewLabTestModal';
+import Dropdown from '../components/common/Dropdown';
 
 interface LabTest {
   id: string;
@@ -22,6 +24,8 @@ interface LabTest {
   clinicalIndication: string | null;
   urgency: 'ROUTINE' | 'URGENT' | 'STAT';
   status: 'PENDING' | 'IN_PROGRESS' | 'COMPLETED' | 'REVIEWED' | 'REJECTED';
+  accessionNumber: string | null;
+  unitPrice: number;
   orderedBy: string;
   orderedByName: string;
   consultationId: string | null;
@@ -52,7 +56,7 @@ const LabQueuePage: React.FC = () => {
   const fetchLabTests = async () => {
     try {
       const token = localStorage.getItem('token');
-      let url = 'http://localhost:3000/api/lab/tests?';
+      let url = `${window.location.protocol}//${window.location.hostname}:3000/api/lab/tests?`;
 
       if (statusFilter) {
         url += `status=${statusFilter}&`;
@@ -140,23 +144,29 @@ const LabQueuePage: React.FC = () => {
   return (
     <div className="container mx-auto px-4 py-8">
       {/* Header */}
-      <div className="mb-8 flex justify-between items-start">
+      <div className="mb-8 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
           <h1 className="text-3xl font-bold flex items-center gap-3">
             <Beaker className="w-8 h-8 text-purple-600" />
             Laboratory Queue
           </h1>
-          <p className="text-gray-600 mt-2">
-            Manage pending and in-progress lab test requests
-          </p>
+          <p className="text-gray-500 mt-1">Manage and process pending lab test requests</p>
         </div>
-        <button
-          onClick={() => setShowNewTestModal(true)}
-          className="btn btn-primary flex items-center gap-2"
-        >
-          <Plus className="w-5 h-5" />
-          New Lab Test
-        </button>
+        <div className="flex space-x-3">
+          <Link
+            to="/lab/catalog"
+            className="btn-secondary flex items-center"
+          >
+            Manage Catalog
+          </Link>
+          <button
+            onClick={() => setShowNewTestModal(true)}
+            className="btn-primary flex items-center"
+          >
+            <Plus className="w-5 h-5 mr-2" />
+            Order Lab Test
+          </button>
+        </div>
       </div>
 
       {/* Filters and Search */}
@@ -183,16 +193,17 @@ const LabQueuePage: React.FC = () => {
               <Filter className="w-4 h-4 inline mr-1" />
               Status
             </label>
-            <select
+            <Dropdown
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value)}
               className="input w-full"
             >
-              <option value="">All</option>
-              <option value="PENDING">Pending</option>
-              <option value="IN_PROGRESS">In Progress</option>
+              <option value="">Pending &amp; In Progress (default)</option>
+              <option value="PENDING">Pending Only</option>
+              <option value="IN_PROGRESS">In Progress Only</option>
               <option value="COMPLETED">Completed</option>
-            </select>
+              <option value="ALL">All Statuses</option>
+            </Dropdown>
           </div>
 
           {/* Urgency Filter */}
@@ -201,7 +212,7 @@ const LabQueuePage: React.FC = () => {
               <AlertTriangle className="w-4 h-4 inline mr-1" />
               Urgency
             </label>
-            <select
+            <Dropdown
               value={urgencyFilter}
               onChange={(e) => setUrgencyFilter(e.target.value)}
               className="input w-full"
@@ -210,7 +221,7 @@ const LabQueuePage: React.FC = () => {
               <option value="STAT">STAT</option>
               <option value="URGENT">Urgent</option>
               <option value="ROUTINE">Routine</option>
-            </select>
+            </Dropdown>
           </div>
         </div>
       </div>
@@ -263,6 +274,9 @@ const LabQueuePage: React.FC = () => {
                     Patient
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Accession No.
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Test
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -304,10 +318,15 @@ const LabQueuePage: React.FC = () => {
                       </div>
                     </td>
                     <td className="px-6 py-4">
+                      <div className="text-sm font-mono text-gray-900 bg-gray-100 px-2 py-1 rounded inline-block">
+                        {test.accessionNumber || 'N/A'}
+                      </div>
+                    </td>
+                    <td className="px-6 py-4">
                       <div className="text-sm font-medium text-gray-900">
                         {test.testName}
                       </div>
-                      {test.testCode && (
+                      {test.testCode && test.testCode !== test.testName && (
                         <div className="text-sm text-gray-500">{test.testCode}</div>
                       )}
                     </td>

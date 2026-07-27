@@ -46,3 +46,34 @@ coverage/
 # Temporary files
 *.tmp
 temp/
+
+# User-uploaded files (clinic logos, etc.) — machine-specific storage
+uploads/
+
+# Test scripts
+test_*.js
+insert_test*.js
+check_*.js
+delete_*.js
+list_*.js
+exact_search.js
+fix_admin.js
+hard_delete_*.js
+query.js
+rename_*.js
+seed-wards*.js
+
+# --- Add these lines to your existing .gitignore ---
+ 
+# One-off scripts containing plaintext passwords/secrets — never commit
+generate-hash.js
+*-hash.js
+ 
+# PM2 runtime state — machine-specific, never share between PCs
+.pm2/
+
+# Database backups (pg_dump output) — machine-specific, contains patient data
+backups/
+
+# TLS cert/key generated locally via mkcert — machine-specific, private key
+certs/

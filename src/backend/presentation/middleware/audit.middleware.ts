@@ -114,17 +114,34 @@ export const auditRequest = async (req: Request, res: Response, next: NextFuncti
       return next();
     }
 
-    // Skip logging for certain routes
-    const skipRoutes = ['/api/health', '/api/ping'];
-    if (skipRoutes.includes(req.path)) {
+    // Skip logging for health/ping routes and audit self-referencing
+    const skipRoutes = ['/api/health', '/api/ping', '/api/audit'];
+    if (skipRoutes.some(r => req.path.startsWith(r))) {
       return next();
+    }
+
+    // For GET requests, only audit access to sensitive clinical data
+    if (req.method === 'GET') {
+      const sensitivePatterns = [
+        /^\/api\/patients\/[^/]+/,       // Patient record access
+        /^\/api\/consultations\/[^/]+/,   // Consultation record access
+        /^\/api\/lab\//,                  // Lab data access
+        /^\/api\/prescriptions\//,        // Prescription data access
+        /^\/api\/billing\/[^/]+/,         // Billing record access
+        /^\/api\/users\/[^/]+/,           // User record access
+      ];
+      const pathWithoutQuery = req.originalUrl.split('?')[0];
+      const isSensitive = sensitivePatterns.some(p => p.test(pathWithoutQuery));
+      if (!isSensitive) {
+        return next();
+      }
     }
 
     // Get request details
     const ipAddress = req.ip || req.socket.remoteAddress || 'unknown';
     const userAgent = req.get('user-agent') || 'unknown';
     const method = req.method;
-    const path = req.path;
+    const path = req.originalUrl || req.path;
 
     // Determine action based on method and path
     let action = 'SYSTEM_ACCESS';
@@ -132,21 +149,47 @@ export const auditRequest = async (req: Request, res: Response, next: NextFuncti
     let entityId: string | undefined;
 
     // Extract entity information from path
-    const pathParts = path.split('/').filter((p) => p);
-    if (pathParts.length >= 3) {
-      const resource = pathParts[1]; // e.g., 'users', 'patients'
-      entityId = pathParts[2]; // resource ID if present
+    // Remove query params from path for splitting
+    const pathWithoutQuery = path.split('?')[0];
+    const pathParts = pathWithoutQuery.split('/').filter((p) => p);
+    if (pathParts.length >= 2) {
+      // e.g. /api/patients/123/vitals -> pathParts = ['api', 'patients', '123', 'vitals']
+      // pathParts[0] is always 'api'
+      const resource = pathParts[1];
 
-      // Map resource to entity type
-      const resourceMap: Record<string, EntityType> = {
-        users: EntityType.USER,
-        patients: EntityType.PATIENT,
-        appointments: EntityType.APPOINTMENT,
-        consultations: EntityType.CONSULTATION,
-        invoices: EntityType.INVOICE,
-        payments: EntityType.PAYMENT,
-        prescriptions: EntityType.PRESCRIPTION,
-        medications: EntityType.MEDICATION,
+      // Scan every path segment for something ID-shaped (UUID, or numeric)
+      // rather than assuming the ID always sits at a fixed index — nested
+      // routes like /api/inpatients/admissions/:id/vitals/:recordId have
+      // more than one ID segment, and a fixed index picks up a literal path
+      // word ('admissions') instead. Taking the LAST match favors the most
+      // specific entity actually being written (recordId over admissionId).
+      const uuidPattern = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+      for (const part of pathParts) {
+        if (uuidPattern.test(part) || /^\d+$/.test(part)) {
+          entityId = part;
+        }
+      }
+      if (!entityId && req.body && req.body.id) {
+        entityId = req.body.id;
+      }
+
+      // Expanded Map resource to entity type
+      const resourceMap: Record<string, string> = {
+        users: 'USER',
+        patients: 'PATIENT',
+        appointments: 'APPOINTMENT',
+        consultations: 'CONSULTATION',
+        invoices: 'INVOICE',
+        payments: 'PAYMENT',
+        prescriptions: 'PRESCRIPTION',
+        medications: 'MEDICATION',
+        inpatients: 'INPATIENT',
+        admissions: 'INPATIENT',
+        wards: 'WARD',
+        lab: 'LAB',
+        pharmacy: 'PHARMACY',
+        clinical: 'CLINICAL',
+        billing: 'BILLING'
       };
 
       entityType = resourceMap[resource] || 'SYSTEM';
@@ -177,6 +220,8 @@ export const auditRequest = async (req: Request, res: Response, next: NextFuncti
             method,
             path,
             timestamp: new Date().toISOString(),
+            deviceId: req.headers['x-device-id'] || null,
+            sessionId: req.headers['x-session-id'] || null,
           };
 
           // Include request body for write operations (sanitized)
@@ -186,26 +231,39 @@ export const auditRequest = async (req: Request, res: Response, next: NextFuncti
             delete sanitizedBody.password;
             delete sanitizedBody.currentPassword;
             delete sanitizedBody.newPassword;
+            
+            // Truncate large payloads to prevent DB crashes (max 5KB per field)
+            Object.keys(sanitizedBody).forEach(key => {
+              if (typeof sanitizedBody[key] === 'string' && sanitizedBody[key].length > 5000) {
+                sanitizedBody[key] = sanitizedBody[key].substring(0, 5000) + '... [TRUNCATED]';
+              }
+            });
             changes.requestBody = sanitizedBody;
           }
 
-          // Include response data if available
+          // Truncate response data if available
           if (responseData) {
-            changes.response = {
-              status: res.statusCode,
-            };
+             const statusObj = { status: res.statusCode };
+             changes.response = statusObj;
           }
 
-          await createAuditLog(
-            user.id,
-            user.tenantId,
-            action,
-            entityType,
-            entityId,
-            changes,
-            ipAddress,
-            userAgent
-          );
+          // We use setTimeout to execute this asynchronously so it does not block the API response
+          setTimeout(async () => {
+            try {
+              await createAuditLog(
+                user.id,
+                user.tenantId,
+                action,
+                entityType,
+                entityId,
+                changes,
+                ipAddress,
+                userAgent
+              );
+            } catch (err) {
+              logger.error('Async audit log creation error:', err);
+            }
+          }, 0);
         }
       } catch (error: any) {
         logger.error('Error logging audit trail:', error);

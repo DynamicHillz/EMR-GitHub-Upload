@@ -22,4 +22,5 @@ export interface RecordPaymentDto {
   // Fraud prevention fields
   receiptPhotoUrl?: string;      // Photo of physical receipt (required for cash)
   proofDocumentUrl?: string;     // Additional proof document (bank slip, etc.)
+  approverName?: string;         // Required when amount crosses the tenant's approval threshold
 }

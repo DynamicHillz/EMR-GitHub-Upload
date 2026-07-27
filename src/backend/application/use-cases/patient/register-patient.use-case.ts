@@ -18,11 +18,13 @@ import { RegisterPatientDto, PatientResponseDto } from '../../dtos/patient/Regis
 import { PatientIdGenerator } from '../../../infrastructure/generators/patient-id.generator';
 import { PatientEntity } from '../../../domain/entities/Patient.entity';
 import { ConflictError } from '../../../shared/errors/AppError';
+import { PrismaClient } from '@prisma/client';
 
 export class RegisterPatientUseCase {
   constructor(
     private patientRepository: IPatientRepository,
-    private patientIdGenerator: PatientIdGenerator
+    private patientIdGenerator: PatientIdGenerator,
+    private prisma: PrismaClient
   ) {}
 
   /**
@@ -37,19 +39,26 @@ export class RegisterPatientUseCase {
     const patientId = await this.patientIdGenerator.generatePatientId(tenantId);
 
     // US-PAT-001: Check for duplicate phone number per tenant
-    // This is enforced by unique constraint in schema, but we check explicitly for better error message
-    const existingPatient = await this.patientRepository.search({
-      tenantId,
-      query: dto.phone,
-      take: 1,
+    const existingPatient = await this.prisma.patient.findUnique({
+      where: {
+        tenantId_phone: {
+          tenantId,
+          phone: dto.phone.trim()
+        }
+      }
     });
 
-    if (existingPatient.total > 0) {
+    if (existingPatient) {
+      // @ts-ignore - Temporary fix for schema alignment
+      if (existingPatient.isDeleted) {
+        throw new ConflictError('A deleted patient with this phone number already exists. Please contact support or restore the patient.');
+      }
       throw new ConflictError('A patient with this phone number already exists');
     }
 
     // Convert DTO to domain data
     const patientData: PatientCreateData = {
+      id: dto.id,
       patientId: patientId,
       firstName: dto.firstName.trim(),
       lastName: dto.lastName.trim(),
@@ -58,10 +67,22 @@ export class RegisterPatientUseCase {
       phone: dto.phone.trim(),
       email: dto.email?.trim(),
       address: dto.address?.trim(),
+      city: dto.city?.trim(),
+      state: dto.state?.trim(),
+      lga: dto.lga?.trim(),
+      country: dto.country?.trim() || 'Nigeria',
+      nationality: dto.nationality?.trim(),
+      occupation: dto.occupation?.trim(),
+      maritalStatus: dto.maritalStatus,
       bloodGroup: dto.bloodGroup,
+      genotype: dto.genotype,
       allergies: dto.allergies || [],
       chronicConditions: dto.chronicConditions || [],
       emergencyContact: dto.emergencyContact,
+      patientType: dto.patientType,
+      hmoProvider: dto.hmoProvider,
+      hmoNumber: dto.hmoNumber,
+      nhisNumber: dto.nhisNumber,
       consentGiven: dto.consentGiven, // US-PAT-006: Include consent data
       tenantId,
     };
@@ -84,6 +105,7 @@ export class RegisterPatientUseCase {
   private toResponseDto(patient: PatientEntity): PatientResponseDto {
     return {
       id: patient.id,
+      version: patient.version,
       patientId: patient.patientNumber,
       firstName: patient.firstName,
       lastName: patient.lastName,
@@ -94,20 +116,24 @@ export class RegisterPatientUseCase {
       phone: patient.phone,
       email: patient.email || null,
       address: patient.address || null,
-      city: null, // Will be added later
-      state: null, // Will be added later
-      country: 'Nigeria',
-      nationality: null,
-      occupation: null,
-      maritalStatus: null,
+      city: patient.city || null,
+      state: patient.state || null,
+      lga: patient.lga || null,
+      country: patient.country || 'Nigeria',
+      nationality: patient.nationality || null,
+      occupation: patient.occupation || null,
+      maritalStatus: patient.maritalStatus || null,
       bloodGroup: patient.bloodGroup || null,
       genotype: patient.genotype || null,
       allergies: patient.allergies || [],
       chronicConditions: patient.chronicConditions || [],
-      pastSurgicalHistory: patient.pastSurgicalHistory || null,
-      emergencyContact: patient.emergencyContact || null,
-      nhisNumber: null,
-      photoUrl: null,
+      pastSurgicalHistory: patient.pastSurgicalHistory,
+      emergencyContact: patient.emergencyContact,
+      nhisNumber: patient.nhisNumber,
+      patientType: patient.patientType,
+      hmoProvider: patient.hmoProvider,
+      hmoNumber: patient.hmoNumber,
+      photoUrl: patient.photoUrl,
       status: patient.status,
       hasAllergies: patient.hasAnyAllergies(),
       consentGiven: patient.consentGiven || false,

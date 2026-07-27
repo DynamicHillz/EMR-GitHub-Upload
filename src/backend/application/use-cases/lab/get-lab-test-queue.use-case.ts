@@ -10,6 +10,7 @@ import type { LabTestStatus, TestUrgency } from '../../../shared/types/prisma-en
 
 export interface LabTestQueueDto {
   id: string;
+  orderId: string;
   patientId: string;
   patientName: string;
   patientAge: number;
@@ -22,6 +23,8 @@ export interface LabTestQueueDto {
   orderedBy: string;
   orderedByName: string;
   consultationId: string | null;
+  accessionNumber: string | null;
+  unitPrice: number;
   specimenType: string | null;
   specimenQuality: string | null;
   collectedAt: string | null;
@@ -33,6 +36,8 @@ export interface LabTestQueueFilters {
   status?: LabTestStatus;
   urgency?: TestUrgency;
   limit?: number;
+  patientId?: string;
+  billingStatus?: 'UNBILLED' | 'BILLED';
 }
 
 export class GetLabTestQueueUseCase {
@@ -49,8 +54,10 @@ export class GetLabTestQueueUseCase {
 
     // Apply status filter
     if (filters?.status) {
-      where.status = filters.status;
-    } else {
+      if (filters.status !== 'ALL' as any) {
+        where.status = filters.status;
+      }
+    } else if (!filters?.patientId) {
       // By default, show PENDING and IN_PROGRESS tests
       where.status = {
         in: ['PENDING', 'IN_PROGRESS'],
@@ -62,61 +69,83 @@ export class GetLabTestQueueUseCase {
       where.urgency = filters.urgency;
     }
 
+    // Apply patientId filter
+    if (filters?.patientId) {
+      where.patientId = filters.patientId;
+    }
+
+    // Apply billingStatus filter
+    if (filters?.billingStatus) {
+      where.billingStatus = filters.billingStatus;
+    }
+
     // Fetch lab tests
-    const labTests = await this.prisma.labTest.findMany({
-      where,
+    // @ts-ignore - Temporary fix for schema alignment
+    const labTestRecords = await this.prisma.labTestRecord.findMany({
+      where: {
+        tenantId,
+        ...(filters?.status && filters.status !== 'ALL' as any ? { status: filters.status } : !filters?.patientId ? { status: { in: ['PENDING', 'IN_PROGRESS'] } } : {}),
+        order: {
+          ...(filters?.urgency ? { urgency: filters.urgency } : {}),
+          ...(filters?.patientId ? { patientId: filters.patientId } : {}),
+          ...(filters?.billingStatus ? { billingStatus: filters.billingStatus } : {})
+        }
+      },
       include: {
-        patient: {
-          select: {
-            firstName: true,
-            lastName: true,
-            dateOfBirth: true,
-            gender: true,
-          },
+        order: {
+          include: {
+            patient: {
+              select: {
+                firstName: true,
+                lastName: true,
+                dateOfBirth: true,
+                gender: true,
+              },
+            },
+            orderedBy: {
+              select: {
+                firstName: true,
+                lastName: true,
+              },
+            },
+          }
         },
-        orderedBy: {
-          select: {
-            firstName: true,
-            lastName: true,
-          },
-        },
+        test: true
       },
       orderBy: [
-        // STAT (immediate) first, then URGENT, then ROUTINE
-        {
-          urgency: 'desc',
-        },
-        // Older tests first within same urgency
-        {
-          createdAt: 'asc',
-        },
+        { order: { urgency: 'desc' } },
+        { createdAt: 'asc' },
       ],
       take: filters?.limit,
     });
 
     // Calculate patient age and format response
-    return labTests.map((test) => {
-      const age = this.calculateAge(test.patient.dateOfBirth);
+    // @ts-ignore - Temporary fix for schema alignment
+    return labTestRecords.map((record) => {
+      const age = this.calculateAge(record.order.patient.dateOfBirth);
 
       return {
-        id: test.id,
-        patientId: test.patientId,
-        patientName: `${test.patient.firstName} ${test.patient.lastName}`,
+        id: record.id,
+        orderId: record.orderId,
+        patientId: record.order.patientId,
+        patientName: `${record.order.patient.firstName} ${record.order.patient.lastName}`,
         patientAge: age,
-        patientGender: test.patient.gender,
-        testName: test.testName,
-        testCode: test.testCode,
-        clinicalIndication: test.clinicalIndication,
-        urgency: test.urgency,
-        status: test.status,
-        orderedBy: test.orderedById,
-        orderedByName: `${test.orderedBy.firstName} ${test.orderedBy.lastName}`,
-        consultationId: test.consultationId,
-        specimenType: test.specimenType,
-        specimenQuality: test.specimenQuality,
-        collectedAt: test.collectedAt?.toISOString() || null,
-        rejectionReason: test.rejectionReason,
-        createdAt: test.createdAt.toISOString(),
+        patientGender: record.order.patient.gender,
+        testName: record.test.name,
+        testCode: record.test.loincCode || record.test.name,
+        clinicalIndication: record.order.clinicalNotes,
+        urgency: record.order.urgency,
+        status: record.status,
+        orderedBy: record.order.orderedById,
+        orderedByName: `${record.order.orderedBy.firstName} ${record.order.orderedBy.lastName}`,
+        consultationId: record.order.consultationId,
+        accessionNumber: record.accessionNumber,
+        unitPrice: record.unitPrice,
+        specimenType: record.specimenType,
+        specimenQuality: record.specimenQuality,
+        collectedAt: record.collectedAt?.toISOString() || null,
+        rejectionReason: record.rejectionReason,
+        createdAt: record.createdAt.toISOString(),
       };
     });
   }

@@ -27,7 +27,7 @@ describe('UpdatePatientUseCase', () => {
     phone: '+2348012345678',
     email: 'john.doe@example.com',
     address: '123 Test Street, Lagos',
-    bloodGroup: 'O+' as const,
+    bloodGroup: 'O_POSITIVE' as const,
     genotype: 'AA' as const,
     allergies: ['Penicillin'],
     chronicConditions: ['Hypertension'],
@@ -45,6 +45,7 @@ describe('UpdatePatientUseCase', () => {
       create: jest.fn(),
       findById: jest.fn(),
       findByPatientId: jest.fn(),
+      findByPhone: jest.fn(),
       update: jest.fn(),
       delete: jest.fn(),
       search: jest.fn(),
@@ -83,7 +84,8 @@ describe('UpdatePatientUseCase', () => {
           firstName: 'Jane',
           email: 'jane.doe@example.com',
           address: '456 New Street, Abuja',
-        })
+        }),
+        undefined // updateDto.version — not set in this test's DTO
       );
       expect(result.firstName).toBe('Jane');
       expect(result.email).toBe('jane.doe@example.com');
@@ -112,12 +114,7 @@ describe('UpdatePatientUseCase', () => {
       const updateDto: UpdatePatientDto = { phone: newPhone };
 
       mockPatientRepository.findById.mockResolvedValue(existingPatient);
-      mockPatientRepository.search.mockResolvedValue({
-        total: 0,
-        data: [],
-        skip: 0,
-        take: 1,
-      });
+      mockPatientRepository.findByPhone.mockResolvedValue(null);
       mockPatientRepository.update.mockResolvedValue({
         ...existingPatient,
         phone: newPhone,
@@ -127,11 +124,7 @@ describe('UpdatePatientUseCase', () => {
       const result = await useCase.execute(patientId, updateDto, tenantId);
 
       // Assert
-      expect(mockPatientRepository.search).toHaveBeenCalledWith({
-        tenantId,
-        query: newPhone,
-        take: 1,
-      });
+      expect(mockPatientRepository.findByPhone).toHaveBeenCalledWith(newPhone, tenantId);
       expect(result.phone).toBe(newPhone);
     });
 
@@ -141,17 +134,10 @@ describe('UpdatePatientUseCase', () => {
       const updateDto: UpdatePatientDto = { phone: duplicatePhone };
 
       mockPatientRepository.findById.mockResolvedValue(existingPatient);
-      mockPatientRepository.search.mockResolvedValue({
-        total: 1,
-        data: [
-          {
-            id: 'different-patient-id',
-            phone: duplicatePhone,
-          } as any,
-        ],
-        skip: 0,
-        take: 1,
-      });
+      mockPatientRepository.findByPhone.mockResolvedValue({
+        id: 'different-patient-id',
+        phone: duplicatePhone,
+      } as any);
 
       // Act & Assert
       await expect(useCase.execute(patientId, updateDto, tenantId)).rejects.toThrow(
@@ -181,7 +167,7 @@ describe('UpdatePatientUseCase', () => {
       await useCase.execute(patientId, updateDto, tenantId);
 
       // Assert
-      expect(mockPatientRepository.search).not.toHaveBeenCalled();
+      expect(mockPatientRepository.findByPhone).not.toHaveBeenCalled();
     });
 
     it('should trim whitespace from updated text fields', async () => {
@@ -195,12 +181,7 @@ describe('UpdatePatientUseCase', () => {
       };
 
       mockPatientRepository.findById.mockResolvedValue(existingPatient);
-      mockPatientRepository.search.mockResolvedValue({
-        total: 0,
-        data: [],
-        skip: 0,
-        take: 1,
-      });
+      mockPatientRepository.findByPhone.mockResolvedValue(null);
       mockPatientRepository.update.mockResolvedValue({
         ...existingPatient,
         firstName: 'Jane',
@@ -223,7 +204,8 @@ describe('UpdatePatientUseCase', () => {
           phone: '+2348099999999',
           email: 'jane.smith@example.com',
           address: '789 Updated Street',
-        })
+        }),
+        undefined // updateDto.version — not set in this test's DTO
       );
     });
 
@@ -246,7 +228,8 @@ describe('UpdatePatientUseCase', () => {
       expect(mockPatientRepository.update).toHaveBeenCalledWith(
         patientId,
         tenantId,
-        { email: 'newemail@example.com' }
+        { email: 'newemail@example.com' },
+        undefined // updateDto.version — not set in this test's DTO
       );
     });
 
@@ -329,7 +312,8 @@ describe('UpdatePatientUseCase', () => {
       expect(mockPatientRepository.update).toHaveBeenCalledWith(
         patientId,
         tenantId,
-        {}
+        {},
+        undefined // updateDto.version — not set in this test's DTO
       );
       expect(result.id).toBe(patientId);
     });

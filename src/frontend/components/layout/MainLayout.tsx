@@ -11,12 +11,26 @@ import {
   Settings,
   LogOut,
   UserCog,
+  Activity,
+  Bed,
+  DoorOpen,
+  ShieldAlert,
+  Network,
+  Baby,
+  Syringe,
+  BarChart3,
+  Heart,
+  Building2,
+  BadgePercent,
+  ShieldCheck,
+  Scissors,
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { loadAndApplyBranding } from '../../utils/theme';
 import ConfirmDialog from '../common/ConfirmDialog';
 import { useConfirm } from '../../hooks/useConfirm';
 import NetworkStatusIndicator, { SyncStatusIndicator } from '../NetworkStatusIndicator';
+import NotificationBell from '../common/NotificationBell';
 
 // Permission matrix per role — matches USER_MANAGEMENT_IMPLEMENTATION_PLAN.md
 const navigation = [
@@ -24,65 +38,133 @@ const navigation = [
     name: 'Dashboard',
     path: '/dashboard',
     icon: LayoutDashboard,
-    requiredRoles: [
-      'SUPER_ADMIN', 'ADMIN', 'DOCTOR'
-      
-    ],
+    requiredRoles: ['SUPER_ADMIN', 'ADMIN', 'DOCTOR'],
   },
   {
     name: 'Patients',
     path: '/patients',
     icon: Users,
-    requiredRoles: [
-      'SUPER_ADMIN', 'ADMIN', 'DOCTOR', 'NURSE',
-       'RECEPTIONIST',
-    ],
+    requiredRoles: ['SUPER_ADMIN', 'ADMIN', 'DOCTOR', 'NURSE', 'RECEPTIONIST'],
+  },
+  {
+    name: 'Vitals',
+    path: '/triage',
+    icon: Activity,
+    requiredRoles: ['SUPER_ADMIN', 'ADMIN', 'DOCTOR', 'NURSE'],
   },
   {
     name: 'Appointments',
     path: '/appointments',
     icon: Calendar,
-    requiredRoles: [
-      'SUPER_ADMIN', 'ADMIN', 'DOCTOR', 'NURSE', 'RECEPTIONIST',
-    ],
+    requiredRoles: ['SUPER_ADMIN', 'ADMIN', 'DOCTOR', 'NURSE', 'RECEPTIONIST'],
   },
   {
     name: 'Consultations',
     path: '/consultations',
     icon: FileText,
-    requiredRoles: [
-      'SUPER_ADMIN', 'ADMIN', 'DOCTOR', 'NURSE',
-    ],
+    requiredRoles: ['SUPER_ADMIN', 'ADMIN', 'DOCTOR'],
+  },
+  {
+    name: 'Inpatient',
+    path: '/inpatient',
+    icon: Bed,
+    requiredRoles: ['SUPER_ADMIN', 'ADMIN', 'DOCTOR', 'NURSE'],
+  },
+  {
+    name: 'Surgery Log',
+    path: '/surgery-log',
+    icon: Scissors,
+    requiredRoles: ['SUPER_ADMIN', 'ADMIN', 'DOCTOR', 'NURSE'],
+  },
+  {
+    name: 'Labor Ward',
+    path: '/labor-ward',
+    icon: Heart,
+    requiredRoles: ['SUPER_ADMIN', 'ADMIN', 'DOCTOR', 'NURSE'],
+  },
+  {
+    name: 'Wards',
+    path: '/wards',
+    icon: DoorOpen,
+    requiredRoles: ['SUPER_ADMIN', 'ADMIN', 'NURSE'],
+  },
+  {
+    name: 'Maternal Care',
+    path: '/mch',
+    icon: Baby,
+    requiredRoles: ['SUPER_ADMIN', 'ADMIN', 'DOCTOR', 'NURSE'],
+  },
+  {
+    name: 'Immunizations Due',
+    path: '/immunizations/due',
+    icon: Syringe,
+    requiredRoles: ['SUPER_ADMIN', 'ADMIN', 'DOCTOR', 'NURSE'],
   },
   {
     name: 'Laboratory',
     path: '/lab',
     icon: TestTube,
-    requiredRoles: [
-      'SUPER_ADMIN', 'ADMIN', 'DOCTOR', 'NURSE', 'LAB_TECH',
-    ],
+    requiredRoles: ['SUPER_ADMIN', 'ADMIN', 'DOCTOR', 'NURSE', 'LAB_TECH'],
   },
   {
     name: 'Pharmacy',
     path: '/pharmacy',
     icon: Pill,
-    requiredRoles: [
-      'SUPER_ADMIN', 'ADMIN', 'DOCTOR', 'NURSE', 'PHARMACIST',
-    ],
+    requiredRoles: ['SUPER_ADMIN', 'ADMIN', 'DOCTOR', 'NURSE', 'PHARMACIST'],
   },
   {
     name: 'Billing',
     path: '/billing',
     icon: Receipt,
-    requiredRoles: [
-      'SUPER_ADMIN', 'ADMIN', 'DOCTOR', 'CASHIER',
-    ],
+    requiredRoles: ['SUPER_ADMIN', 'ADMIN', 'DOCTOR', 'CASHIER'],
+  },
+  {
+    name: 'Reports',
+    path: '/reports',
+    icon: BarChart3,
+    requiredRoles: ['SUPER_ADMIN', 'ADMIN'],
   },
   {
     name: 'User Management',
     path: '/users',
     icon: UserCog,
     requiredRoles: ['SUPER_ADMIN', 'ADMIN'],
+  },
+  {
+    name: 'Clinics',
+    path: '/tenants',
+    icon: Building2,
+    requiredRoles: ['SUPER_ADMIN'],
+  },
+  {
+    name: 'Exemption Policies',
+    path: '/exemption-policies',
+    icon: BadgePercent,
+    requiredRoles: ['SUPER_ADMIN', 'ADMIN'],
+  },
+  {
+    name: 'Insurance Providers',
+    path: '/insurance-providers',
+    icon: ShieldCheck,
+    requiredRoles: ['SUPER_ADMIN', 'ADMIN'],
+  },
+  {
+    name: 'Audit Logs',
+    path: '/audit',
+    icon: ShieldAlert,
+    requiredRoles: ['SUPER_ADMIN'],
+  },
+  {
+    name: 'Interoperability',
+    path: '/interoperability',
+    icon: Network,
+    requiredRoles: ['SUPER_ADMIN', 'ADMIN'],
+  },
+  {
+    name: 'Sync Conflicts',
+    path: '/sync-conflicts',
+    icon: ShieldAlert,
+    requiredRoles: ['SUPER_ADMIN', 'ADMIN', 'DOCTOR'],
   },
 ];
 
@@ -125,10 +207,10 @@ const MainLayout: React.FC = () => {
     item => !item.requiredRoles || hasRole(item.requiredRoles)
   );
 
-  // If user lands on a route they can't access, redirect to dashboard
+  // If user lands on a route they can't access, redirect to their home page
   const currentNav = navigation.find(item => location.pathname.startsWith(item.path));
   if (currentNav && currentNav.requiredRoles && !hasRole(currentNav.requiredRoles)) {
-    return <Navigate to="/dashboard" replace />;
+    return <Navigate to="/" replace />;
   }
 
   return (
@@ -150,7 +232,7 @@ const MainLayout: React.FC = () => {
           )}
         </div>
 
-        <nav className="mt-6 flex-1">
+        <nav className="mt-6 flex-1 overflow-y-auto">
           {visibleNav.map((item) => {
             const Icon = item.icon;
             const isActive = location.pathname.startsWith(item.path);
@@ -198,6 +280,7 @@ const MainLayout: React.FC = () => {
             {visibleNav.find((item) => location.pathname.startsWith(item.path))?.name || 'Dashboard'}
           </h2>
           <div className="flex items-center space-x-4">
+            <NotificationBell />
             <NetworkStatusIndicator />
             <SyncStatusIndicator />
             <div className="text-right">

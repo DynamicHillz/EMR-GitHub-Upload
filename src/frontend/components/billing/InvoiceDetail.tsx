@@ -10,11 +10,66 @@ import {
 import ErrorAlert from '../common/ErrorAlert';
 import ConfirmDialog from '../common/ConfirmDialog';
 import { useConfirm } from '../../hooks/useConfirm';
+import RefundForm from './RefundForm';
+import EditInvoiceModal from './EditInvoiceModal';
+import { getErrorMessage } from '../../utils/errorHandler';
+import { amountToWords } from '../../utils/numberToWords';
+import { useAuth } from '../../contexts/AuthContext';
+
+// Matches billing.routes.ts's CAN_BILL — invoice editing is a billing-staff
+// action, not a clinical one.
+const CAN_EDIT_INVOICE_ROLES = ['SUPER_ADMIN', 'ADMIN', 'CASHIER'];
 
 interface InvoiceDetailProps {
   invoiceId: string;
   onRecordPayment?: () => void;
   onClose?: () => void;
+}
+
+// Department/section labels for grouping line items on the printed and
+// on-screen invoice — a flat list of 15+ charges (common on an admission)
+// is much harder to audit than the same charges grouped the way a patient
+// or insurer actually thinks about them.
+const SERVICE_GROUP_LABELS: Record<string, string> = {
+  CONSULTATION: 'Consultation',
+  LAB_TEST: 'Laboratory & Diagnostics',
+  MEDICATION: 'Pharmacy',
+  CONSUMABLE: 'Consumables & Supplies',
+  ACCOMMODATION: 'Accommodation & Ward',
+  MISC: 'Other Charges',
+  CUSTOM: 'Other Charges',
+};
+const SERVICE_GROUP_ORDER = [
+  'Consultation',
+  'Laboratory & Diagnostics',
+  'Pharmacy',
+  'Consumables & Supplies',
+  'Accommodation & Ward',
+  'Other Charges',
+];
+
+interface LineItemGroup {
+  label: string;
+  items: any[];
+  subtotal: number;
+}
+
+function groupLineItems(items: any[]): LineItemGroup[] {
+  const groups = new Map<string, LineItemGroup>();
+  for (const item of items) {
+    const label = SERVICE_GROUP_LABELS[item.serviceCode] || 'Other Charges';
+    const total = item.subtotal ?? item.total ?? 0;
+    const existing = groups.get(label);
+    if (existing) {
+      existing.items.push(item);
+      existing.subtotal += total;
+    } else {
+      groups.set(label, { label, items: [item], subtotal: total });
+    }
+  }
+  return SERVICE_GROUP_ORDER
+    .map((label) => groups.get(label))
+    .filter((g): g is LineItemGroup => !!g);
 }
 
 const InvoiceDetail: React.FC<InvoiceDetailProps> = ({
@@ -29,7 +84,10 @@ const InvoiceDetail: React.FC<InvoiceDetailProps> = ({
   const [actionError, setActionError] = useState<string>('');
   const [successMessage, setSuccessMessage] = useState<string>('');
   const [branding, setBranding] = useState<any>(null);
+  const [refundingPayment, setRefundingPayment] = useState<Payment | null>(null);
+  const [showEditModal, setShowEditModal] = useState(false);
 
+  const { hasRole } = useAuth();
   const { confirm, isOpen, options, loading: confirmLoading, handleConfirm, handleCancel } = useConfirm();
 
   useEffect(() => {
@@ -40,7 +98,7 @@ const InvoiceDetail: React.FC<InvoiceDetailProps> = ({
   const fetchBranding = async () => {
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch('http://localhost:3000/api/branding', {
+      const response = await fetch(`${window.location.protocol}//${window.location.hostname}:3000/api/branding`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       const data = await response.json();
@@ -61,7 +119,7 @@ const InvoiceDetail: React.FC<InvoiceDetailProps> = ({
       setInvoice(invoiceData);
       setPayments(paymentsData);
     } catch (err: any) {
-      setError(err.message || 'Failed to load invoice details');
+      setError(getErrorMessage(err, 'Failed to load invoice details'));
     } finally {
       setLoading(false);
     }
@@ -84,7 +142,7 @@ const InvoiceDetail: React.FC<InvoiceDetailProps> = ({
       setSuccessMessage('Invoice cancelled successfully');
       setTimeout(() => { setSuccessMessage(''); onClose?.(); }, 1500);
     } catch (err: any) {
-      setActionError(err.message || 'Failed to cancel invoice');
+      setActionError(getErrorMessage(err, 'Failed to cancel invoice'));
     }
   };
 
@@ -95,7 +153,7 @@ const InvoiceDetail: React.FC<InvoiceDetailProps> = ({
     if (!brandingData) {
       try {
         const token = localStorage.getItem('token');
-        const res = await fetch('http://localhost:3000/api/branding', {
+        const res = await fetch(`${window.location.protocol}//${window.location.hostname}:3000/api/branding`, {
           headers: { Authorization: `Bearer ${token}` },
         });
         const data = await res.json();
@@ -111,6 +169,8 @@ const InvoiceDetail: React.FC<InvoiceDetailProps> = ({
     const clinicPhone = brandingData?.phone || '';
     const clinicEmail = brandingData?.email || '';
     const logoUrl = brandingData?.logoUrl || '';
+    const clinicTaxId = brandingData?.taxId || '';
+    const clinicTaxName = brandingData?.taxName || 'TIN';
 
     const verifyUrl = `${window.location.origin}/billing/invoices/${invoice.id}`;
     const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=120x120&data=${encodeURIComponent(verifyUrl)}`;
@@ -123,15 +183,43 @@ const InvoiceDetail: React.FC<InvoiceDetailProps> = ({
         year: 'numeric', month: 'long', day: 'numeric',
       });
 
-    const lineItemsHtml = (invoice.lineItems || []).map((item: any) => `
+    const printLineItems: any[] = invoice.lineItems || (invoice as any).items || [];
+    const printGroups = groupLineItems(printLineItems);
+    const printInsuranceCoverage = printLineItems.reduce((sum, i) => sum + Number(i.insuranceCoverage || 0), 0);
+    const printPatientOutOfPocket = printLineItems.reduce((sum, i) => sum + Number(i.patientOutOfPocket ?? i.subtotal ?? i.total ?? 0), 0);
+    const printAmountInWords = amountToWords(invoice.totalAmount);
+
+    const lineItemRowHtml = (item: any) => `
       <tr>
         <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;">${item.description || item.serviceName || ''}</td>
         <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;text-align:right;">${item.quantity}</td>
         <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;text-align:right;">${formatCurrencyPrint(item.unitPrice)}</td>
         <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;text-align:right;">${formatCurrencyPrint(item.taxAmount || item.tax || 0)}</td>
-        <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;text-align:right;font-weight:600;">${formatCurrencyPrint(item.total)}</td>
+        <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;text-align:right;font-weight:600;">${formatCurrencyPrint(item.subtotal || item.total || 0)}</td>
       </tr>
+    `;
+
+    const lineItemsHtml = printGroups.map((group) => `
+      <tr style="background:#f3f4f6;">
+        <td colspan="5" style="padding:6px 12px;font-size:9pt;font-weight:700;text-transform:uppercase;color:#4b5563;">${group.label}</td>
+      </tr>
+      ${group.items.map(lineItemRowHtml).join('')}
+      ${group.items.length > 1 ? `
+      <tr>
+        <td colspan="4" style="padding:4px 12px;text-align:right;font-size:9pt;color:#6b7280;">Subtotal — ${group.label}</td>
+        <td style="padding:4px 12px;text-align:right;font-size:9pt;font-weight:700;color:#374151;">${formatCurrencyPrint(group.subtotal)}</td>
+      </tr>` : ''}
     `).join('');
+
+    const insuranceHtml = printInsuranceCoverage > 0 ? `
+      <div style="margin-bottom:24px;padding:12px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;">
+        <div style="font-size:10pt;font-weight:700;text-transform:uppercase;color:#1e3a8a;margin-bottom:6px;">Insurance / Exemption Coverage</div>
+        <table style="font-size:10pt;width:100%;">
+          <tr><td style="color:#374151;padding:2px 0;">Covered by Insurance/Exemption:</td><td style="text-align:right;font-weight:600;color:#1d4ed8;">${formatCurrencyPrint(printInsuranceCoverage)}</td></tr>
+          <tr><td style="color:#374151;padding:2px 0;">Patient Payable:</td><td style="text-align:right;font-weight:600;">${formatCurrencyPrint(printPatientOutOfPocket)}</td></tr>
+        </table>
+      </div>
+    ` : '';
 
     const paymentsHtml = payments.length > 0 ? `
       <div style="margin-top:24px;">
@@ -179,6 +267,7 @@ const InvoiceDetail: React.FC<InvoiceDetailProps> = ({
         ${clinicAddress ? `<div style="font-size:10pt;color:#4b5563;margin-top:2px;">${clinicAddress}</div>` : ''}
         ${clinicPhone ? `<div style="font-size:10pt;color:#4b5563;">Tel: ${clinicPhone}</div>` : ''}
         ${clinicEmail ? `<div style="font-size:10pt;color:#4b5563;">Email: ${clinicEmail}</div>` : ''}
+        ${clinicTaxId ? `<div style="font-size:10pt;color:#4b5563;">${clinicTaxName}: ${clinicTaxId}</div>` : ''}
       </div>
     </div>
     <div style="text-align:right;">
@@ -196,6 +285,7 @@ const InvoiceDetail: React.FC<InvoiceDetailProps> = ({
     <div>
       <div style="font-size:10pt;font-weight:700;text-transform:uppercase;color:#6b7280;margin-bottom:8px;">Bill To</div>
       <div style="font-size:13pt;font-weight:700;">${invoice.patient?.firstName || ''} ${invoice.patient?.lastName || ''}</div>
+      ${invoice.patient?.patientId ? `<div style="font-size:10pt;color:#4b5563;">Patient ID: <strong>${invoice.patient.patientId}</strong></div>` : ''}
       ${invoice.patient?.phone ? `<div style="font-size:10pt;color:#4b5563;">${invoice.patient.phone}</div>` : ''}
       ${invoice.patient?.email ? `<div style="font-size:10pt;color:#4b5563;">${invoice.patient.email}</div>` : ''}
     </div>
@@ -222,7 +312,9 @@ const InvoiceDetail: React.FC<InvoiceDetailProps> = ({
     <tbody>${lineItemsHtml}</tbody>
   </table>
 
-  <div style="display:flex;justify-content:flex-end;margin-bottom:24px;">
+  ${insuranceHtml}
+
+  <div style="display:flex;justify-content:flex-end;margin-bottom:8px;">
     <table style="width:280px;font-size:11pt;">
       <tr><td style="padding:4px 0;color:#6b7280;">Subtotal:</td><td style="text-align:right;font-weight:600;">${formatCurrencyPrint(invoice.subtotal)}</td></tr>
       <tr><td style="padding:4px 0;color:#6b7280;">Tax:</td><td style="text-align:right;font-weight:600;">${formatCurrencyPrint(invoice.taxAmount || invoice.tax || 0)}</td></tr>
@@ -233,6 +325,8 @@ const InvoiceDetail: React.FC<InvoiceDetailProps> = ({
       <tr><td style="padding:4px 0;color:#dc2626;font-weight:700;">Balance Due:</td><td style="text-align:right;font-weight:700;color:#dc2626;">${formatCurrencyPrint(invoice.balance)}</td></tr>
     </table>
   </div>
+
+  <div style="text-align:right;font-size:9pt;font-style:italic;color:#6b7280;margin-bottom:24px;">Amount in words: ${printAmountInWords}</div>
 
   ${paymentsHtml}
 
@@ -325,6 +419,12 @@ const InvoiceDetail: React.FC<InvoiceDetailProps> = ({
     );
   }
 
+  const displayLineItems: any[] = invoice.lineItems || (invoice as any).items || [];
+  const groupedSections = groupLineItems(displayLineItems);
+  const totalInsuranceCoverage = displayLineItems.reduce((sum, i) => sum + Number(i.insuranceCoverage || 0), 0);
+  const totalPatientOutOfPocket = displayLineItems.reduce((sum, i) => sum + Number(i.patientOutOfPocket ?? i.subtotal ?? i.total ?? 0), 0);
+  const amountInWords = amountToWords(invoice.totalAmount);
+
   return (
     <div className="space-y-6">
       {actionError && (
@@ -352,6 +452,12 @@ const InvoiceDetail: React.FC<InvoiceDetailProps> = ({
             className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors">
             Print / Download
           </button>
+          {hasRole(CAN_EDIT_INVOICE_ROLES) && (invoice.status === 'DRAFT' || invoice.status === 'ISSUED') && (
+            <button onClick={() => setShowEditModal(true)}
+              className="px-4 py-2 bg-amber-600 text-white rounded-md hover:bg-amber-700 transition-colors">
+              Edit Invoice
+            </button>
+          )}
           {invoice.status !== 'CANCELLED' && invoice.status !== 'PAID' && (
             <button onClick={handleCancelInvoice}
               className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors">
@@ -370,11 +476,22 @@ const InvoiceDetail: React.FC<InvoiceDetailProps> = ({
       {/* Invoice Header */}
       <div className="bg-white rounded-lg shadow-lg p-8">
         <div className="flex justify-between items-start mb-8">
-          <div>
-            <h1 className="text-3xl font-bold text-gray-900 mb-2">INVOICE</h1>
-            <p className="text-xl text-gray-600">{invoice.invoiceNumber}</p>
+          <div className="flex items-center gap-4">
+            {branding?.logoUrl && (
+              <img src={branding.logoUrl} alt={branding.clinicName} className="h-14 w-auto object-contain" />
+            )}
+            <div>
+              <p className="text-lg font-bold text-gray-900">{branding?.clinicName || 'Clinic'}</p>
+              {branding?.address && <p className="text-xs text-gray-500">{branding.address}</p>}
+              {branding?.phone && <p className="text-xs text-gray-500">Tel: {branding.phone}</p>}
+              {branding?.taxId && (
+                <p className="text-xs text-gray-500">{branding.taxName || 'TIN'}: {branding.taxId}</p>
+              )}
+            </div>
           </div>
           <div className="text-right">
+            <h1 className="text-3xl font-bold text-gray-900 mb-2">INVOICE</h1>
+            <p className="text-xl text-gray-600 mb-2">{invoice.invoiceNumber}</p>
             <div className="mb-2">
               <span className={`px-3 py-1 inline-flex text-sm font-semibold rounded-full ${getStatusBadgeClass(invoice.status)}`}>
                 {invoice.status}
@@ -394,6 +511,9 @@ const InvoiceDetail: React.FC<InvoiceDetailProps> = ({
             <h3 className="text-sm font-semibold text-gray-500 uppercase mb-2">Bill To</h3>
             <div className="text-gray-900">
               <p className="font-semibold text-lg">{invoice.patient?.firstName} {invoice.patient?.lastName}</p>
+              {invoice.patient?.patientId && (
+                <p className="text-sm text-gray-600">Patient ID: <span className="font-medium">{invoice.patient.patientId}</span></p>
+              )}
               {invoice.patient?.email && <p className="text-sm">{invoice.patient.email}</p>}
               <p className="text-sm">{invoice.patient?.phone}</p>
             </div>
@@ -415,7 +535,9 @@ const InvoiceDetail: React.FC<InvoiceDetailProps> = ({
           </div>
         </div>
 
-        {/* Line Items */}
+        {/* Line Items — grouped by department so a multi-charge bill (e.g.
+            an admission) reads the way a patient or insurer actually
+            reviews it, instead of one long undifferentiated list. */}
         <div className="mb-8">
           <h3 className="text-sm font-semibold text-gray-500 uppercase mb-4">Items</h3>
           <div className="overflow-x-auto">
@@ -430,19 +552,53 @@ const InvoiceDetail: React.FC<InvoiceDetailProps> = ({
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
-                {invoice.lineItems?.map((item: any, index: number) => (
-                  <tr key={index}>
-                    <td className="px-4 py-3 text-sm text-gray-900">{item.description || item.serviceName}</td>
-                    <td className="px-4 py-3 text-sm text-right text-gray-900">{item.quantity}</td>
-                    <td className="px-4 py-3 text-sm text-right text-gray-900">{formatCurrency(item.unitPrice)}</td>
-                    <td className="px-4 py-3 text-sm text-right text-gray-900">{formatCurrency(item.taxAmount || item.tax || 0)}</td>
-                    <td className="px-4 py-3 text-sm text-right font-medium text-gray-900">{formatCurrency(item.total)}</td>
-                  </tr>
+                {groupedSections.map((group) => (
+                  <React.Fragment key={group.label}>
+                    <tr className="bg-gray-50">
+                      <td colSpan={5} className="px-4 py-2 text-xs font-semibold text-gray-600 uppercase">
+                        {group.label}
+                      </td>
+                    </tr>
+                    {group.items.map((item: any, index: number) => (
+                      <tr key={index}>
+                        <td className="px-4 py-3 text-sm text-gray-900">{item.description || item.serviceName}</td>
+                        <td className="px-4 py-3 text-sm text-right text-gray-900">{item.quantity}</td>
+                        <td className="px-4 py-3 text-sm text-right text-gray-900">{formatCurrency(item.unitPrice)}</td>
+                        <td className="px-4 py-3 text-sm text-right text-gray-900">{formatCurrency(item.taxAmount || item.tax || 0)}</td>
+                        <td className="px-4 py-3 text-sm text-right font-medium text-gray-900">{formatCurrency(item.subtotal || item.total || 0)}</td>
+                      </tr>
+                    ))}
+                    {group.items.length > 1 && (
+                      <tr>
+                        <td colSpan={4} className="px-4 py-2 text-xs text-right text-gray-500">Subtotal — {group.label}</td>
+                        <td className="px-4 py-2 text-xs text-right font-semibold text-gray-700">{formatCurrency(group.subtotal)}</td>
+                      </tr>
+                    )}
+                  </React.Fragment>
                 ))}
               </tbody>
             </table>
           </div>
         </div>
+
+        {/* Insurance / Exemption Breakdown — only relevant when some portion
+            of this invoice is covered by insurance or an exemption policy;
+            hidden entirely for the common cash-paying patient. */}
+        {totalInsuranceCoverage > 0 && (
+          <div className="mb-8 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+            <h3 className="text-sm font-semibold text-blue-900 uppercase mb-2">Insurance / Exemption Coverage</h3>
+            <div className="space-y-1 text-sm">
+              <div className="flex justify-between">
+                <span className="text-gray-700">Covered by Insurance/Exemption:</span>
+                <span className="font-medium text-blue-700">{formatCurrency(totalInsuranceCoverage)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-700">Patient Payable:</span>
+                <span className="font-medium text-gray-900">{formatCurrency(totalPatientOutOfPocket)}</span>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Totals */}
         <div className="flex justify-end">
@@ -477,6 +633,8 @@ const InvoiceDetail: React.FC<InvoiceDetailProps> = ({
           </div>
         </div>
 
+        <p className="text-sm text-gray-500 italic text-right mt-2">Amount in words: {amountInWords}</p>
+
         {invoice.notes && (
           <div className="mt-8 pt-8 border-t border-gray-200">
             <h3 className="text-sm font-semibold text-gray-500 uppercase mb-2">Notes</h3>
@@ -498,6 +656,7 @@ const InvoiceDetail: React.FC<InvoiceDetailProps> = ({
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Method</th>
                   <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Amount</th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase print:hidden">Actions</th>
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
@@ -511,6 +670,16 @@ const InvoiceDetail: React.FC<InvoiceDetailProps> = ({
                       <span className="px-2 py-1 text-xs font-semibold rounded-full bg-green-100 text-green-800">
                         {payment.status}
                       </span>
+                    </td>
+                    <td className="px-4 py-3 text-sm text-right print:hidden">
+                      {payment.status === 'COMPLETED' && (
+                        <button
+                          onClick={() => setRefundingPayment(payment)}
+                          className="text-red-600 hover:text-red-800 text-xs font-medium"
+                        >
+                          Request Refund
+                        </button>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -538,6 +707,44 @@ const InvoiceDetail: React.FC<InvoiceDetailProps> = ({
         variant={options.variant}
         loading={confirmLoading}
       />
+
+      {/* Edit Invoice Modal */}
+      {showEditModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="max-w-lg w-full max-h-[90vh] overflow-y-auto">
+            <EditInvoiceModal
+              invoice={invoice}
+              onSuccess={({ queued }) => {
+                setShowEditModal(false);
+                setSuccessMessage(
+                  queued
+                    ? 'Saved offline — this invoice will sync automatically when your connection returns.'
+                    : 'Invoice updated successfully.'
+                );
+                loadInvoiceDetails();
+              }}
+              onCancel={() => setShowEditModal(false)}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Request Refund Modal */}
+      {refundingPayment && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="max-w-lg w-full max-h-[90vh] overflow-y-auto">
+            <RefundForm
+              payment={refundingPayment}
+              onSuccess={() => {
+                setRefundingPayment(null);
+                setSuccessMessage('Refund requested — it now needs supervisor approval before processing.');
+                loadInvoiceDetails();
+              }}
+              onCancel={() => setRefundingPayment(null)}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 };

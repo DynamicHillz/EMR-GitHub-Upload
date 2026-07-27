@@ -4,9 +4,6 @@ import * as authController from '../controllers/auth.controller';
 
 const router = Router();
 
-// POST /api/auth/register - Register new user
-router.post('/register', asyncHandler(authController.register));
-
 // POST /api/auth/login - Login user
 router.post('/login', asyncHandler(authController.login));
 

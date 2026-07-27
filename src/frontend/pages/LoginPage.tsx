@@ -25,7 +25,7 @@ const LoginPage: React.FC = () => {
   useEffect(() => {
     const fetchBranding = async () => {
       try {
-        const response = await fetch('http://localhost:3000/api/branding/public');
+        const response = await fetch(`${window.location.protocol}//${window.location.hostname}:3000/api/branding/public`);
         if (response.ok) {
           const result = await response.json();
           setBranding(result.data);

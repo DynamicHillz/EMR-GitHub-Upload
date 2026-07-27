@@ -32,6 +32,7 @@ export class GetPatientBalanceUseCase {
       where: {
         tenantId,
         patientId,
+        isDeleted: false,
         paymentStatus: {
           in: ['UNPAID', 'PARTIALLY_PAID']
         },
@@ -54,17 +55,20 @@ export class GetPatientBalanceUseCase {
       }
     });
 
-    const totalBalance = invoices.reduce((sum, inv) => sum + inv.balance, 0);
+    // inv.balance is a Prisma Decimal — `+` on Decimals string-concatenates
+    // instead of adding once there's more than one invoice, corrupting the
+    // balance figure shown to cashiers at checkout.
+    const totalBalance = invoices.reduce((sum, inv) => sum + Number(inv.balance), 0);
     const totalInvoices = invoices.length;
 
     // Calculate overdue
     const today = new Date();
     const overdueInvoices = invoices.filter(inv => {
       const dueDate = inv.dueDate || inv.invoiceDate;
-      return new Date(dueDate) < today && inv.balance > 0;
+      return new Date(dueDate) < today && Number(inv.balance) > 0;
     });
 
-    const overdueBalance = overdueInvoices.reduce((sum, inv) => sum + inv.balance, 0);
+    const overdueBalance = overdueInvoices.reduce((sum, inv) => sum + Number(inv.balance), 0);
 
     return {
       patient,

@@ -43,8 +43,7 @@
 - **Winston** for logging
 
 #### Database
-- **PostgreSQL** (cloud) - Single source of truth
-- **SQLite** (local) - Offline operations with SQLCipher encryption
+- **PostgreSQL** - Local-first database serving as the single source of truth
 
 #### Desktop
 - **Electron** - Cross-platform desktop application
@@ -71,10 +70,10 @@
 │              Clinic Laptops (Offline-First)             │
 │  ┌──────────────────────────────────────────────────┐  │
 │  │           Electron Desktop App                   │  │
-│  │  ┌────────────┐  ┌────────────┐  ┌───────────┐ │  │
-│  │  │   React    │  │   Sync     │  │  SQLite   │ │  │
-│  │  │  Frontend  │  │   Engine   │  │ (Encrypted)│ │  │
-│  │  └────────────┘  └────────────┘  └───────────┘ │  │
+│  │  ┌────────────┐  ┌────────────┐  ┌────────────┐ │  │
+│  │  │   React    │  │  Node.js   │  │ PostgreSQL │ │  │
+│  │  │  Frontend  │  │  Backend   │  │ (Local DB) │ │  │
+│  │  └────────────┘  └────────────┘  └────────────┘ │  │
 │  └──────────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────┘
 ```

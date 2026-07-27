@@ -6,11 +6,11 @@
 import Joi from 'joi';
 
 // Password validation regex
-const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/;
+const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{8,}$/;
 
 // Email validation
 const emailSchema = Joi.string()
-  .email()
+  .email({ tlds: { allow: false } })
   .required()
   .messages({
     'string.email': 'Please provide a valid email address',
@@ -25,7 +25,7 @@ const passwordSchema = Joi.string()
   .messages({
     'string.min': 'Password must be at least 8 characters long',
     'string.pattern.base':
-      'Password must contain at least one uppercase letter, one lowercase letter, one number, and one special character (@$!%*?&)',
+      'Password must contain at least one uppercase letter, one lowercase letter, one number, and one special character',
     'any.required': 'Password is required',
   });
 
@@ -44,32 +44,6 @@ const statusSchema = Joi.string()
   .messages({
     'any.only': 'Invalid status. Must be one of: ACTIVE, INACTIVE, SUSPENDED',
   });
-
-/**
- * Register User Validation
- */
-export const registerUserSchema = Joi.object({
-  email: emailSchema,
-  password: passwordSchema,
-  firstName: Joi.string().min(2).max(50).required().messages({
-    'string.min': 'First name must be at least 2 characters',
-    'string.max': 'First name cannot exceed 50 characters',
-    'any.required': 'First name is required',
-  }),
-  lastName: Joi.string().min(2).max(50).required().messages({
-    'string.min': 'Last name must be at least 2 characters',
-    'string.max': 'Last name cannot exceed 50 characters',
-    'any.required': 'Last name is required',
-  }),
-  phone: Joi.string().pattern(/^\+?[1-9]\d{1,14}$/).optional().messages({
-    'string.pattern.base': 'Please provide a valid phone number',
-  }),
-  role: roleSchema,
-  tenantId: Joi.string().uuid().required().messages({
-    'string.guid': 'Invalid tenant ID format',
-    'any.required': 'Tenant ID is required',
-  }),
-});
 
 /**
  * Login User Validation
@@ -137,7 +111,7 @@ export const createUserSchema = Joi.object({
     'string.max': 'Last name cannot exceed 50 characters',
     'any.required': 'Last name is required',
   }),
-  phone: Joi.string().pattern(/^\+?[1-9]\d{1,14}$/).optional().messages({
+  phone: Joi.string().pattern(/^\+?[0-9]{7,15}$/).optional().messages({
     'string.pattern.base': 'Please provide a valid phone number',
   }),
   role: roleSchema,
@@ -160,7 +134,7 @@ export const updateUserSchema = Joi.object({
     'string.min': 'Last name must be at least 2 characters',
     'string.max': 'Last name cannot exceed 50 characters',
   }),
-  phone: Joi.string().pattern(/^\+?[1-9]\d{1,14}$/).optional().allow(null, '').messages({
+  phone: Joi.string().pattern(/^\+?[0-9]{7,15}$/).optional().allow(null, '').messages({
     'string.pattern.base': 'Please provide a valid phone number',
   }),
   role: Joi.string()
@@ -186,7 +160,6 @@ export const refreshTokenSchema = Joi.object({
 /**
  * Validation helper functions
  */
-export const validateRegisterUser = (data: any) => registerUserSchema.validate(data);
 export const validateLoginUser = (data: any) => loginUserSchema.validate(data);
 export const validateForgotPassword = (data: any) => forgotPasswordSchema.validate(data);
 export const validateResetPassword = (data: any) => resetPasswordSchema.validate(data);

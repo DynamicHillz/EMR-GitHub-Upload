@@ -7,6 +7,8 @@ import {
   PaymentStatus,
   PaymentFilters,
 } from '../../types/billing.types';
+import Dropdown from '../common/Dropdown';
+import { getErrorMessage } from '../../utils/errorHandler';
 
 interface PaymentListProps {
   invoiceId?: string;
@@ -34,7 +36,7 @@ const PaymentList: React.FC<PaymentListProps> = ({ invoiceId, patientId }) => {
       const data = await billingService.getPayments(filters);
       setPayments(data);
     } catch (err: any) {
-      setError(err.message || 'Failed to load payments');
+      setError(getErrorMessage(err, 'Failed to load payments'));
       console.error('Error loading payments:', err);
     } finally {
       setLoading(false);
@@ -149,7 +151,7 @@ const PaymentList: React.FC<PaymentListProps> = ({ invoiceId, patientId }) => {
             <label className="block text-sm font-medium text-gray-700 mb-1">
               Payment Method
             </label>
-            <select
+            <Dropdown
               value={filters.paymentMethod || ''}
               onChange={(e) =>
                 setFilters({
@@ -165,7 +167,7 @@ const PaymentList: React.FC<PaymentListProps> = ({ invoiceId, patientId }) => {
               <option value="BANK_TRANSFER">Bank Transfer</option>
               <option value="MOBILE_MONEY">Mobile Money</option>
               <option value="INSURANCE">Insurance</option>
-            </select>
+            </Dropdown>
           </div>
 
           {/* Status Filter */}
@@ -173,7 +175,7 @@ const PaymentList: React.FC<PaymentListProps> = ({ invoiceId, patientId }) => {
             <label className="block text-sm font-medium text-gray-700 mb-1">
               Status
             </label>
-            <select
+            <Dropdown
               value={filters.status || ''}
               onChange={(e) =>
                 setFilters({
@@ -188,7 +190,7 @@ const PaymentList: React.FC<PaymentListProps> = ({ invoiceId, patientId }) => {
               <option value="PENDING">Pending</option>
               <option value="FAILED">Failed</option>
               <option value="REFUNDED">Refunded</option>
-            </select>
+            </Dropdown>
           </div>
 
           {/* Clear Filters */}
@@ -285,6 +287,9 @@ const PaymentList: React.FC<PaymentListProps> = ({ invoiceId, patientId }) => {
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Gateway
                   </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Receipt
+                  </th>
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
@@ -357,6 +362,19 @@ const PaymentList: React.FC<PaymentListProps> = ({ invoiceId, patientId }) => {
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                       {payment.gateway || '-'}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      {payment.status === 'COMPLETED' ? (
+                        <Link
+                          to={`/billing/payments/${payment.id}/receipt`}
+                          target="_blank"
+                          className="text-blue-600 hover:text-blue-800 text-sm font-medium"
+                        >
+                          View / Print
+                        </Link>
+                      ) : (
+                        <span className="text-sm text-gray-400">-</span>
+                      )}
                     </td>
                   </tr>
                 ))}

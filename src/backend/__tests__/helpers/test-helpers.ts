@@ -5,7 +5,7 @@
  * database cleanup, and mock data factories
  */
 
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, UserRole, UserStatus } from '@prisma/client';
 import { v4 as uuidv4 } from 'uuid';
 
 /**
@@ -32,17 +32,37 @@ export async function cleanDatabase(prisma: PrismaClient, tenantId: string) {
     throw new Error('cleanDatabase can only be called in test environment');
   }
 
-  // Delete in correct order to respect foreign key constraints
+  // Delete in correct order to respect foreign key constraints (children
+  // before the parents they reference — most FKs here are Restrict/NoAction,
+  // not Cascade, so the order genuinely matters).
+  await prisma.auditLog.deleteMany({ where: { tenantId } });
   await prisma.refund.deleteMany({ where: { tenantId } });
+  await prisma.paymentAuditLog.deleteMany({ where: { tenantId } });
   await prisma.payment.deleteMany({ where: { tenantId } });
+  await prisma.insuranceClaim.deleteMany({ where: { tenantId } });
+  await prisma.invoiceLineItem.deleteMany({ where: { invoice: { tenantId } } });
   await prisma.invoice.deleteMany({ where: { tenantId } });
+  await prisma.exemptionPolicy.deleteMany({ where: { tenantId } });
+  await prisma.patientInsurance.deleteMany({ where: { tenantId } });
+  await prisma.insuranceProvider.deleteMany({ where: { tenantId } });
   await prisma.dispensingRecord.deleteMany({ where: { tenantId } });
-  await prisma.prescription.deleteMany({ where: { tenantId } });
+  await prisma.medicationBatch.deleteMany({ where: { tenantId } });
+  await prisma.medication.deleteMany({ where: { tenantId } });
+  // LabOrder cascades to LabTestRecord (and its LabResultValue children), so
+  // this must run before LabTest (LabTestRecord.test is Restrict) and before
+  // Consultation (LabOrder.consultationId is Restrict).
+  await prisma.labOrder.deleteMany({ where: { tenantId } });
   await prisma.labTest.deleteMany({ where: { tenantId } });
+  await prisma.labParameter.deleteMany({ where: { tenantId } });
+  await prisma.notification.deleteMany({ where: { tenantId } });
+  await prisma.refreshToken.deleteMany({ where: { user: { tenantId } } });
+  await prisma.passwordResetToken.deleteMany({ where: { user: { tenantId } } });
+  await prisma.prescription.deleteMany({ where: { tenantId } });
   await prisma.consultation.deleteMany({ where: { tenantId } });
   await prisma.appointment.deleteMany({ where: { tenantId } });
   await prisma.patient.deleteMany({ where: { tenantId } });
   await prisma.user.deleteMany({ where: { tenantId } });
+  await prisma.fraudPreventionSettings.deleteMany({ where: { tenantId } });
 }
 
 /**
@@ -57,7 +77,7 @@ export const mockPatientData = {
   phone: '+2348012345678',
   email: 'john.doe@example.com',
   address: '123 Test Street, Lagos',
-  bloodGroup: 'O+' as const,
+  bloodGroup: 'O_POSITIVE' as const,
   genotype: 'AA' as const
 };
 
@@ -118,6 +138,21 @@ export async function createTestTenant(prisma: PrismaClient) {
     }
   });
 
+  // Create default fraud prevention settings for the test tenant
+  await prisma.fraudPreventionSettings.create({
+    data: {
+      tenantId: tenant.id,
+      requireReceiptPhotoForCash: false,
+      requireReferenceForBankTransfer: false,
+      requireReferenceForMobileMoney: false,
+      duplicateDetectionEnabled: false,
+      enableDailyLimits: false,
+      autoFlagLargeAmounts: false,
+      autoFlagMultiplePaymentsSameInvoice: false,
+      requireDailyReconciliation: false
+    }
+  });
+
   return tenant;
 }
 
@@ -127,7 +162,7 @@ export async function createTestTenant(prisma: PrismaClient) {
 export async function createTestUser(
   prisma: PrismaClient,
   tenantId: string,
-  userData: Partial<typeof mockUserData> = {}
+  userData: Partial<Omit<typeof mockUserData, 'role' | 'status'> & { role: UserRole; status: UserStatus }> = {}
 ) {
   const bcrypt = require('bcrypt');
   const hashedPassword = await bcrypt.hash('testpassword123', 4);
@@ -241,7 +276,7 @@ export async function createTestConsultation(
       height: data.height,
       bmi,
       spO2: data.spO2,
-      status: 'DRAFT',
+      status: 'IN_PROGRESS',
       icd10Codes: '[]'
     }
   });
@@ -273,7 +308,16 @@ export async function createTestInvoice(
       invoiceNumber,
       invoiceDate: new Date(),
       dueDate: new Date(Date.now() + 30 * 86400000), // 30 days from now
-      lineItems: JSON.stringify(lineItems),
+      items: {
+        create: lineItems.map((item) => ({
+          serviceCode: item.serviceCode || 'MISC',
+          description: item.description,
+          quantity: item.quantity,
+          unitPrice: item.unitPrice,
+          subtotal: item.amount,
+          patientOutOfPocket: item.amount
+        }))
+      },
       subtotal: totalAmount,
       taxAmount: 0,
       discount: 0,
@@ -286,4 +330,177 @@ export async function createTestInvoice(
   });
 
   return invoice;
+}
+
+/**
+ * Create a test medication
+ */
+export async function createTestMedication(
+  prisma: PrismaClient,
+  tenantId: string,
+  overrides: Partial<{
+    name: string;
+    dosageForm: string;
+    strength: string;
+    stockLevel: number;
+    unitPrice: number;
+  }> = {}
+) {
+  return prisma.medication.create({
+    data: {
+      tenantId,
+      name: overrides.name || 'Amoxicillin',
+      dosageForm: overrides.dosageForm || 'Capsule',
+      strength: overrides.strength || '500mg',
+      stockLevel: overrides.stockLevel ?? 100,
+      unitPrice: overrides.unitPrice ?? 500
+    }
+  });
+}
+
+/**
+ * Create a test medication batch
+ */
+export async function createTestMedicationBatch(
+  prisma: PrismaClient,
+  tenantId: string,
+  medicationId: string,
+  overrides: Partial<{
+    batchNumber: string;
+    quantity: number;
+    expiryDate: Date;
+    unitCost: number;
+    sellingPrice: number;
+  }> = {}
+) {
+  return prisma.medicationBatch.create({
+    data: {
+      tenantId,
+      medicationId,
+      batchNumber: overrides.batchNumber || `BATCH-${uuidv4().slice(0, 8)}`,
+      quantity: overrides.quantity ?? 50,
+      expiryDate: overrides.expiryDate || new Date(Date.now() + 365 * 86400000),
+      unitCost: overrides.unitCost ?? 300,
+      sellingPrice: overrides.sellingPrice ?? 500
+    }
+  });
+}
+
+/**
+ * Create a test prescription
+ */
+export async function createTestPrescription(
+  prisma: PrismaClient,
+  tenantId: string,
+  patientId: string,
+  doctorId: string,
+  overrides: Partial<{
+    medicationName: string;
+    dosage: string;
+    frequency: string;
+    duration: string;
+    quantity: number;
+    status: 'PENDING' | 'DISPENSED' | 'CANCELLED';
+    dispensedAt: Date;
+  }> = {}
+) {
+  return prisma.prescription.create({
+    data: {
+      tenantId,
+      patientId,
+      doctorId,
+      medicationName: overrides.medicationName || 'Amoxicillin',
+      dosage: overrides.dosage || '500mg',
+      frequency: overrides.frequency || 'Twice daily',
+      duration: overrides.duration || '7 days',
+      quantity: overrides.quantity ?? 14,
+      status: overrides.status || 'PENDING',
+      dispensedAt: overrides.dispensedAt
+    }
+  });
+}
+
+/**
+ * Create a test lab test (catalog entry) with one parameter attached
+ */
+export async function createTestLabTest(
+  prisma: PrismaClient,
+  tenantId: string,
+  overrides: Partial<{ name: string; category: string; price: number }> = {}
+) {
+  return prisma.labTest.create({
+    data: {
+      tenantId,
+      name: overrides.name || 'Full Blood Count',
+      category: overrides.category || 'Hematology',
+      price: overrides.price ?? 2000
+    }
+  });
+}
+
+/**
+ * Create a test lab parameter and attach it to a lab test
+ */
+export async function createTestLabParameter(
+  prisma: PrismaClient,
+  tenantId: string,
+  testId: string,
+  overrides: Partial<{ name: string; unit: string; deltaCheckPercentage: number; refRangeMale: string; refRangeFemale: string }> = {}
+) {
+  const parameter = await prisma.labParameter.create({
+    data: {
+      tenantId,
+      name: overrides.name || 'Hemoglobin',
+      unit: overrides.unit || 'g/dL',
+      deltaCheckPercentage: overrides.deltaCheckPercentage,
+      refRangeMale: overrides.refRangeMale,
+      refRangeFemale: overrides.refRangeFemale
+    }
+  });
+
+  await prisma.labTestParameter.create({
+    data: { testId, parameterId: parameter.id, displayOrder: 1 }
+  });
+
+  return parameter;
+}
+
+/**
+ * Create a test lab order
+ */
+export async function createTestLabOrder(
+  prisma: PrismaClient,
+  tenantId: string,
+  patientId: string,
+  orderedById: string,
+  overrides: Partial<{ urgency: 'ROUTINE' | 'STAT' | 'URGENT' }> = {}
+) {
+  return prisma.labOrder.create({
+    data: {
+      tenantId,
+      patientId,
+      orderedById,
+      urgency: overrides.urgency || 'ROUTINE'
+    }
+  });
+}
+
+/**
+ * Create a test lab test record (an ordered test awaiting/undergoing results entry)
+ */
+export async function createTestLabTestRecord(
+  prisma: PrismaClient,
+  tenantId: string,
+  orderId: string,
+  testId: string,
+  overrides: Partial<{ status: 'PENDING' | 'IN_PROGRESS' | 'COMPLETED' }> = {}
+) {
+  return prisma.labTestRecord.create({
+    data: {
+      tenantId,
+      orderId,
+      testId,
+      status: overrides.status || 'IN_PROGRESS'
+    }
+  });
 }

@@ -6,6 +6,8 @@
 
 import React, { useState, useEffect } from 'react';
 import { X, Plus } from 'lucide-react';
+import Dropdown from '../common/Dropdown';
+import { getErrorMessage } from '../../utils/errorHandler';
 
 interface Medication {
   id: string;
@@ -32,17 +34,24 @@ const AddBatchModal: React.FC<AddBatchModalProps> = ({ isOpen, onClose, onSucces
     purchaseDate: new Date().toISOString().split('T')[0],
   });
   const [error, setError] = useState('');
+  const [markupPercent, setMarkupPercent] = useState(40);
+  // Tracks whether the pharmacist has typed into Selling Price directly —
+  // once true, unit cost changes stop overwriting it, so a deliberate
+  // override (supplier discount, HMO rate, etc.) sticks.
+  const [sellingPriceTouched, setSellingPriceTouched] = useState(false);
 
   useEffect(() => {
     if (isOpen) {
       fetchMedications();
+      fetchMarkupPercent();
+      setSellingPriceTouched(false);
     }
   }, [isOpen]);
 
   const fetchMedications = async () => {
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch('http://localhost:3000/api/pharmacy/medications', {
+      const response = await fetch(`${window.location.protocol}//${window.location.hostname}:3000/api/pharmacy/medications`, {
         headers: {
           Authorization: `Bearer ${token}`,
         },
@@ -57,6 +66,33 @@ const AddBatchModal: React.FC<AddBatchModalProps> = ({ isOpen, onClose, onSucces
     }
   };
 
+  const fetchMarkupPercent = async () => {
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch(`${window.location.protocol}//${window.location.hostname}:3000/api/billing/config`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (response.ok) {
+        const result = await response.json();
+        const pct = parseFloat(result.data?.defaultMarkupPercent);
+        if (!isNaN(pct)) setMarkupPercent(pct);
+      }
+    } catch (error) {
+      console.error('Error fetching markup percent:', error);
+    }
+  };
+
+  const handleUnitCostChange = (value: string) => {
+    setFormData((prev) => {
+      const next = { ...prev, unitCost: value };
+      if (!sellingPriceTouched) {
+        const cost = parseFloat(value);
+        next.sellingPrice = isNaN(cost) ? '' : (cost * (1 + markupPercent / 100)).toFixed(2);
+      }
+      return next;
+    });
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
@@ -64,7 +100,7 @@ const AddBatchModal: React.FC<AddBatchModalProps> = ({ isOpen, onClose, onSucces
 
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch('http://localhost:3000/api/pharmacy/inventory/batches', {
+      const response = await fetch(`${window.location.protocol}//${window.location.hostname}:3000/api/pharmacy/inventory/batches`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -98,11 +134,12 @@ const AddBatchModal: React.FC<AddBatchModalProps> = ({ isOpen, onClose, onSucces
           supplier: '',
           purchaseDate: new Date().toISOString().split('T')[0],
         });
+        setSellingPriceTouched(false);
       } else {
         setError(result.message || 'Failed to add batch');
       }
     } catch (err: any) {
-      setError(err.message || 'An error occurred');
+      setError(getErrorMessage(err, 'An error occurred'));
     } finally {
       setLoading(false);
     }
@@ -140,7 +177,7 @@ const AddBatchModal: React.FC<AddBatchModalProps> = ({ isOpen, onClose, onSucces
             <label className="block text-sm font-medium text-gray-700 mb-1">
               Medication <span className="text-red-500">*</span>
             </label>
-            <select
+            <Dropdown
               value={formData.medicationId}
               onChange={(e) => setFormData({ ...formData, medicationId: e.target.value })}
               required
@@ -152,7 +189,7 @@ const AddBatchModal: React.FC<AddBatchModalProps> = ({ isOpen, onClose, onSucces
                   {med.name}
                 </option>
               ))}
-            </select>
+            </Dropdown>
           </div>
 
           {/* Batch Number */}
@@ -212,7 +249,7 @@ const AddBatchModal: React.FC<AddBatchModalProps> = ({ isOpen, onClose, onSucces
                 type="number"
                 step="0.01"
                 value={formData.unitCost}
-                onChange={(e) => setFormData({ ...formData, unitCost: e.target.value })}
+                onChange={(e) => handleUnitCostChange(e.target.value)}
                 required
                 min="0"
                 placeholder="e.g., 5.50"
@@ -229,12 +266,18 @@ const AddBatchModal: React.FC<AddBatchModalProps> = ({ isOpen, onClose, onSucces
                 type="number"
                 step="0.01"
                 value={formData.sellingPrice}
-                onChange={(e) => setFormData({ ...formData, sellingPrice: e.target.value })}
+                onChange={(e) => {
+                  setSellingPriceTouched(true);
+                  setFormData({ ...formData, sellingPrice: e.target.value });
+                }}
                 required
                 min="0"
                 placeholder="e.g., 10.00"
                 className="input w-full"
               />
+              <p className="mt-1 text-xs text-gray-500">
+                Auto-filled at {markupPercent}% markup — edit to override.
+              </p>
             </div>
           </div>
 

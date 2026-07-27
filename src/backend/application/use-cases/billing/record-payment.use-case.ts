@@ -6,7 +6,7 @@
  */
 
 import { PrismaClient } from '@prisma/client';
-import { NotFoundError, ValidationError } from '../../../shared/errors/AppError';
+import { NotFoundError, ValidationError, ConflictError } from '../../../shared/errors/AppError';
 import { RecordPaymentDto } from '../../dtos/billing/RecordPayment.dto';
 import { FraudPreventionService } from '../../services/fraud-prevention.service';
 
@@ -49,12 +49,15 @@ export class RecordPaymentUseCase {
       throw new ValidationError('Cannot pay a cancelled invoice');
     }
 
-    // Validate payment amount
-    if (dto.amount <= 0) {
-      throw new ValidationError('Payment amount must be greater than zero');
+    // Validate payment amount — isNaN check first: `NaN <= 0` and
+    // `NaN > x` are both false in JS, so a malformed amount (e.g. from an
+    // unparsed request field) would otherwise sail through both checks
+    // below and get written straight into a Decimal column.
+    if (isNaN(dto.amount) || dto.amount <= 0) {
+      throw new ValidationError('Payment amount must be a valid positive number');
     }
 
-    if (dto.amount > invoice.balance) {
+    if (dto.amount > Number(invoice.balance)) {
       throw new ValidationError(`Payment amount (₦${dto.amount}) exceeds invoice balance (₦${invoice.balance})`);
     }
 
@@ -79,6 +82,14 @@ export class RecordPaymentUseCase {
       );
     }
 
+    // Above the tenant's configured threshold, an approver must actually be
+    // named — otherwise "requires approval" was only ever a label, never a gate.
+    if (fraudCheck.requiresApproval && !dto.approverName?.trim()) {
+      throw new ValidationError(
+        'This payment exceeds the approval threshold and requires an approver name before it can be recorded.'
+      );
+    }
+
     // Check for multiple payments on same invoice
     const settings = await this.prisma.fraudPreventionSettings.findUnique({
       where: { tenantId },
@@ -98,31 +109,46 @@ export class RecordPaymentUseCase {
           : multiplePaymentsCheck.reason;
       }
     }
+
+    // A flagged duplicate must actually require an approver, same as an
+    // over-threshold payment — otherwise "flagged for review" was only ever
+    // a label attached to a payment that already went through unchanged.
+    if (fraudCheck.flaggedForReview && !dto.approverName?.trim()) {
+      throw new ValidationError(
+        `This payment was flagged for review (${fraudCheck.flagReason}) and requires an approver name before it can be recorded.`
+      );
+    }
     // ================================================
 
     // Generate payment number
     const paymentNumber = await this.generatePaymentNumber(tenantId);
 
-    // Calculate invoice amounts
-    const newPaidAmount = invoice.paidAmount + dto.amount;
-    const newBalance = invoice.totalAmount - newPaidAmount;
-
-    let paymentStatus: 'UNPAID' | 'PARTIALLY_PAID' | 'PAID' | 'REFUNDED';
-    let invoiceStatus: 'DRAFT' | 'ISSUED' | 'FINALIZED' | 'PAID' | 'PARTIALLY_PAID' | 'CANCELLED' | 'REFUNDED' | 'LOCKED';
-
-    if (newBalance === 0) {
-      paymentStatus = 'PAID';
-      invoiceStatus = 'PAID';
-    } else if (newPaidAmount > 0) {
-      paymentStatus = 'PARTIALLY_PAID';
-      invoiceStatus = 'PARTIALLY_PAID';
-    } else {
-      paymentStatus = 'UNPAID';
-      invoiceStatus = invoice.status;
-    }
-
-    // Use transaction to ensure atomicity: payment creation and invoice update must both succeed or both fail
+    // Use transaction to ensure atomicity: payment creation and invoice update must both succeed or both fail.
+    // Amounts are computed from a fresh re-read taken INSIDE the transaction,
+    // and the invoice update is guarded on that same paidAmount — if another
+    // concurrent payment commits first, this update matches zero rows and
+    // throws a ConflictError instead of both payments silently overwriting
+    // each other's contribution to the running balance.
     const result = await this.prisma.$transaction(async (tx) => {
+      const current = await tx.invoice.findUniqueOrThrow({ where: { id: dto.invoiceId } });
+
+      const newPaidAmount = Number(current.paidAmount) + dto.amount;
+      const newBalance = Number(current.totalAmount) - newPaidAmount;
+
+      let paymentStatus: 'UNPAID' | 'PARTIALLY_PAID' | 'PAID' | 'REFUNDED';
+      let invoiceStatus: 'DRAFT' | 'ISSUED' | 'FINALIZED' | 'PAID' | 'PARTIALLY_PAID' | 'CANCELLED' | 'REFUNDED' | 'LOCKED';
+
+      if (newBalance === 0) {
+        paymentStatus = 'PAID';
+        invoiceStatus = 'PAID';
+      } else if (newPaidAmount > 0) {
+        paymentStatus = 'PARTIALLY_PAID';
+        invoiceStatus = 'PARTIALLY_PAID';
+      } else {
+        paymentStatus = 'UNPAID';
+        invoiceStatus = current.status;
+      }
+
       // Create payment record with fraud prevention fields
       const payment = await tx.payment.create({
         data: {
@@ -147,6 +173,7 @@ export class RecordPaymentUseCase {
           receiptPhotoUrl: dto.receiptPhotoUrl,
           proofDocumentUrl: dto.proofDocumentUrl,
           requiresApproval: fraudCheck.requiresApproval,
+          verificationNotes: (fraudCheck.requiresApproval || fraudCheck.flaggedForReview) ? `Approved by: ${dto.approverName?.trim()}` : undefined,
           flaggedForReview: fraudCheck.flaggedForReview,
           flagReason: fraudCheck.flagReason,
           flaggedAt: fraudCheck.flaggedForReview ? new Date() : null,
@@ -157,20 +184,36 @@ export class RecordPaymentUseCase {
         }
       });
 
-      // Update invoice
-      const updatedInvoice = await tx.invoice.update({
-        where: { id: dto.invoiceId },
+      // Update invoice — guarded on the paidAmount just re-read above
+      const updateResult = await tx.invoice.updateMany({
+        where: { id: dto.invoiceId, paidAmount: current.paidAmount },
         data: {
           paidAmount: newPaidAmount,
           balance: newBalance,
           paymentStatus,
           status: invoiceStatus,
-          paymentDate: newBalance === 0 ? new Date() : invoice.paymentDate,
-          paymentMethod: dto.paymentMethod
+          paymentDate: newBalance === 0 ? new Date() : current.paymentDate,
+          paymentMethod: dto.paymentMethod,
         }
       });
 
-      return { payment, updatedInvoice };
+      if (updateResult.count === 0) {
+        throw new ConflictError('This invoice was modified by another payment at the same time — please retry.');
+      }
+
+      await tx.invoiceAuditLog.create({
+        data: {
+          tenantId,
+          invoiceId: dto.invoiceId,
+          userId: processedById,
+          action: paymentStatus === 'PAID' ? 'FULLY_PAID' : 'PARTIALLY_PAID',
+          notes: `Payment of ₦${dto.amount} received`,
+          previousValues: { balance: Number(current.balance), status: current.status, paidAmount: Number(current.paidAmount) } as any,
+          newValues: { balance: newBalance, status: invoiceStatus, paidAmount: newPaidAmount } as any
+        }
+      });
+
+      return { payment, newPaidAmount, newBalance, paymentStatus, invoiceStatus };
     });
 
     // Create audit log for payment creation (outside transaction to ensure payment is committed)
@@ -193,11 +236,10 @@ export class RecordPaymentUseCase {
       payment: result.payment,
       invoice: {
         ...invoice,
-        ...result.updatedInvoice,
-        paidAmount: newPaidAmount,
-        balance: newBalance,
-        paymentStatus,
-        status: invoiceStatus
+        paidAmount: result.newPaidAmount,
+        balance: result.newBalance,
+        paymentStatus: result.paymentStatus,
+        status: result.invoiceStatus
       },
       // Include fraud prevention info in response
       fraudPrevention: {

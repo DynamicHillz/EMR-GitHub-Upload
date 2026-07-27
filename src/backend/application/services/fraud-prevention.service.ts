@@ -1,4 +1,5 @@
 import { PrismaClient } from '@prisma/client';
+import { logger } from '../../config/logger';
 
 interface PaymentContext {
   amount: number;
@@ -39,7 +40,12 @@ export class FraudPreventionService {
     });
 
     if (!settings) {
-      throw new Error('Fraud prevention settings not found for tenant');
+      // Missing config means "no fraud rules set up yet," not "suspicious" —
+      // failing closed here would block every payment for the tenant on a
+      // pure config gap. Allow the payment through and log it so an admin
+      // notices and configures FraudPreventionSettings.
+      logger.warn(`No FraudPreventionSettings configured for tenant ${context.tenantId} — allowing payment without fraud checks`);
+      return result;
     }
 
     // 1. CHECK MANDATORY FIELDS
@@ -238,13 +244,14 @@ export class FraudPreventionService {
       },
     });
 
-    const totalToday = todayPayments.reduce(
-      (sum, p) => sum + p.amount,
-      0
-    );
+    // p.amount is a Prisma Decimal — `+` on two Decimals string-concatenates
+    // rather than adding (Decimal.valueOf() returns a string), which was
+    // silently producing a garbage total/NaN comparison below and disabling
+    // this check entirely once a user had more than one payment in a day.
+    const totalToday = todayPayments.reduce((sum, p) => sum + Number(p.amount), 0);
     const cashToday = todayPayments
       .filter((p) => p.paymentMethod === 'CASH')
-      .reduce((sum, p) => sum + p.amount, 0);
+      .reduce((sum, p) => sum + Number(p.amount), 0);
 
     // Check total daily limit
     if (

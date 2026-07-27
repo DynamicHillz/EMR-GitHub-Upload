@@ -4,6 +4,7 @@
  */
 
 import axios, { AxiosInstance } from 'axios';
+import { offlineFetch } from './offlineFetch';
 import {
   ApiResponse,
   ServiceCatalog,
@@ -30,7 +31,7 @@ import {
   AgingAnalysis,
 } from '../types/billing.types';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000/api';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || `${window.location.protocol}//${window.location.hostname}:3000/api`;
 
 class BillingService {
   private api: AxiosInstance;
@@ -100,10 +101,11 @@ class BillingService {
   // ==================== INVOICES ====================
 
   async getInvoices(filters?: InvoiceFilters): Promise<Invoice[]> {
-    const { data } = await this.api.get<ApiResponse<Invoice[]>>('/invoices', {
+    const { data } = await this.api.get<ApiResponse<any>>('/invoices', {
       params: filters,
     });
-    return data.data || [];
+    const invoices = data.data?.invoices || data.data;
+    return Array.isArray(invoices) ? invoices : [];
   }
 
   async getInvoiceById(id: string): Promise<Invoice> {
@@ -118,10 +120,58 @@ class BillingService {
     return data.data;
   }
 
-  async updateInvoice(id: string, invoiceData: UpdateInvoiceDto): Promise<Invoice> {
-    const { data } = await this.api.patch<ApiResponse<Invoice>>(`/invoices/${id}`, invoiceData);
-    if (!data.data) throw new Error('Failed to update invoice');
+  async generateInvoice(invoiceData: {
+    patientId: string;
+    prescriptionIds?: string[];
+    labTestIds?: string[];
+    consultationIds?: string[];
+    admissionIds?: string[];
+    consumableUsageIds?: string[];
+    transfusionChartIds?: string[];
+    operationNoteIds?: string[];
+    laborRecordIds?: string[];
+    additionalItems?: {
+      serviceName: string;
+      quantity: number;
+      unitPrice: number;
+      taxRate?: number;
+    }[];
+    discount?: number;
+    notes?: string;
+  }): Promise<Invoice> {
+    const { data } = await this.api.post<ApiResponse<Invoice>>('/invoices/generate', invoiceData);
+    if (!data.data) throw new Error('Failed to generate invoice');
     return data.data;
+  }
+
+  // Routed through offlineFetch (rather than the axios instance every other
+  // method here uses) so an edit made while offline queues for replay
+  // instead of just failing outright — the backend's sync-push endpoint has
+  // supported INVOICE updates for a while, but nothing in the UI actually
+  // used the offline path to reach it.
+  async updateInvoice(id: string, invoiceData: UpdateInvoiceDto): Promise<{ invoice: Invoice | null; queued: boolean }> {
+    const token = localStorage.getItem('token');
+    const response = await offlineFetch(
+      `${API_BASE_URL}/billing/invoices/${id}`,
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify(invoiceData),
+      },
+      { entityType: 'INVOICE', entityId: id, baseVersion: invoiceData.version }
+    );
+    const data = await response.json();
+
+    if (data.queued) {
+      // No fresh server-authoritative invoice is available yet — the caller
+      // should treat this as "saved offline", not a normal completed edit.
+      return { invoice: null, queued: true };
+    }
+    if (response.status === 409) {
+      throw new Error(data.message || 'This invoice was changed elsewhere. Please reload and try again.');
+    }
+    if (!data.data) throw new Error(data.message || 'Failed to update invoice');
+    return { invoice: data.data, queued: false };
   }
 
   async cancelInvoice(id: string): Promise<Invoice> {
@@ -133,10 +183,10 @@ class BillingService {
   // ==================== PAYMENTS ====================
 
   async getPayments(filters?: PaymentFilters): Promise<Payment[]> {
-    const { data } = await this.api.get<ApiResponse<Payment[]>>('/payments', {
+    const { data } = await this.api.get<ApiResponse<any>>('/payments', {
       params: filters,
     });
-    return data.data || [];
+    return data.data?.payments || [];
   }
 
   async getPaymentById(id: string): Promise<Payment> {
@@ -154,6 +204,31 @@ class BillingService {
     const { data } = await this.api.post<ApiResponse<Payment>>('/payments', paymentData);
     if (!data.data) throw new Error('Failed to record payment');
     return data.data;
+  }
+
+  async getFraudPreventionSettings(): Promise<{
+    requireReceiptPhotoForCash: boolean;
+    requireReferenceForBankTransfer: boolean;
+    requireReferenceForMobileMoney: boolean;
+    cashApprovalThreshold: number;
+    bankTransferApprovalThreshold: number;
+    mobileMoneyApprovalThreshold: number;
+  }> {
+    const { data } = await this.api.get<ApiResponse<any>>('/fraud-prevention-settings');
+    return data.data;
+  }
+
+  async getPaymentReceipt(paymentId: string): Promise<any> {
+    const { data } = await this.api.get<ApiResponse<any>>(`/payments/${paymentId}/receipt`);
+    return data.data;
+  }
+
+  async markReceiptPrinted(paymentId: string): Promise<void> {
+    await this.api.patch(`/payments/${paymentId}/receipt/printed`);
+  }
+
+  async emailPaymentReceipt(paymentId: string): Promise<void> {
+    await this.api.post(`/payments/${paymentId}/receipt/email`);
   }
 
   // ==================== GATEWAY PAYMENTS ====================
@@ -188,6 +263,11 @@ class BillingService {
     const { data } = await this.api.get<ApiResponse<PatientBalance>>(`/outstanding/${patientId}`);
     if (!data.data) throw new Error('Patient balance not found');
     return data.data;
+  }
+
+  async getUnbilledQueue(): Promise<{ patients: any[]; totalPatients: number; totalItems: number }> {
+    const { data } = await this.api.get<ApiResponse<any>>('/unbilled');
+    return data.data || { patients: [], totalPatients: 0, totalItems: 0 };
   }
 
   async getAgingAnalysis(): Promise<AgingAnalysis> {
@@ -233,10 +313,10 @@ class BillingService {
   // ==================== REFUNDS ====================
 
   async getRefunds(filters?: RefundFilters): Promise<Refund[]> {
-    const { data } = await this.api.get<ApiResponse<Refund[]>>('/refunds', {
+    const { data } = await this.api.get<ApiResponse<any>>('/refunds', {
       params: filters,
     });
-    return data.data || [];
+    return data.data?.refunds || [];
   }
 
   async getRefundById(id: string): Promise<Refund> {
@@ -246,7 +326,7 @@ class BillingService {
   }
 
   async requestRefund(refundData: RequestRefundDto): Promise<Refund> {
-    const { data } = await this.api.post<ApiResponse<Refund>>('/refunds/request', refundData);
+    const { data } = await this.api.post<ApiResponse<Refund>>('/refunds', refundData);
     if (!data.data) throw new Error('Failed to request refund');
     return data.data;
   }
@@ -263,8 +343,8 @@ class BillingService {
     return data.data;
   }
 
-  async processRefund(id: string): Promise<Refund> {
-    const { data } = await this.api.post<ApiResponse<Refund>>(`/refunds/${id}/process`);
+  async processRefund(id: string, processData?: { referenceNumber?: string }): Promise<Refund> {
+    const { data } = await this.api.post<ApiResponse<Refund>>(`/refunds/${id}/process`, processData || {});
     if (!data.data) throw new Error('Failed to process refund');
     return data.data;
   }

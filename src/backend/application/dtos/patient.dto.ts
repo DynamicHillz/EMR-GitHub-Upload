@@ -34,6 +34,9 @@ export interface CreatePatientDto {
     phone: string;
     address?: string;
   };
+  patientType?: 'PRIVATE' | 'HMO';
+  hmoProvider?: string;
+  hmoNumber?: string;
   nhisNumber?: string;
   photoUrl?: string;
   consentGiven?: boolean;
@@ -58,6 +61,10 @@ export interface UpdatePatientDto {
     relationship: string;
     phone: string;
   };
+  patientType?: 'PRIVATE' | 'HMO';
+  hmoProvider?: string;
+  hmoNumber?: string;
+  nhisNumber?: string;
 }
 
 /**

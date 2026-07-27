@@ -10,6 +10,13 @@ export interface Appointment {
   tenantId: string;
   patientId: string;
   doctorId: string;
+  
+  patient?: {
+    id: string;
+    firstName: string;
+    lastName: string;
+    phone?: string;
+  };
 
   // Appointment Details
   appointmentDate: Date;
@@ -57,6 +64,7 @@ export class AppointmentEntity implements Appointment {
     public reminderSent2h: boolean,
     public createdAt: Date,
     public updatedAt: Date,
+    public patient?: { id: string; firstName: string; lastName: string },
     public reason?: string,
     public checkedInAt?: Date,
     public completedAt?: Date,

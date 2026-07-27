@@ -14,7 +14,8 @@ export class GetInvoiceDetailsUseCase {
     const invoice = await this.prisma.invoice.findFirst({
       where: {
         id: invoiceId,
-        tenantId
+        tenantId,
+        isDeleted: false
       },
       include: {
         patient: {
@@ -66,7 +67,8 @@ export class GetInvoiceDetailsUseCase {
             requestedAt: true,
             approvedAt: true
           }
-        }
+        },
+        items: true
       }
     });
 
@@ -74,9 +76,6 @@ export class GetInvoiceDetailsUseCase {
       throw new NotFoundError('Invoice', invoiceId);
     }
 
-    return {
-      ...invoice,
-      lineItems: JSON.parse(invoice.lineItems)
-    };
+    return invoice;
   }
 }

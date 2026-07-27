@@ -6,6 +6,8 @@
 
 import React, { useState, useEffect } from 'react';
 import { Pill, Plus, Search, Edit2 } from 'lucide-react';
+import Dropdown from '../components/common/Dropdown';
+import { getErrorMessage } from '../utils/errorHandler';
 
 interface Medication {
   id: string;
@@ -13,8 +15,8 @@ interface Medication {
   genericName?: string;
   brandName?: string;
   category?: string;
-  dosageForm?: string;
-  strength?: string;
+  dosageForm: string;
+  strength: string;
   reorderPoint?: number;
   unitPrice: number;
 }
@@ -46,7 +48,7 @@ const MedicationsPage: React.FC = () => {
   const fetchMedications = async () => {
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch('http://localhost:3000/api/pharmacy/medications', {
+      const response = await fetch(`${window.location.protocol}//${window.location.hostname}:3000/api/pharmacy/medications`, {
         headers: {
           Authorization: `Bearer ${token}`,
         },
@@ -70,7 +72,7 @@ const MedicationsPage: React.FC = () => {
 
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch('http://localhost:3000/api/pharmacy/medications', {
+      const response = await fetch(`${window.location.protocol}//${window.location.hostname}:3000/api/pharmacy/medications`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -105,7 +107,7 @@ const MedicationsPage: React.FC = () => {
         setError(result.message || 'Failed to add medication');
       }
     } catch (err: any) {
-      setError(err.message || 'An error occurred');
+      setError(getErrorMessage(err, 'An error occurred'));
     }
   };
 
@@ -279,6 +281,58 @@ const MedicationsPage: React.FC = () => {
 
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Category
+                  </label>
+                  <Dropdown
+                    value={formData.category}
+                    onChange={(e) => setFormData({ ...formData, category: e.target.value })}
+                    className="input w-full"
+                  >
+                    <option value="">Select category...</option>
+                    <option value="Analgesic">Analgesic</option>
+                    <option value="Antibiotic">Antibiotic</option>
+                    <option value="Antifungal">Antifungal</option>
+                    <option value="Antihypertensive">Antihypertensive</option>
+                    <option value="Antimalarial">Antimalarial</option>
+                    <option value="Antihistamine">Antihistamine</option>
+                    <option value="Anti-inflammatory">Anti-inflammatory</option>
+                    <option value="Antiretroviral">Antiretroviral</option>
+                    <option value="Antidiabetic">Antidiabetic</option>
+                    <option value="Cardiovascular">Cardiovascular</option>
+                    <option value="Dermatological">Dermatological</option>
+                    <option value="Gastrointestinal">Gastrointestinal</option>
+                    <option value="Hormonal">Hormonal</option>
+                    <option value="Respiratory">Respiratory</option>
+                    <option value="Supplement">Vitamin / Supplement</option>
+                    <option value="Vaccine">Vaccine</option>
+                    <option value="Other">Other</option>
+                  </Dropdown>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Dosage Form <span className="text-red-500">*</span>
+                  </label>
+                  <Dropdown
+                    value={formData.dosageForm}
+                    onChange={(e) => setFormData({ ...formData, dosageForm: e.target.value })}
+                    required
+                    className="input w-full"
+                  >
+                    <option value="">Select form...</option>
+                    <option value="Tablet">Tablet</option>
+                    <option value="Capsule">Capsule</option>
+                    <option value="Syrup">Syrup</option>
+                    <option value="Injection">Injection</option>
+                    <option value="Cream">Cream</option>
+                    <option value="Ointment">Ointment</option>
+                    <option value="Drops">Drops</option>
+                    <option value="Inhaler">Inhaler</option>
+                  </Dropdown>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
                     Generic Name
                   </label>
                   <input
@@ -305,47 +359,14 @@ const MedicationsPage: React.FC = () => {
 
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Strength
+                    Strength <span className="text-red-500">*</span>
                   </label>
                   <input
                     type="text"
                     value={formData.strength}
                     onChange={(e) => setFormData({ ...formData, strength: e.target.value })}
+                    required
                     placeholder="e.g., 500mg"
-                    className="input w-full"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Dosage Form
-                  </label>
-                  <select
-                    value={formData.dosageForm}
-                    onChange={(e) => setFormData({ ...formData, dosageForm: e.target.value })}
-                    className="input w-full"
-                  >
-                    <option value="">Select form...</option>
-                    <option value="Tablet">Tablet</option>
-                    <option value="Capsule">Capsule</option>
-                    <option value="Syrup">Syrup</option>
-                    <option value="Injection">Injection</option>
-                    <option value="Cream">Cream</option>
-                    <option value="Ointment">Ointment</option>
-                    <option value="Drops">Drops</option>
-                    <option value="Inhaler">Inhaler</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Category
-                  </label>
-                  <input
-                    type="text"
-                    value={formData.category}
-                    onChange={(e) => setFormData({ ...formData, category: e.target.value })}
-                    placeholder="e.g., Analgesic"
                     className="input w-full"
                   />
                 </div>

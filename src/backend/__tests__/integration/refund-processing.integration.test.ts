@@ -82,13 +82,15 @@ describe('Refund Processing Integration', () => {
         data: {
           tenantId,
           invoiceId: invoice.id,
+          patientId,
           paymentId: payment.payment.id,
           amount: 5000,
           reason: 'Service not rendered',
-          requestedBy: cashierId,
-          approvedBy: cashierId,
+          requestedById: cashierId,
+          approvedById: cashierId,
           status: 'APPROVED',
           refundNumber: 'REF-001',
+          refundMethod: 'CASH',
         },
       });
 
@@ -105,8 +107,8 @@ describe('Refund Processing Integration', () => {
       expect(result.refund.refundDate).toBeDefined();
 
       // Assert - Invoice updated to REFUNDED
-      expect(result.invoice.paidAmount).toBe(0);
-      expect(result.invoice.balance).toBe(5000);
+      expect(Number(result.invoice.paidAmount)).toBe(0);
+      expect(Number(result.invoice.balance)).toBe(5000);
       expect(result.invoice.paymentStatus).toBe('REFUNDED');
       expect(result.invoice.status).toBe('REFUNDED');
 
@@ -122,8 +124,8 @@ describe('Refund Processing Integration', () => {
         include: { refunds: true, payments: true },
       });
 
-      expect(dbInvoice?.paidAmount).toBe(0);
-      expect(dbInvoice?.balance).toBe(5000);
+      expect(Number(dbInvoice?.paidAmount)).toBe(0);
+      expect(Number(dbInvoice?.balance)).toBe(5000);
       expect(dbInvoice?.paymentStatus).toBe('REFUNDED');
       expect(dbInvoice?.refunds).toHaveLength(1);
       expect(dbInvoice?.refunds[0].status).toBe('COMPLETED');
@@ -159,13 +161,15 @@ describe('Refund Processing Integration', () => {
         data: {
           tenantId,
           invoiceId: invoice.id,
+          patientId,
           paymentId: payment.payment.id,
           amount: 3000,
           reason: 'One test cancelled',
-          requestedBy: cashierId,
-          approvedBy: cashierId,
+          requestedById: cashierId,
+          approvedById: cashierId,
           status: 'APPROVED',
           refundNumber: 'REF-002',
+          refundMethod: 'CASH',
         },
       });
 
@@ -178,11 +182,11 @@ describe('Refund Processing Integration', () => {
 
       // Assert - Refund completed
       expect(result.refund.status).toBe('COMPLETED');
-      expect(result.refund.amount).toBe(3000);
+      expect(Number(result.refund.amount)).toBe(3000);
 
       // Assert - Invoice partially paid
-      expect(result.invoice.paidAmount).toBe(7000);
-      expect(result.invoice.balance).toBe(3000);
+      expect(Number(result.invoice.paidAmount)).toBe(7000);
+      expect(Number(result.invoice.balance)).toBe(3000);
       expect(result.invoice.paymentStatus).toBe('PARTIALLY_PAID');
       expect(result.invoice.status).toBe('PARTIALLY_PAID');
 
@@ -191,8 +195,8 @@ describe('Refund Processing Integration', () => {
         where: { id: invoice.id },
       });
 
-      expect(dbInvoice?.paidAmount).toBe(7000);
-      expect(dbInvoice?.balance).toBe(3000);
+      expect(Number(dbInvoice?.paidAmount)).toBe(7000);
+      expect(Number(dbInvoice?.balance)).toBe(3000);
       expect(dbInvoice?.paymentStatus).toBe('PARTIALLY_PAID');
     });
   });
@@ -236,13 +240,15 @@ describe('Refund Processing Integration', () => {
         data: {
           tenantId,
           invoiceId: invoice.id,
+          patientId,
           paymentId: payment2.payment.id,
           amount: 5000,
           reason: 'Duplicate payment',
-          requestedBy: cashierId,
-          approvedBy: cashierId,
+          requestedById: cashierId,
+          approvedById: cashierId,
           status: 'APPROVED',
           refundNumber: 'REF-003',
+          refundMethod: 'CASH',
         },
       });
 
@@ -254,8 +260,8 @@ describe('Refund Processing Integration', () => {
       const result = await processRefundUseCase.execute(refund.id, refundDto, tenantId);
 
       // Assert
-      expect(result.invoice.paidAmount).toBe(10000);
-      expect(result.invoice.balance).toBe(5000);
+      expect(Number(result.invoice.paidAmount)).toBe(10000);
+      expect(Number(result.invoice.balance)).toBe(5000);
       expect(result.invoice.paymentStatus).toBe('PARTIALLY_PAID');
 
       // Verify only the refunded payment is marked REFUNDED
@@ -299,13 +305,15 @@ describe('Refund Processing Integration', () => {
         data: {
           tenantId,
           invoiceId: invoice.id,
+          patientId,
           paymentId: null, // No specific payment
           amount: 2000,
           reason: 'Discount applied retroactively',
-          requestedBy: cashierId,
-          approvedBy: cashierId,
+          requestedById: cashierId,
+          approvedById: cashierId,
           status: 'APPROVED',
           refundNumber: 'REF-004',
+          refundMethod: 'CASH',
         },
       });
 
@@ -318,8 +326,8 @@ describe('Refund Processing Integration', () => {
 
       // Assert
       expect(result.refund.status).toBe('COMPLETED');
-      expect(result.invoice.paidAmount).toBe(6000);
-      expect(result.invoice.balance).toBe(2000);
+      expect(Number(result.invoice.paidAmount)).toBe(6000);
+      expect(Number(result.invoice.balance)).toBe(2000);
       expect(result.invoice.paymentStatus).toBe('PARTIALLY_PAID');
     });
   });
@@ -351,12 +359,14 @@ describe('Refund Processing Integration', () => {
         data: {
           tenantId,
           invoiceId: invoice.id,
+          patientId,
           paymentId: payment.payment.id,
           amount: 5000,
           reason: 'Test refund',
-          requestedBy: cashierId,
+          requestedById: cashierId,
           status: 'PENDING', // Not approved!
           refundNumber: 'REF-005',
+          refundMethod: 'CASH',
         },
       });
 
@@ -380,8 +390,8 @@ describe('Refund Processing Integration', () => {
         where: { id: payment.payment.id },
       });
 
-      expect(dbInvoice?.paidAmount).toBe(5000);
-      expect(dbInvoice?.balance).toBe(0);
+      expect(Number(dbInvoice?.paidAmount)).toBe(5000);
+      expect(Number(dbInvoice?.balance)).toBe(0);
       expect(dbInvoice?.paymentStatus).toBe('PAID');
       expect(dbRefund?.status).toBe('PENDING');
       expect(dbPayment?.status).toBe('COMPLETED');
@@ -409,13 +419,15 @@ describe('Refund Processing Integration', () => {
         data: {
           tenantId,
           invoiceId: invoice.id,
+          patientId,
           paymentId: payment.payment.id,
           amount: 3000,
           reason: 'Bank error',
-          requestedBy: cashierId,
-          approvedBy: cashierId,
+          requestedById: cashierId,
+          approvedById: cashierId,
           status: 'APPROVED',
           refundNumber: 'REF-006',
+          refundMethod: 'CASH',
         },
       });
 
@@ -458,13 +470,15 @@ describe('Refund Processing Integration', () => {
         data: {
           tenantId,
           invoiceId: invoice.id,
+          patientId,
           paymentId: payment.payment.id,
           amount: 2000,
           reason: 'Cash refund',
-          requestedBy: cashierId,
-          approvedBy: cashierId,
+          requestedById: cashierId,
+          approvedById: cashierId,
           status: 'APPROVED',
           refundNumber: 'REF-007',
+          refundMethod: 'CASH',
         },
       });
 
@@ -473,7 +487,7 @@ describe('Refund Processing Integration', () => {
 
       // Assert
       expect(result.refund.status).toBe('COMPLETED');
-      expect(result.refund.referenceNumber).toBeUndefined();
+      expect(result.refund.referenceNumber).toBeNull();
     });
   });
 });

@@ -22,7 +22,7 @@ const patientRepository = new PatientRepository(prisma);
 
 // Initialize use cases
 const bookAppointmentUseCase = new BookAppointmentUseCase(appointmentRepository, patientRepository);
-const getAppointmentsUseCase = new GetAppointmentsUseCase(appointmentRepository);
+const getAppointmentsUseCase = new GetAppointmentsUseCase(appointmentRepository, patientRepository);
 const checkInAppointmentUseCase = new CheckInAppointmentUseCase(appointmentRepository);
 const cancelAppointmentUseCase = new CancelAppointmentUseCase(appointmentRepository);
 const getWaitingQueueUseCase = new GetWaitingQueueUseCase(appointmentRepository);
@@ -46,7 +46,7 @@ export const bookAppointment = async (req: Request, res: Response) => {
     return res.status(201).json(result);
   } catch (error: any) {
     logger.error('Error booking appointment:', error);
-    return res.status(500).json({ success: false, message: 'Failed to book appointment', error: error.message });
+    return res.status(500).json({ success: false, message: 'Failed to book appointment' });
   }
 };
 
@@ -106,7 +106,7 @@ export const getAppointments = async (req: Request, res: Response) => {
     return res.status(200).json({ ...result, appointments: enriched });
   } catch (error: any) {
     logger.error('Error getting appointments:', error);
-    return res.status(500).json({ success: false, message: 'Failed to get appointments', error: error.message });
+    return res.status(500).json({ success: false, message: 'Failed to get appointments' });
   }
 };
 
@@ -124,7 +124,7 @@ export const getAppointmentById = async (req: Request, res: Response) => {
     return res.status(200).json({ success: true, message: 'Appointment retrieved successfully', appointment });
   } catch (error: any) {
     logger.error('Error getting appointment:', error);
-    return res.status(500).json({ success: false, message: 'Failed to get appointment', error: error.message });
+    return res.status(500).json({ success: false, message: 'Failed to get appointment' });
   }
 };
 
@@ -143,7 +143,7 @@ export const checkInAppointment = async (req: Request, res: Response) => {
     return res.status(200).json(result);
   } catch (error: any) {
     logger.error('Error checking in appointment:', error);
-    return res.status(500).json({ success: false, message: 'Failed to check in', error: error.message });
+    return res.status(500).json({ success: false, message: 'Failed to check in' });
   }
 };
 
@@ -162,7 +162,7 @@ export const cancelAppointment = async (req: Request, res: Response) => {
     return res.status(200).json(result);
   } catch (error: any) {
     logger.error('Error cancelling appointment:', error);
-    return res.status(500).json({ success: false, message: 'Failed to cancel appointment', error: error.message });
+    return res.status(500).json({ success: false, message: 'Failed to cancel appointment' });
   }
 };
 
@@ -179,7 +179,7 @@ export const getWaitingQueue = async (req: Request, res: Response) => {
     return res.status(200).json(result);
   } catch (error: any) {
     logger.error('Error getting waiting queue:', error);
-    return res.status(500).json({ success: false, message: 'Failed to get waiting queue', error: error.message });
+    return res.status(500).json({ success: false, message: 'Failed to get waiting queue' });
   }
 };
 
@@ -219,11 +219,11 @@ export const updateAppointment = async (req: Request, res: Response) => {
       }
     }
 
-    const updatedAppointment = await appointmentRepository.update(id, tenantId, req.body);
+    const updatedAppointment = await appointmentRepository.update(id, tenantId, req.body, req.body.version);
     return res.status(200).json({ success: true, message: 'Appointment updated successfully', appointment: updatedAppointment });
   } catch (error: any) {
     logger.error('Error updating appointment:', error);
-    return res.status(500).json({ success: false, message: 'Failed to update appointment', error: error.message });
+    return res.status(error.statusCode || 500).json({ success: false, message: error.statusCode ? error.message : 'Failed to update appointment' });
   }
 };
 
@@ -233,12 +233,13 @@ export const updateAppointment = async (req: Request, res: Response) => {
 export const deleteAppointment = async (req: Request, res: Response) => {
   try {
     const tenantId = req.user?.tenantId;
+    const userId = req.user?.id;
     if (!tenantId) return res.status(401).json({ success: false, message: 'Unauthorized: No tenant ID found' });
 
-    await appointmentRepository.delete(req.params.id, tenantId);
+    await appointmentRepository.delete(req.params.id, tenantId, userId);
     return res.status(200).json({ success: true, message: 'Appointment deleted successfully' });
   } catch (error: any) {
     logger.error('Error deleting appointment:', error);
-    return res.status(500).json({ success: false, message: 'Failed to delete appointment', error: error.message });
+    return res.status(500).json({ success: false, message: 'Failed to delete appointment' });
   }
 };

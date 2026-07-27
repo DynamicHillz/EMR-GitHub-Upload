@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { Save, Upload, Palette, DollarSign, Settings2, Building2 } from 'lucide-react';
+import { Save, Upload, Palette, DollarSign, Settings2, Building2, ShieldAlert } from 'lucide-react';
 import { applyTheme } from '../utils/theme';
+import Dropdown from '../components/common/Dropdown';
+import { useAuth } from '../contexts/AuthContext';
 
 interface BrandingSettings {
   id: string;
@@ -23,6 +25,7 @@ interface BillingConfig {
   defaultTaxRate: number;
   taxName: string;
   taxId: string | null;
+  defaultMarkupPercent: number;
   acceptCash: boolean;
   acceptCard: boolean;
   acceptMobileMoney: boolean;
@@ -41,7 +44,65 @@ interface BillingConfig {
   mobileMoneyName: string | null;
 }
 
-type TabType = 'branding' | 'clinic' | 'billing';
+type TabType = 'branding' | 'clinic' | 'billing' | 'fraud';
+
+interface FraudPreventionSettings {
+  cashApprovalThreshold: number;
+  bankTransferApprovalThreshold: number;
+  mobileMoneyApprovalThreshold: number;
+  refundAutoApproveThreshold: number | null;
+  requireReceiptPhotoForCash: boolean;
+  requireReferenceForBankTransfer: boolean;
+  requireReferenceForMobileMoney: boolean;
+  duplicateDetectionEnabled: boolean;
+  duplicateTimeWindowMinutes: number;
+  duplicateAmountTolerancePercent: number;
+  allowBackdating: boolean;
+  maxBackdatingDays: number;
+  enableDailyLimits: boolean;
+  dailyCashLimitPerUser: number | null;
+  dailyTotalLimitPerUser: number | null;
+  autoFlagLargeAmounts: boolean;
+  autoFlagAmountThreshold: number;
+  autoFlagMultiplePaymentsSameInvoice: boolean;
+  autoFlagRoundAmounts: boolean;
+  autoFlagOffHoursPayments: boolean;
+  requireDailyReconciliation: boolean;
+  reconciliationWindowDays: number;
+  businessHoursStart: string | null;
+  businessHoursEnd: string | null;
+  notifyAdminOnFlaggedPayment: boolean;
+  notifyAdminOnLargePayment: boolean;
+}
+
+const DEFAULT_FRAUD_SETTINGS: FraudPreventionSettings = {
+  cashApprovalThreshold: 50000,
+  bankTransferApprovalThreshold: 100000,
+  mobileMoneyApprovalThreshold: 75000,
+  refundAutoApproveThreshold: null,
+  requireReceiptPhotoForCash: true,
+  requireReferenceForBankTransfer: true,
+  requireReferenceForMobileMoney: true,
+  duplicateDetectionEnabled: true,
+  duplicateTimeWindowMinutes: 30,
+  duplicateAmountTolerancePercent: 0,
+  allowBackdating: false,
+  maxBackdatingDays: 0,
+  enableDailyLimits: false,
+  dailyCashLimitPerUser: null,
+  dailyTotalLimitPerUser: null,
+  autoFlagLargeAmounts: true,
+  autoFlagAmountThreshold: 200000,
+  autoFlagMultiplePaymentsSameInvoice: true,
+  autoFlagRoundAmounts: false,
+  autoFlagOffHoursPayments: false,
+  requireDailyReconciliation: true,
+  reconciliationWindowDays: 7,
+  businessHoursStart: '08:00',
+  businessHoursEnd: '18:00',
+  notifyAdminOnFlaggedPayment: true,
+  notifyAdminOnLargePayment: true,
+};
 
 // Currency symbol mapping
 const CURRENCY_SYMBOLS: Record<string, string> = {
@@ -84,6 +145,8 @@ const convertImageUrl = (url: string): string => {
 };
 
 const SettingsPage: React.FC = () => {
+  const { hasRole } = useAuth();
+  const isSuperAdmin = hasRole(['SUPER_ADMIN']);
   const [activeTab, setActiveTab] = useState<TabType>('branding');
   const [branding, setBranding] = useState<BrandingSettings | null>(null);
   const [billingConfig, setBillingConfig] = useState<BillingConfig | null>(null);
@@ -92,6 +155,8 @@ const SettingsPage: React.FC = () => {
 
   // Branding state
   const [logoUrl, setLogoUrl] = useState('');
+  const [uploadingLogo, setUploadingLogo] = useState(false);
+  const [logoUploadError, setLogoUploadError] = useState('');
   const [clinicName, setClinicName] = useState('');
   const [address, setAddress] = useState('');
   const [primaryColor, setPrimaryColor] = useState('#3b82f6');
@@ -105,6 +170,7 @@ const SettingsPage: React.FC = () => {
   const [taxEnabled, setTaxEnabled] = useState(true);
   const [defaultTaxRate, setDefaultTaxRate] = useState(0);
   const [taxName, setTaxName] = useState('VAT');
+  const [defaultMarkupPercent, setDefaultMarkupPercent] = useState(40);
   const [taxId, setTaxId] = useState('');
   const [acceptCash, setAcceptCash] = useState(true);
   const [acceptCard, setAcceptCard] = useState(true);
@@ -132,6 +198,15 @@ const SettingsPage: React.FC = () => {
   const [moniepointApiKey, setMoniepointApiKey] = useState('');
   const [moniepointContractCode, setMoniepointContractCode] = useState('');
 
+  // Fraud Prevention state — kept as one object (unlike the flat per-field
+  // hooks above) since all 26 fields save together in a single PUT and
+  // adding 26 more standalone useState calls would make this already-large
+  // file materially harder to scan.
+  const [fraudSettings, setFraudSettings] = useState<FraudPreventionSettings>(DEFAULT_FRAUD_SETTINGS);
+  const updateFraud = <K extends keyof FraudPreventionSettings>(field: K, value: FraudPreventionSettings[K]) => {
+    setFraudSettings((prev) => ({ ...prev, [field]: value }));
+  };
+
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   // Handle currency change - auto-update symbol
@@ -147,6 +222,41 @@ const SettingsPage: React.FC = () => {
     setLogoUrl(convertedUrl);
   };
 
+  const handleLogoFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setUploadingLogo(true);
+    setLogoUploadError('');
+    try {
+      const token = localStorage.getItem('token');
+      const formData = new FormData();
+      formData.append('logo', file);
+
+      const backendOrigin = `${window.location.protocol}//${window.location.hostname}:3000`;
+      const response = await fetch(`${backendOrigin}/api/branding/upload-logo`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` },
+        body: formData,
+      });
+
+      const data = await response.json();
+      if (response.ok) {
+        // Returned logoUrl is a relative /uploads/... path served by the backend.
+        setLogoUrl(`${backendOrigin}${data.data.logoUrl}`);
+        setBranding(data.data);
+        setMessage({ type: 'success', text: 'Logo uploaded successfully!' });
+      } else {
+        setLogoUploadError(data.message || 'Failed to upload logo');
+      }
+    } catch (error) {
+      setLogoUploadError('An error occurred while uploading');
+    } finally {
+      setUploadingLogo(false);
+      e.target.value = '';
+    }
+  };
+
   useEffect(() => {
     fetchSettings();
   }, []);
@@ -156,7 +266,7 @@ const SettingsPage: React.FC = () => {
       const token = localStorage.getItem('token');
 
       // Fetch branding
-      const brandingResponse = await fetch('http://localhost:3000/api/branding', {
+      const brandingResponse = await fetch(`${window.location.protocol}//${window.location.hostname}:3000/api/branding`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
 
@@ -175,7 +285,7 @@ const SettingsPage: React.FC = () => {
       }
 
       // Fetch billing config
-      const billingResponse = await fetch('http://localhost:3000/api/billing/config', {
+      const billingResponse = await fetch(`${window.location.protocol}//${window.location.hostname}:3000/api/billing/config`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
 
@@ -189,6 +299,7 @@ const SettingsPage: React.FC = () => {
         setDefaultTaxRate(parseFloat(config.defaultTaxRate));
         setTaxName(config.taxName);
         setTaxId(config.taxId || '');
+        setDefaultMarkupPercent(parseFloat(config.defaultMarkupPercent));
         setAcceptCash(config.acceptCash);
         setAcceptCard(config.acceptCard);
         setAcceptMobileMoney(config.acceptMobileMoney);
@@ -215,6 +326,16 @@ const SettingsPage: React.FC = () => {
         setMoniepointApiKey(config.moniepointApiKey || '');
         setMoniepointContractCode(config.moniepointContractCode || '');
       }
+
+      // Fetch fraud prevention settings
+      const fraudResponse = await fetch(`${window.location.protocol}//${window.location.hostname}:3000/api/fraud-prevention`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+
+      if (fraudResponse.ok) {
+        const fraudData = await fraudResponse.json();
+        setFraudSettings({ ...DEFAULT_FRAUD_SETTINGS, ...fraudData.data });
+      }
     } catch (error) {
       console.error('Failed to fetch settings:', error);
     } finally {
@@ -228,7 +349,7 @@ const SettingsPage: React.FC = () => {
 
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch('http://localhost:3000/api/branding', {
+      const response = await fetch(`${window.location.protocol}//${window.location.hostname}:3000/api/branding`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -250,7 +371,7 @@ const SettingsPage: React.FC = () => {
       if (response.ok) {
         setMessage({ type: 'success', text: 'Branding updated successfully!' });
         setBranding(data.data);
-        applyTheme({ primaryColor, secondaryColor, accentColor });
+        applyTheme({ primaryColor, secondaryColor, accentColor, fontFamily });
       } else {
         setMessage({ type: 'error', text: data.message || 'Failed to update branding' });
       }
@@ -267,7 +388,7 @@ const SettingsPage: React.FC = () => {
 
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch('http://localhost:3000/api/billing/config', {
+      const response = await fetch(`${window.location.protocol}//${window.location.hostname}:3000/api/billing/config`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -280,6 +401,7 @@ const SettingsPage: React.FC = () => {
           defaultTaxRate,
           taxName,
           taxId: taxId || null,
+          defaultMarkupPercent,
           acceptCash,
           acceptCard,
           acceptMobileMoney,
@@ -296,15 +418,22 @@ const SettingsPage: React.FC = () => {
           mobileMoneyProvider: mobileMoneyProvider || null,
           mobileMoneyNumber: mobileMoneyNumber || null,
           mobileMoneyName: mobileMoneyName || null,
-          paystackEnabled,
-          paystackPublicKey: paystackPublicKey || null,
-          paystackSecretKey: paystackSecretKey || null,
-          flutterwaveEnabled,
-          flutterwavePublicKey: flutterwavePublicKey || null,
-          flutterwaveSecretKey: flutterwaveSecretKey || null,
-          moniepointEnabled,
-          moniepointApiKey: moniepointApiKey || null,
-          moniepointContractCode: moniepointContractCode || null
+          // Payment gateway fields are SUPER_ADMIN-only server-side (any of
+          // these being present in the body — even unchanged — trips that
+          // gate), so a plain ADMIN must omit them entirely or saving ANY
+          // other billing field (tax rate, invoice prefix, etc.) would also
+          // get rejected with a 403.
+          ...(isSuperAdmin && {
+            paystackEnabled,
+            paystackPublicKey: paystackPublicKey || null,
+            paystackSecretKey: paystackSecretKey || null,
+            flutterwaveEnabled,
+            flutterwavePublicKey: flutterwavePublicKey || null,
+            flutterwaveSecretKey: flutterwaveSecretKey || null,
+            moniepointEnabled,
+            moniepointApiKey: moniepointApiKey || null,
+            moniepointContractCode: moniepointContractCode || null,
+          }),
         })
       });
 
@@ -315,6 +444,36 @@ const SettingsPage: React.FC = () => {
         setBillingConfig(data.data);
       } else {
         setMessage({ type: 'error', text: data.message || 'Failed to update billing configuration' });
+      }
+    } catch (error) {
+      setMessage({ type: 'error', text: 'An error occurred while saving' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleSaveFraudPrevention = async () => {
+    setSaving(true);
+    setMessage(null);
+
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch(`${window.location.protocol}//${window.location.hostname}:3000/api/fraud-prevention`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify(fraudSettings)
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        setMessage({ type: 'success', text: 'Fraud prevention settings updated successfully!' });
+        setFraudSettings({ ...DEFAULT_FRAUD_SETTINGS, ...data.data });
+      } else {
+        setMessage({ type: 'error', text: data.message || 'Failed to update fraud prevention settings' });
       }
     } catch (error) {
       setMessage({ type: 'error', text: 'An error occurred while saving' });
@@ -375,6 +534,18 @@ const SettingsPage: React.FC = () => {
           >
             <DollarSign className="w-5 h-5" />
             <span>Billing Configuration</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('fraud')}
+            className={`py-4 px-1 border-b-2 font-medium text-sm flex items-center space-x-2 ${
+              activeTab === 'fraud'
+                ? 'border-blue-500 text-blue-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+            }`}
+          >
+            <ShieldAlert className="w-5 h-5" />
+            <span>Fraud Prevention</span>
           </button>
         </nav>
       </div>
@@ -474,7 +645,7 @@ const SettingsPage: React.FC = () => {
             {/* Font Family */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">Font Family</label>
-              <select
+              <Dropdown
                 value={fontFamily}
                 onChange={(e) => setFontFamily(e.target.value)}
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
@@ -485,7 +656,7 @@ const SettingsPage: React.FC = () => {
                 <option value="Helvetica">Helvetica</option>
                 <option value="Georgia">Georgia</option>
                 <option value="Times New Roman">Times New Roman</option>
-              </select>
+              </Dropdown>
             </div>
 
             {/* Save Button */}
@@ -624,6 +795,21 @@ const SettingsPage: React.FC = () => {
               placeholder="https://example.com/logo.png or Google Drive share link"
               className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
             />
+            <div className="mt-3 flex items-center gap-3">
+              <span className="text-xs text-gray-500">— or —</span>
+              <label className="flex items-center gap-2 px-3 py-1.5 border border-gray-300 rounded-lg text-sm text-gray-700 hover:bg-gray-50 cursor-pointer">
+                <Upload className="w-4 h-4" />
+                {uploadingLogo ? 'Uploading...' : 'Upload a file'}
+                <input
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp,image/svg+xml"
+                  className="hidden"
+                  disabled={uploadingLogo}
+                  onChange={handleLogoFileUpload}
+                />
+              </label>
+            </div>
+            {logoUploadError && <p className="text-xs text-red-600 mt-1">{logoUploadError}</p>}
             {logoUrl && (
               <div className="mt-3 p-4 bg-gray-50 rounded-lg">
                 <p className="text-sm text-gray-600 mb-2">Logo Preview:</p>
@@ -699,7 +885,7 @@ const SettingsPage: React.FC = () => {
               {/* Currency */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">Currency</label>
-                <select
+                <Dropdown
                   value={currency}
                   onChange={(e) => handleCurrencyChange(e.target.value)}
                   className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
@@ -711,7 +897,7 @@ const SettingsPage: React.FC = () => {
                   <option value="KES">KES - Kenyan Shilling</option>
                   <option value="ZAR">ZAR - South African Rand</option>
                   <option value="GHS">GHS - Ghanaian Cedi</option>
-                </select>
+                </Dropdown>
               </div>
 
               {/* Currency Symbol */}
@@ -778,6 +964,27 @@ const SettingsPage: React.FC = () => {
                   </div>
                 </div>
               )}
+            </div>
+          </div>
+
+          {/* Pharmacy Pricing */}
+          <div className="bg-white rounded-lg shadow-md p-6 space-y-4">
+            <h3 className="text-lg font-semibold text-gray-800 border-b pb-3">Pharmacy Pricing</h3>
+            <div className="max-w-xs">
+              <label className="block text-sm font-medium text-gray-700 mb-2">Default Markup (%)</label>
+              <input
+                type="number"
+                value={defaultMarkupPercent}
+                onChange={(e) => setDefaultMarkupPercent(parseFloat(e.target.value))}
+                min="0"
+                max="1000"
+                step="0.01"
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              />
+              <p className="mt-2 text-sm text-gray-500">
+                When a pharmacist adds a new medication or consumable batch, the selling price is
+                pre-filled as unit cost + this percentage. It can still be edited per batch.
+              </p>
             </div>
           </div>
 
@@ -987,7 +1194,15 @@ const SettingsPage: React.FC = () => {
               />
             </div>
           </div>
-          {/* Payment Gateway Configuration */}
+          {/* Payment Gateway Configuration — SUPER_ADMIN only, both here and
+              enforced server-side (billing-config.controller.ts). Hidden
+              entirely for a plain ADMIN rather than shown-then-rejected. */}
+          {!isSuperAdmin ? (
+            <div className="bg-white rounded-lg shadow-md p-6 space-y-2">
+              <h3 className="text-lg font-semibold text-gray-800 border-b pb-3">Payment Gateway Configuration</h3>
+              <p className="text-sm text-gray-600">Contact a Super Admin to configure payment gateways (Paystack, Flutterwave, Moniepoint).</p>
+            </div>
+          ) : (
   <div className="bg-white rounded-lg shadow-md p-6 space-y-6">
     <h3 className="text-lg font-semibold text-gray-800 border-b pb-3">Payment Gateway Configuration</h3>
     <p className="text-sm text-gray-600">Configure online payment processors (API keys are stored securely)</p>
@@ -1052,6 +1267,7 @@ const SettingsPage: React.FC = () => {
       )}
     </div>
   </div>
+          )}
 
           {/* Save Button */}
           <div className="bg-white rounded-lg shadow-md p-6">
@@ -1062,6 +1278,183 @@ const SettingsPage: React.FC = () => {
             >
               <Save className="w-5 h-5" />
               <span>{saving ? 'Saving...' : 'Save Billing Configuration'}</span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Fraud Prevention Tab */}
+      {activeTab === 'fraud' && (
+        <div className="space-y-6">
+          <div className="bg-white rounded-lg shadow-md p-6 space-y-4">
+            <h3 className="text-lg font-semibold text-gray-800 border-b pb-3">Approval Thresholds</h3>
+            <p className="text-sm text-gray-600">Payments above these amounts require additional approval.</p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Cash Approval Threshold</label>
+                <input type="number" min={0} value={fraudSettings.cashApprovalThreshold} onChange={(e) => updateFraud('cashApprovalThreshold', Number(e.target.value))} className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Bank Transfer Approval Threshold</label>
+                <input type="number" min={0} value={fraudSettings.bankTransferApprovalThreshold} onChange={(e) => updateFraud('bankTransferApprovalThreshold', Number(e.target.value))} className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Mobile Money Approval Threshold</label>
+                <input type="number" min={0} value={fraudSettings.mobileMoneyApprovalThreshold} onChange={(e) => updateFraud('mobileMoneyApprovalThreshold', Number(e.target.value))} className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Refund Auto-Approve Threshold</label>
+                <input type="number" min={0} value={fraudSettings.refundAutoApproveThreshold ?? ''} onChange={(e) => updateFraud('refundAutoApproveThreshold', e.target.value === '' ? null : Number(e.target.value))} placeholder="No limit" className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" />
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-lg shadow-md p-6 space-y-4">
+            <h3 className="text-lg font-semibold text-gray-800 border-b pb-3">Mandatory Fields</h3>
+            <div className="space-y-3">
+              <label className="flex items-center">
+                <input type="checkbox" checked={fraudSettings.requireReceiptPhotoForCash} onChange={(e) => updateFraud('requireReceiptPhotoForCash', e.target.checked)} className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500" />
+                <span className="ml-2 text-sm font-medium text-gray-700">Require receipt photo for cash payments</span>
+              </label>
+              <label className="flex items-center">
+                <input type="checkbox" checked={fraudSettings.requireReferenceForBankTransfer} onChange={(e) => updateFraud('requireReferenceForBankTransfer', e.target.checked)} className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500" />
+                <span className="ml-2 text-sm font-medium text-gray-700">Require reference number for bank transfers</span>
+              </label>
+              <label className="flex items-center">
+                <input type="checkbox" checked={fraudSettings.requireReferenceForMobileMoney} onChange={(e) => updateFraud('requireReferenceForMobileMoney', e.target.checked)} className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500" />
+                <span className="ml-2 text-sm font-medium text-gray-700">Require reference number for mobile money</span>
+              </label>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-lg shadow-md p-6 space-y-4">
+            <h3 className="text-lg font-semibold text-gray-800 border-b pb-3">Duplicate Detection</h3>
+            <label className="flex items-center">
+              <input type="checkbox" checked={fraudSettings.duplicateDetectionEnabled} onChange={(e) => updateFraud('duplicateDetectionEnabled', e.target.checked)} className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500" />
+              <span className="ml-2 text-sm font-medium text-gray-700">Enable duplicate payment detection</span>
+            </label>
+            {fraudSettings.duplicateDetectionEnabled && (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pl-6">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Time Window (minutes)</label>
+                  <input type="number" min={0} value={fraudSettings.duplicateTimeWindowMinutes} onChange={(e) => updateFraud('duplicateTimeWindowMinutes', Number(e.target.value))} className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Amount Tolerance (%)</label>
+                  <input type="number" min={0} max={100} value={fraudSettings.duplicateAmountTolerancePercent} onChange={(e) => updateFraud('duplicateAmountTolerancePercent', Number(e.target.value))} className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" />
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="bg-white rounded-lg shadow-md p-6 space-y-4">
+            <h3 className="text-lg font-semibold text-gray-800 border-b pb-3">Backdating</h3>
+            <label className="flex items-center">
+              <input type="checkbox" checked={fraudSettings.allowBackdating} onChange={(e) => updateFraud('allowBackdating', e.target.checked)} className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500" />
+              <span className="ml-2 text-sm font-medium text-gray-700">Allow backdated payment entries</span>
+            </label>
+            {fraudSettings.allowBackdating && (
+              <div className="pl-6">
+                <label className="block text-sm font-medium text-gray-700 mb-2">Maximum Backdating (days)</label>
+                <input type="number" min={0} value={fraudSettings.maxBackdatingDays} onChange={(e) => updateFraud('maxBackdatingDays', Number(e.target.value))} className="w-full max-w-xs px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" />
+              </div>
+            )}
+          </div>
+
+          <div className="bg-white rounded-lg shadow-md p-6 space-y-4">
+            <h3 className="text-lg font-semibold text-gray-800 border-b pb-3">Daily Limits Per User</h3>
+            <label className="flex items-center">
+              <input type="checkbox" checked={fraudSettings.enableDailyLimits} onChange={(e) => updateFraud('enableDailyLimits', e.target.checked)} className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500" />
+              <span className="ml-2 text-sm font-medium text-gray-700">Enable daily payment limits per user</span>
+            </label>
+            {fraudSettings.enableDailyLimits && (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pl-6">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Daily Cash Limit</label>
+                  <input type="number" min={0} value={fraudSettings.dailyCashLimitPerUser ?? ''} onChange={(e) => updateFraud('dailyCashLimitPerUser', e.target.value === '' ? null : Number(e.target.value))} placeholder="No limit" className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Daily Total Limit</label>
+                  <input type="number" min={0} value={fraudSettings.dailyTotalLimitPerUser ?? ''} onChange={(e) => updateFraud('dailyTotalLimitPerUser', e.target.value === '' ? null : Number(e.target.value))} placeholder="No limit" className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" />
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="bg-white rounded-lg shadow-md p-6 space-y-4">
+            <h3 className="text-lg font-semibold text-gray-800 border-b pb-3">Auto-Flagging</h3>
+            <div className="space-y-3">
+              <label className="flex items-center">
+                <input type="checkbox" checked={fraudSettings.autoFlagLargeAmounts} onChange={(e) => updateFraud('autoFlagLargeAmounts', e.target.checked)} className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500" />
+                <span className="ml-2 text-sm font-medium text-gray-700">Auto-flag large amounts</span>
+              </label>
+              {fraudSettings.autoFlagLargeAmounts && (
+                <div className="pl-6 max-w-xs">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Flag Threshold</label>
+                  <input type="number" min={0} value={fraudSettings.autoFlagAmountThreshold} onChange={(e) => updateFraud('autoFlagAmountThreshold', Number(e.target.value))} className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" />
+                </div>
+              )}
+              <label className="flex items-center">
+                <input type="checkbox" checked={fraudSettings.autoFlagMultiplePaymentsSameInvoice} onChange={(e) => updateFraud('autoFlagMultiplePaymentsSameInvoice', e.target.checked)} className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500" />
+                <span className="ml-2 text-sm font-medium text-gray-700">Auto-flag multiple payments on the same invoice</span>
+              </label>
+              <label className="flex items-center">
+                <input type="checkbox" checked={fraudSettings.autoFlagRoundAmounts} onChange={(e) => updateFraud('autoFlagRoundAmounts', e.target.checked)} className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500" />
+                <span className="ml-2 text-sm font-medium text-gray-700">Auto-flag suspiciously round amounts</span>
+              </label>
+              <label className="flex items-center">
+                <input type="checkbox" checked={fraudSettings.autoFlagOffHoursPayments} onChange={(e) => updateFraud('autoFlagOffHoursPayments', e.target.checked)} className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500" />
+                <span className="ml-2 text-sm font-medium text-gray-700">Auto-flag payments recorded outside business hours</span>
+              </label>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-lg shadow-md p-6 space-y-4">
+            <h3 className="text-lg font-semibold text-gray-800 border-b pb-3">Reconciliation & Business Hours</h3>
+            <div className="space-y-3">
+              <label className="flex items-center">
+                <input type="checkbox" checked={fraudSettings.requireDailyReconciliation} onChange={(e) => updateFraud('requireDailyReconciliation', e.target.checked)} className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500" />
+                <span className="ml-2 text-sm font-medium text-gray-700">Require daily reconciliation</span>
+              </label>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Reconciliation Window (days)</label>
+                <input type="number" min={0} value={fraudSettings.reconciliationWindowDays} onChange={(e) => updateFraud('reconciliationWindowDays', Number(e.target.value))} className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Business Hours Start</label>
+                <input type="time" value={fraudSettings.businessHoursStart ?? ''} onChange={(e) => updateFraud('businessHoursStart', e.target.value || null)} className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Business Hours End</label>
+                <input type="time" value={fraudSettings.businessHoursEnd ?? ''} onChange={(e) => updateFraud('businessHoursEnd', e.target.value || null)} className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" />
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-lg shadow-md p-6 space-y-4">
+            <h3 className="text-lg font-semibold text-gray-800 border-b pb-3">Notifications</h3>
+            <div className="space-y-3">
+              <label className="flex items-center">
+                <input type="checkbox" checked={fraudSettings.notifyAdminOnFlaggedPayment} onChange={(e) => updateFraud('notifyAdminOnFlaggedPayment', e.target.checked)} className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500" />
+                <span className="ml-2 text-sm font-medium text-gray-700">Notify admin when a payment is flagged</span>
+              </label>
+              <label className="flex items-center">
+                <input type="checkbox" checked={fraudSettings.notifyAdminOnLargePayment} onChange={(e) => updateFraud('notifyAdminOnLargePayment', e.target.checked)} className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500" />
+                <span className="ml-2 text-sm font-medium text-gray-700">Notify admin on large payments</span>
+              </label>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-lg shadow-md p-6">
+            <button
+              onClick={handleSaveFraudPrevention}
+              disabled={saving}
+              className="w-full md:w-auto px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center justify-center space-x-2"
+            >
+              <Save className="w-5 h-5" />
+              <span>{saving ? 'Saving...' : 'Save Fraud Prevention Settings'}</span>
             </button>
           </div>
         </div>

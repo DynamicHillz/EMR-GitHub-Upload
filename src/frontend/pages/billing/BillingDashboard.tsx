@@ -5,7 +5,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Receipt } from 'lucide-react';
+import { Receipt, ClipboardList } from 'lucide-react';
 import {
   Invoice,
   OutstandingInvoice,
@@ -256,7 +256,26 @@ const BillingDashboard: React.FC = () => {
       {/* Quick Actions */}
       <div className="mt-8 bg-blue-50 rounded-lg p-6">
         <h3 className="text-lg font-bold text-gray-900 mb-4">Quick Actions</h3>
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
+          <Link to="/billing/insurance"
+            className="flex items-center justify-center p-4 bg-white rounded-md shadow hover:shadow-md transition-shadow border-2 border-blue-500">
+            <div className="text-center">
+              <svg className="w-8 h-8 text-blue-600 mx-auto mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                  d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+              </svg>
+              <p className="text-sm font-medium">Insurance Claims</p>
+            </div>
+          </Link>
+
+          <Link to="/billing/unbilled"
+            className="flex items-center justify-center p-4 bg-white rounded-md shadow hover:shadow-md transition-shadow border-2 border-green-500">
+            <div className="text-center">
+              <ClipboardList className="w-8 h-8 text-green-600 mx-auto mb-2" />
+              <p className="text-sm font-medium">Unbilled Queue</p>
+            </div>
+          </Link>
+
           <Link to="/billing/services"
             className="flex items-center justify-center p-4 bg-white rounded-md shadow hover:shadow-md transition-shadow">
             <div className="text-center">
@@ -282,10 +301,11 @@ const BillingDashboard: React.FC = () => {
           <Link to="/billing/invoices/new"
             className="flex items-center justify-center p-4 bg-white rounded-md shadow hover:shadow-md transition-shadow">
             <div className="text-center">
-              <svg className="w-8 h-8 text-blue-600 mx-auto mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-8 h-8 text-amber-600 mx-auto mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
               </svg>
-              <p className="text-sm font-medium">New Invoice</p>
+              <p className="text-sm font-medium">Custom Charge</p>
+              <p className="text-xs text-gray-400 mt-0.5">Free-typed pricing</p>
             </div>
           </Link>
 

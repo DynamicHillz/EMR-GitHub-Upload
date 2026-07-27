@@ -23,6 +23,9 @@ import { format } from 'date-fns';
 import AppointmentCalendar, { AppointmentEvent } from '../components/appointments/AppointmentCalendar';
 import BookAppointmentModal, { AppointmentFormData } from '../components/appointments/BookAppointmentModal';
 import { useToast } from '../components/ToastContainer';
+import { offlineFetch } from '../services/offlineFetch';
+import { cacheTodayAppointments, getCachedTodayAppointments } from '../services/offlineCache';
+import Dropdown from '../components/common/Dropdown';
 
 const AppointmentsPage: React.FC = () => {
   const toast = useToast();
@@ -54,7 +57,7 @@ const AppointmentsPage: React.FC = () => {
   const fetchDoctors = async () => {
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch('http://localhost:3000/api/users/doctors', {
+      const response = await fetch(`${window.location.protocol}//${window.location.hostname}:3000/api/users/doctors`, {
         headers: {
           'Authorization': `Bearer ${token}`,
         },
@@ -107,7 +110,7 @@ const AppointmentsPage: React.FC = () => {
         params.append('dateTo', format(monthEnd, 'yyyy-MM-dd'));
       }
 
-      const response = await fetch(`/api/appointments?${params.toString()}`, {
+      const response = await fetch(`${window.location.protocol}//${window.location.hostname}:3000/api/appointments?${params.toString()}`, {
         headers: {
           Authorization: `Bearer ${localStorage.getItem('token')}`,
         },
@@ -133,20 +136,59 @@ const AppointmentsPage: React.FC = () => {
             end,
             resource: {
               patientId: apt.patientId,
-              patientNumber: apt.patientNumber,
+              patientNumber: apt.patient?.patientId || apt.patientId,
               doctorId: apt.doctorId,
               doctorName: apt.doctorName,
               status: apt.status,
               appointmentType: apt.appointmentType,
               reason: apt.reason,
+              version: apt.version,
             },
           };
         });
 
         setAppointments(events);
+
+        // Bounded offline read cache — only today's day-view list, per the
+        // scope in offlineCache.ts (not every date range ever viewed).
+        const isTodayDayView = view === 'day' && format(currentDate, 'yyyy-MM-dd') === format(new Date(), 'yyyy-MM-dd');
+        if (isTodayDayView) {
+          cacheTodayAppointments(result.appointments).catch(() => {});
+        }
       }
     } catch (error) {
-      console.error('Error fetching appointments:', error);
+      console.error('Error fetching appointments — falling back to offline cache if available:', error);
+      const isTodayDayView = view === 'day' && format(currentDate, 'yyyy-MM-dd') === format(new Date(), 'yyyy-MM-dd');
+      if (isTodayDayView) {
+        const cached = await getCachedTodayAppointments();
+        if (cached) {
+          const events: AppointmentEvent[] = cached.data.map((apt: any) => {
+            const appointmentDate = new Date(apt.appointmentDate);
+            const [hours, minutes] = apt.appointmentTime.split(':');
+            const start = new Date(appointmentDate);
+            start.setHours(parseInt(hours), parseInt(minutes), 0);
+            const end = new Date(start);
+            end.setMinutes(start.getMinutes() + apt.duration);
+            return {
+              id: apt.id,
+              title: apt.patientName || `Patient ${apt.patientId.substring(0, 8)}`,
+              start,
+              end,
+              resource: {
+                patientId: apt.patientId,
+                patientNumber: apt.patient?.patientId || apt.patientId,
+                doctorId: apt.doctorId,
+                doctorName: apt.doctorName,
+                status: apt.status,
+                appointmentType: apt.appointmentType,
+                reason: apt.reason,
+              },
+            };
+          });
+          setAppointments(events);
+          toast.warning('Showing Offline Data', `Loaded today's appointments from a snapshot saved ${new Date(cached.cachedAt).toLocaleString()}.`);
+        }
+      }
     } finally {
       setIsLoading(false);
     }
@@ -154,7 +196,7 @@ const AppointmentsPage: React.FC = () => {
 
   const fetchWaitingQueue = async (doctorId: string) => {
     try {
-      const response = await fetch(`/api/appointments/doctor/${doctorId}/waiting-queue`, {
+      const response = await fetch(`${window.location.protocol}//${window.location.hostname}:3000/api/appointments/doctor/${doctorId}/waiting-queue`, {
         headers: {
           Authorization: `Bearer ${localStorage.getItem('token')}`,
         },
@@ -181,7 +223,7 @@ const AppointmentsPage: React.FC = () => {
 
   const handleBookAppointment = async (formData: AppointmentFormData) => {
     try {
-      const response = await fetch('/api/appointments', {
+      const response = await fetch(`${window.location.protocol}//${window.location.hostname}:3000/api/appointments`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -206,7 +248,7 @@ const AppointmentsPage: React.FC = () => {
 
   const handleCheckIn = async (appointmentId: string) => {
     try {
-      const response = await fetch(`/api/appointments/${appointmentId}/check-in`, {
+      const response = await fetch(`${window.location.protocol}//${window.location.hostname}:3000/api/appointments/${appointmentId}/check-in`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${localStorage.getItem('token')}`,
@@ -231,6 +273,49 @@ const AppointmentsPage: React.FC = () => {
     }
   };
 
+  const handleMarkNoShow = async (appointmentId: string) => {
+    try {
+      const response = await offlineFetch(
+        `${window.location.protocol}//${window.location.hostname}:3000/api/appointments/${appointmentId}`,
+        {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${localStorage.getItem('token')}`,
+          },
+          body: JSON.stringify({ status: 'NO_SHOW' }),
+        },
+        { entityType: 'APPOINTMENT', entityId: appointmentId, baseVersion: selectedAppointment?.resource.version }
+      );
+
+      const data = await response.json().catch(() => ({}));
+      if (data.queued) {
+        toast.success('Saved Offline', 'This will sync automatically when your connection returns.');
+        await fetchAppointments();
+        setSelectedAppointment(null);
+      } else if (response.ok) {
+        toast.success('Marked as No-Show', 'The appointment has been updated');
+        await fetchAppointments();
+        setSelectedAppointment(null);
+      } else {
+        toast.error('Failed', data.message || 'Failed to mark appointment as no-show');
+      }
+    } catch (error) {
+      console.error('Error marking no-show:', error);
+      toast.error('Failed', 'Failed to mark appointment as no-show');
+    }
+  };
+
+  const todayAppointments = appointments.filter(
+    (a) => format(a.start, 'yyyy-MM-dd') === format(new Date(), 'yyyy-MM-dd')
+  );
+  const todayStats = {
+    total: todayAppointments.length,
+    waiting: todayAppointments.filter((a) => a.resource.status === 'CHECKED_IN').length,
+    scheduled: todayAppointments.filter((a) => a.resource.status === 'SCHEDULED').length,
+    noShow: todayAppointments.filter((a) => a.resource.status === 'NO_SHOW').length,
+  };
+
   const handleCancelAppointment = async () => {
     if (!selectedAppointment || !cancellationReason.trim()) {
       toast.error('Validation Error', 'Please provide a cancellation reason');
@@ -238,7 +323,7 @@ const AppointmentsPage: React.FC = () => {
     }
 
     try {
-      const response = await fetch(`/api/appointments/${selectedAppointment.id}/cancel`, {
+      const response = await fetch(`${window.location.protocol}//${window.location.hostname}:3000/api/appointments/${selectedAppointment.id}/cancel`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -271,21 +356,41 @@ const AppointmentsPage: React.FC = () => {
         <h1 className="text-3xl font-bold text-gray-900">Appointments</h1>
         <button
           onClick={() => setIsBookingModalOpen(true)}
-          className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 flex items-center gap-2"
+          className="btn btn-primary flex items-center gap-2"
         >
           <span>+</span>
           Book Appointment
         </button>
       </div>
 
+      {/* Today's Snapshot */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="bg-white rounded-lg shadow-sm p-4">
+          <p className="text-sm text-gray-500">Today's Appointments</p>
+          <p className="text-2xl font-bold text-gray-900 mt-1">{todayStats.total}</p>
+        </div>
+        <div className="bg-amber-50 rounded-lg border border-amber-200 p-4">
+          <p className="text-sm text-amber-600">Waiting (Checked In)</p>
+          <p className="text-2xl font-bold text-amber-700 mt-1">{todayStats.waiting}</p>
+        </div>
+        <div className="bg-blue-50 rounded-lg border border-blue-200 p-4">
+          <p className="text-sm text-blue-600">Scheduled</p>
+          <p className="text-2xl font-bold text-blue-700 mt-1">{todayStats.scheduled}</p>
+        </div>
+        <div className="bg-red-50 rounded-lg border border-red-200 p-4">
+          <p className="text-sm text-red-600">No-Shows</p>
+          <p className="text-2xl font-bold text-red-700 mt-1">{todayStats.noShow}</p>
+        </div>
+      </div>
+
       {/* Filters */}
       <div className="bg-white rounded-lg shadow p-4 flex gap-4 items-center">
         <div className="flex-1">
           <label className="block text-sm font-medium text-gray-700 mb-1">Filter by Doctor</label>
-          <select
+          <Dropdown
             value={selectedDoctor}
             onChange={(e) => setSelectedDoctor(e.target.value)}
-            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
           >
             <option value="all">All Doctors</option>
             {doctors.map((doctor) => (
@@ -293,7 +398,7 @@ const AppointmentsPage: React.FC = () => {
                 {doctor.name}
               </option>
             ))}
-          </select>
+          </Dropdown>
         </div>
 
         <div className="flex gap-2">
@@ -402,6 +507,12 @@ const AppointmentsPage: React.FC = () => {
                   >
                     Cancel
                   </button>
+                  <button
+                    onClick={() => handleMarkNoShow(selectedAppointment.id)}
+                    className="flex-1 px-4 py-2 bg-gray-500 text-white rounded-md hover:bg-gray-600"
+                  >
+                    No-Show
+                  </button>
                 </>
               )}
             </div>
@@ -433,11 +544,11 @@ const AppointmentsPage: React.FC = () => {
                     className="flex items-center justify-between p-4 border border-gray-200 rounded-md"
                   >
                     <div className="flex items-center gap-4">
-                      <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center font-bold text-blue-600">
+                      <div className="w-10 h-10 bg-primary-100 rounded-full flex items-center justify-center font-bold text-primary-600">
                         {item.position}
                       </div>
                       <div>
-                        <p className="font-medium">Patient {item.patientId.substring(0, 8)}</p>
+                        <p className="font-medium">{item.patientName || `Patient ${item.patientId.substring(0, 8)}`}</p>
                         <p className="text-sm text-gray-500">
                           {item.appointmentType} • Checked in at {format(new Date(item.checkedInAt), 'p')}
                         </p>

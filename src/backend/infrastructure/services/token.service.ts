@@ -14,15 +14,22 @@ export interface TokenPayload {
 }
 
 export class TokenService {
-  private static readonly JWT_SECRET: string = process.env.JWT_SECRET || 'your-secret-key';
-  private static readonly JWT_EXPIRY: string = process.env.JWT_EXPIRY || '8h';
-  private static readonly REFRESH_EXPIRY: string = process.env.JWT_REFRESH_EXPIRY || '30d';
+  private static getJwtSecret(): string {
+    const secret = process.env.JWT_SECRET;
+    if (!secret) {
+      throw new Error('FATAL: JWT_SECRET environment variable is not set. Server cannot sign or verify tokens.');
+    }
+    return secret;
+  }
+
+  private static readonly JWT_EXPIRY: string = process.env.JWT_EXPIRY || '1h';
+  private static readonly REFRESH_EXPIRY: string = process.env.JWT_REFRESH_EXPIRY || '8h';
 
   /**
    * Generate access token (JWT)
    */
   static generateAccessToken(payload: TokenPayload): string {
-    return jwt.sign(payload, this.JWT_SECRET, {
+    return jwt.sign(payload, this.getJwtSecret(), {
       expiresIn: this.JWT_EXPIRY as any,
     });
   }
@@ -46,7 +53,7 @@ export class TokenService {
    */
   static verifyToken(token: string): TokenPayload {
     try {
-      return jwt.verify(token, this.JWT_SECRET) as TokenPayload;
+      return jwt.verify(token, this.getJwtSecret()) as TokenPayload;
     } catch (error) {
       if (error instanceof jwt.TokenExpiredError) {
         throw new Error('Token has expired');

@@ -2,9 +2,10 @@ import React, { useState } from 'react';
 import billingService from '../../services/billing.service';
 import {
   Payment,
-  RefundMethod,
+  PaymentMethod,
   RequestRefundDto,
 } from '../../types/billing.types';
+import Dropdown from '../common/Dropdown';
 
 interface RefundFormProps {
   payment: Payment;
@@ -18,10 +19,11 @@ const RefundForm: React.FC<RefundFormProps> = ({
   onCancel,
 }) => {
   const [formData, setFormData] = useState<RequestRefundDto>({
+    invoiceId: payment.invoiceId,
     paymentId: payment.id,
-    refundAmount: payment.amount,
+    amount: payment.amount,
     reason: '',
-    refundMethod: RefundMethod.ORIGINAL_PAYMENT_METHOD,
+    refundMethod: payment.paymentMethod,
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -30,12 +32,12 @@ const RefundForm: React.FC<RefundFormProps> = ({
     e.preventDefault();
 
     // Validation
-    if (formData.refundAmount <= 0) {
+    if (formData.amount <= 0) {
       setError('Refund amount must be greater than 0');
       return;
     }
 
-    if (formData.refundAmount > payment.amount) {
+    if (formData.amount > payment.amount) {
       setError('Refund amount cannot exceed payment amount');
       return;
     }
@@ -51,7 +53,7 @@ const RefundForm: React.FC<RefundFormProps> = ({
       await billingService.requestRefund(formData);
       onSuccess?.();
     } catch (err: any) {
-      setError(err.message || 'Failed to request refund');
+      setError(err.response?.data?.message || err.message || 'Failed to request refund');
       console.error('Error requesting refund:', err);
     } finally {
       setLoading(false);
@@ -139,9 +141,9 @@ const RefundForm: React.FC<RefundFormProps> = ({
             <span className="absolute left-3 top-2 text-gray-500">₦</span>
             <input
               type="number"
-              value={formData.refundAmount}
+              value={formData.amount}
               onChange={(e) =>
-                setFormData({ ...formData, refundAmount: parseFloat(e.target.value) || 0 })
+                setFormData({ ...formData, amount: parseFloat(e.target.value) || 0 })
               }
               min="0"
               max={payment.amount}
@@ -160,24 +162,28 @@ const RefundForm: React.FC<RefundFormProps> = ({
           <label className="block text-sm font-medium text-gray-700 mb-1">
             Refund Method *
           </label>
-          <select
+          <Dropdown
             value={formData.refundMethod}
             onChange={(e) =>
-              setFormData({ ...formData, refundMethod: e.target.value as RefundMethod })
+              setFormData({ ...formData, refundMethod: e.target.value as PaymentMethod })
             }
             required
             className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
           >
-            <option value={RefundMethod.ORIGINAL_PAYMENT_METHOD}>
+            <option value={payment.paymentMethod}>
               Original Payment Method ({payment.paymentMethod.replace('_', ' ')})
             </option>
-            <option value={RefundMethod.CASH}>Cash</option>
-            <option value={RefundMethod.BANK_TRANSFER}>Bank Transfer</option>
-          </select>
+            {payment.paymentMethod !== PaymentMethod.CASH && (
+              <option value={PaymentMethod.CASH}>Cash</option>
+            )}
+            {payment.paymentMethod !== PaymentMethod.BANK_TRANSFER && (
+              <option value={PaymentMethod.BANK_TRANSFER}>Bank Transfer</option>
+            )}
+          </Dropdown>
         </div>
 
         {/* Bank Details (if Bank Transfer selected) */}
-        {formData.refundMethod === RefundMethod.BANK_TRANSFER && (
+        {formData.refundMethod === PaymentMethod.BANK_TRANSFER && (
           <div className="p-4 bg-blue-50 border border-blue-200 rounded-md">
             <p className="text-sm text-blue-800 mb-2">
               Bank transfer refund selected. Please collect patient's bank details:

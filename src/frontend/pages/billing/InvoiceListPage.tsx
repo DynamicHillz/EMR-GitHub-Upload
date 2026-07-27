@@ -53,7 +53,7 @@ const InvoiceListPage: React.FC = () => {
               d="M12 4v16m8-8H4"
             />
           </svg>
-          Create Invoice
+          Custom Charge
         </Link>
       </div>
 

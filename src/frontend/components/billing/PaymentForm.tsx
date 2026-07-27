@@ -3,7 +3,7 @@
  * Record manual and gateway payments for invoices
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   RecordPaymentDto,
   InitiateGatewayPaymentDto,
@@ -12,6 +12,7 @@ import {
   Invoice,
 } from '../../types/billing.types';
 import billingService from '../../services/billing.service';
+import Dropdown from '../common/Dropdown';
 
 interface PaymentFormProps {
   invoice: Invoice;
@@ -35,6 +36,44 @@ const PaymentForm: React.FC<PaymentFormProps> = ({ invoice, onSuccess, onCancel 
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [approverName, setApproverName] = useState('');
+  // Real system-generated receipts now exist, so this requirement is
+  // tenant-configurable rather than always mandatory for cash — defaults
+  // to true (current behavior) until the setting loads.
+  const [requireReceiptPhotoForCash, setRequireReceiptPhotoForCash] = useState(true);
+  // Approval thresholds are tenant-configurable — these defaults match the
+  // schema defaults and only apply until the real settings load.
+  const [approvalThresholds, setApprovalThresholds] = useState({
+    cash: 50000,
+    bankTransfer: 100000,
+    mobileMoney: 75000,
+  });
+
+  useEffect(() => {
+    billingService
+      .getFraudPreventionSettings()
+      .then((settings) => {
+        setRequireReceiptPhotoForCash(settings.requireReceiptPhotoForCash);
+        setApprovalThresholds({
+          cash: settings.cashApprovalThreshold,
+          bankTransfer: settings.bankTransferApprovalThreshold,
+          mobileMoney: settings.mobileMoneyApprovalThreshold,
+        });
+      })
+      .catch(() => {
+        // Keep the safe defaults if the setting can't be fetched
+      });
+  }, []);
+
+  const approvalThresholdForMethod = (method: PaymentMethod): number | null => {
+    if (method === 'CASH') return approvalThresholds.cash;
+    if (method === 'BANK_TRANSFER') return approvalThresholds.bankTransfer;
+    if (method === 'MOBILE_MONEY') return approvalThresholds.mobileMoney;
+    return null;
+  };
+
+  const threshold = approvalThresholdForMethod(manualData.paymentMethod);
+  const requiresApproval = threshold !== null && manualData.amount >= threshold;
 
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat('en-NG', {
@@ -46,10 +85,27 @@ const PaymentForm: React.FC<PaymentFormProps> = ({ invoice, onSuccess, onCancel 
   const handleManualPayment = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+
+    if (manualData.amount <= 0) {
+      setError('Payment amount must be greater than zero.');
+      return;
+    }
+    if (manualData.amount > invoice.balance) {
+      setError(`Payment amount cannot exceed the outstanding balance (${formatCurrency(invoice.balance)}).`);
+      return;
+    }
+    if (requiresApproval && !approverName.trim()) {
+      setError('This payment exceeds the approval threshold — enter the approving supervisor\'s name before recording it.');
+      return;
+    }
+
     setIsSubmitting(true);
 
     try {
-      await billingService.recordPayment(manualData);
+      await billingService.recordPayment({
+        ...manualData,
+        approverName: requiresApproval ? approverName.trim() : undefined,
+      });
       onSuccess?.();
     } catch (err: any) {
       setError(err.response?.data?.message || 'Failed to record payment');
@@ -161,7 +217,7 @@ const PaymentForm: React.FC<PaymentFormProps> = ({ invoice, onSuccess, onCancel 
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Payment Method *
               </label>
-              <select
+              <Dropdown
                 value={manualData.paymentMethod}
                 onChange={(e) =>
                   setManualData({
@@ -176,7 +232,7 @@ const PaymentForm: React.FC<PaymentFormProps> = ({ invoice, onSuccess, onCancel 
                 <option value="BANK_TRANSFER">Bank Transfer</option>
                 <option value="MOBILE_MONEY">Mobile Money</option>
                 <option value="INSURANCE">Insurance</option>
-              </select>
+              </Dropdown>
             </div>
 
             <div>
@@ -229,10 +285,17 @@ const PaymentForm: React.FC<PaymentFormProps> = ({ invoice, onSuccess, onCancel 
               Proof of Payment
             </h3>
 
-            {manualData.paymentMethod === 'CASH' && (
+            {manualData.paymentMethod === 'CASH' && requireReceiptPhotoForCash && (
               <div className="bg-yellow-50 border border-yellow-300 rounded-md p-3 mb-4">
                 <p className="text-sm text-yellow-800">
                   <strong>⚠️ Required:</strong> Cash payments require a receipt photo for verification
+                </p>
+              </div>
+            )}
+            {manualData.paymentMethod === 'CASH' && !requireReceiptPhotoForCash && (
+              <div className="bg-blue-50 border border-blue-200 rounded-md p-3 mb-4">
+                <p className="text-sm text-blue-800">
+                  A system-generated receipt will be available after recording this payment — a photo is optional.
                 </p>
               </div>
             )}
@@ -240,7 +303,7 @@ const PaymentForm: React.FC<PaymentFormProps> = ({ invoice, onSuccess, onCancel 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Receipt Photo URL {manualData.paymentMethod === 'CASH' && <span className="text-red-600">*</span>}
+                  Receipt Photo URL {manualData.paymentMethod === 'CASH' && requireReceiptPhotoForCash && <span className="text-red-600">*</span>}
                 </label>
                 <input
                   type="url"
@@ -248,13 +311,13 @@ const PaymentForm: React.FC<PaymentFormProps> = ({ invoice, onSuccess, onCancel 
                   onChange={(e) =>
                     setManualData({ ...manualData, receiptPhotoUrl: e.target.value })
                   }
-                  required={manualData.paymentMethod === 'CASH'}
+                  required={manualData.paymentMethod === 'CASH' && requireReceiptPhotoForCash}
                   className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
                   placeholder="https://storage.example.com/receipt.jpg"
                 />
                 <p className="text-xs text-gray-500 mt-1">
                   Upload receipt photo and paste URL here
-                  {manualData.paymentMethod === 'CASH' && ' (mandatory for cash)'}
+                  {manualData.paymentMethod === 'CASH' && requireReceiptPhotoForCash && ' (mandatory for cash)'}
                 </p>
               </div>
 
@@ -278,8 +341,10 @@ const PaymentForm: React.FC<PaymentFormProps> = ({ invoice, onSuccess, onCancel 
             </div>
           </div>
 
-          {/* Fraud Prevention Warnings */}
-          {manualData.amount >= 50000 && manualData.paymentMethod === 'CASH' && (
+          {/* Fraud Prevention Warning — real gate, not just a label: the name
+              typed below is required before this form will submit, and the
+              backend enforces the same rule independently. */}
+          {requiresApproval && (
             <div className="bg-orange-50 border border-orange-300 rounded-md p-3">
               <div className="flex items-start">
                 <svg className="w-5 h-5 text-orange-600 mr-2 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -290,26 +355,19 @@ const PaymentForm: React.FC<PaymentFormProps> = ({ invoice, onSuccess, onCancel 
                     Supervisor Approval Required
                   </p>
                   <p className="text-xs text-orange-700 mt-1">
-                    This payment exceeds ₦50,000 and will require supervisor approval before processing.
+                    This payment is at or above the {formatCurrency(threshold || 0)} threshold for {manualData.paymentMethod.replace('_', ' ').toLowerCase()}. Name the approving supervisor to continue.
                   </p>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {manualData.amount >= 100000 && manualData.paymentMethod === 'BANK_TRANSFER' && (
-            <div className="bg-orange-50 border border-orange-300 rounded-md p-3">
-              <div className="flex items-start">
-                <svg className="w-5 h-5 text-orange-600 mr-2 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                </svg>
-                <div className="flex-1">
-                  <p className="text-sm font-medium text-orange-800">
-                    Supervisor Approval Required
-                  </p>
-                  <p className="text-xs text-orange-700 mt-1">
-                    Bank transfers over ₦100,000 require supervisor approval before processing.
-                  </p>
+                  <label className="block text-sm font-medium text-orange-900 mt-3 mb-1">
+                    Approved By *
+                  </label>
+                  <input
+                    type="text"
+                    value={approverName}
+                    onChange={(e) => setApproverName(e.target.value)}
+                    required
+                    className="w-full px-3 py-2 border border-orange-300 rounded-md focus:ring-orange-500 focus:border-orange-500"
+                    placeholder="Supervisor's name"
+                  />
                 </div>
               </div>
             </div>
@@ -360,7 +418,7 @@ const PaymentForm: React.FC<PaymentFormProps> = ({ invoice, onSuccess, onCancel 
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Payment Gateway *
               </label>
-              <select
+              <Dropdown
                 value={gatewayData.gateway}
                 onChange={(e) =>
                   setGatewayData({
@@ -373,7 +431,7 @@ const PaymentForm: React.FC<PaymentFormProps> = ({ invoice, onSuccess, onCancel 
                 <option value="FLUTTERWAVE">Flutterwave</option>
                 <option value="PAYSTACK">Paystack</option>
                 <option value="MONIEPOINT">Moniepoint</option>
-              </select>
+              </Dropdown>
             </div>
 
             <div>

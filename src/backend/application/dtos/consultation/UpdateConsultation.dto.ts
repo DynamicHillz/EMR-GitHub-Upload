@@ -6,6 +6,8 @@
  */
 
 export interface UpdateConsultationDto {
+  version?: number; // expected version, for optimistic-concurrency conflict detection
+
   // SOAP Notes
   subjective?: string;
   objective?: string;
@@ -15,12 +17,16 @@ export interface UpdateConsultationDto {
   // Vital Signs
   bloodPressure?: string;
   heartRate?: number;
+  respiratoryRate?: number;
   temperature?: number;
   weight?: number;
   height?: number;
+  headCircumference?: number;
+  muac?: number;
   spO2?: number;
 
-  // ICD-10 Codes
+  // Diagnoses
+  diagnoses?: { diagnosisId: string; isPrimary: boolean; notes?: string }[];
   icd10Codes?: string[];
 }
 

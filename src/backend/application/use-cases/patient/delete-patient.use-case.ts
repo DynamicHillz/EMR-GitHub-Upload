@@ -21,7 +21,7 @@ export class DeletePatientUseCase {
    * @param tenantId - Tenant ID from authenticated user
    * @throws Error if patient not found
    */
-  async execute(id: string, tenantId: string): Promise<void> {
+  async execute(id: string, tenantId: string, userId?: string): Promise<void> {
     // Verify patient exists
     const patient = await this.patientRepository.findById(id, tenantId);
 
@@ -30,6 +30,6 @@ export class DeletePatientUseCase {
     }
 
     // Soft delete the patient
-    await this.patientRepository.delete(id, tenantId);
+    await this.patientRepository.delete(id, tenantId, userId);
   }
 }

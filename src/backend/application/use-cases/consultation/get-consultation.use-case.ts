@@ -36,15 +36,22 @@ export class GetConsultationUseCase {
       vitalSigns: {
         bloodPressure: entity.bloodPressure,
         heartRate: entity.heartRate,
+        respiratoryRate: entity.respiratoryRate,
         temperature: entity.temperature,
         weight: entity.weight,
         height: entity.height,
+        headCircumference: entity.headCircumference,
+        muac: entity.muac,
         spO2: entity.spO2,
         bmi: entity.bmi,
         bmiCategory: entity.getBMICategory(),
+        zScoreWeightForAge: entity.zScoreWeightForAge,
+        zScoreHeightForAge: entity.zScoreHeightForAge,
+        zScoreWeightForHeight: entity.zScoreWeightForHeight,
+        zScoreBMIForAge: entity.zScoreBMIForAge,
       },
 
-      icd10Codes: entity.getICD10Codes(),
+      diagnoses: entity.getDiagnoses(),
 
       status: entity.status,
       canEdit: entity.canEdit(),
@@ -54,6 +61,9 @@ export class GetConsultationUseCase {
       consultationDate: entity.consultationDate.toISOString(),
       createdAt: entity.createdAt.toISOString(),
       updatedAt: entity.updatedAt.toISOString(),
+      // fromDatabase()/ConsultationEntity don't carry this field through —
+      // read it directly off the repository's mapped result instead.
+      version: (consultation as any).version,
     };
   }
 }

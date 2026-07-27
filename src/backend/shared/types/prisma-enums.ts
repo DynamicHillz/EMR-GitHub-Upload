@@ -112,6 +112,7 @@ export type ServiceCategory =
   | 'MEDICATION'
   | 'PROCEDURE'
   | 'IMAGING'
+  | 'ACCOMMODATION'
   | 'OTHER';
 
 export type DeviceStatus = 'ACTIVE' | 'INACTIVE' | 'BLOCKED';

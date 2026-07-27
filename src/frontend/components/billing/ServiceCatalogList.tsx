@@ -11,6 +11,7 @@ import {
 } from '../../types/billing.types';
 import billingService from '../../services/billing.service';
 import ErrorAlert from '../common/ErrorAlert';
+import Dropdown from '../common/Dropdown';
 
 interface ServiceCatalogListProps {
   onSelectService?: (service: ServiceCatalog) => void;
@@ -128,7 +129,7 @@ const ServiceCatalogList: React.FC<ServiceCatalogListProps> = ({
             className="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
           />
         </div>
-        <select
+        <Dropdown
           value={filters.category || ''}
           onChange={(e) =>
             setFilters({ ...filters, category: e.target.value as ServiceCategory || undefined })
@@ -142,8 +143,8 @@ const ServiceCatalogList: React.FC<ServiceCatalogListProps> = ({
           <option value="PROCEDURE">Procedure</option>
           <option value="IMAGING">Imaging</option>
           <option value="OTHER">Other</option>
-        </select>
-        <select
+        </Dropdown>
+        <Dropdown
           value={filters.isActive === undefined ? '' : filters.isActive.toString()}
           onChange={(e) =>
             setFilters({
@@ -156,7 +157,7 @@ const ServiceCatalogList: React.FC<ServiceCatalogListProps> = ({
           <option value="">All Status</option>
           <option value="true">Active</option>
           <option value="false">Inactive</option>
-        </select>
+        </Dropdown>
       </div>
 
       {/* Error Message */}

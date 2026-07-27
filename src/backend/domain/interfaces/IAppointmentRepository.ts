@@ -107,10 +107,11 @@ export interface IAppointmentRepository {
   /**
    * Delete an appointment (soft delete)
    */
-  delete(id: string, tenantId: string): Promise<void>;
+  delete(id: string, tenantId: string, userId?: string): Promise<void>;
 
   /**
    * Get appointments needing reminders
    */
   findNeedingReminder(hours: number): Promise<Appointment[]>;
+  markReminderSent(id: string, hours: number): Promise<void>;
 }

@@ -27,6 +27,7 @@ export class GetOutstandingInvoicesUseCase {
     const invoices = await this.prisma.invoice.findMany({
       where: {
         tenantId,
+        isDeleted: false,
         paymentStatus: {
           in: ['UNPAID', 'PARTIALLY_PAID']
         },
@@ -63,9 +64,9 @@ export class GetOutstandingInvoicesUseCase {
         patientId: inv.patient.patientId,
         patientName: `${inv.patient.firstName} ${inv.patient.lastName}`,
         patientPhone: inv.patient.phone,
-        totalAmount: inv.totalAmount,
-        paidAmount: inv.paidAmount,
-        balance: inv.balance,
+        totalAmount: Number(inv.totalAmount),
+        paidAmount: Number(inv.paidAmount),
+        balance: Number(inv.balance),
         daysOverdue: daysOverdue > 0 ? daysOverdue : 0,
         status: inv.paymentStatus
       };

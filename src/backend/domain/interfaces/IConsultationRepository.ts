@@ -15,12 +15,23 @@ export interface ConsultationCreateData {
   assessment?: string;
   plan?: string;
   bloodPressure?: string;
+  systolicBP?: number;
+  diastolicBP?: number;
   heartRate?: number;
+  respiratoryRate?: number;
   temperature?: number;
   weight?: number;
   height?: number;
+  headCircumference?: number;
+  muac?: number;
   spO2?: number;
-  icd10Codes?: string[]; // Will be stringified before storage
+
+  zScoreWeightForAge?: number;
+  zScoreHeightForAge?: number;
+  zScoreWeightForHeight?: number;
+  zScoreBMIForAge?: number;
+  diagnoses?: { diagnosisId: string; code?: string; name?: string; type?: string; isPrimary: boolean; notes?: string }[];
+  icd10Codes?: string;
 }
 
 export interface ConsultationUpdateData {
@@ -29,12 +40,23 @@ export interface ConsultationUpdateData {
   assessment?: string;
   plan?: string;
   bloodPressure?: string;
+  systolicBP?: number;
+  diastolicBP?: number;
   heartRate?: number;
+  respiratoryRate?: number;
   temperature?: number;
   weight?: number;
   height?: number;
+  headCircumference?: number;
+  muac?: number;
   spO2?: number;
-  icd10Codes?: string[]; // Will be stringified before storage
+
+  zScoreWeightForAge?: number;
+  zScoreHeightForAge?: number;
+  zScoreWeightForHeight?: number;
+  zScoreBMIForAge?: number;
+  diagnoses?: { diagnosisId: string; code?: string; name?: string; type?: string; isPrimary: boolean; notes?: string }[];
+  icd10Codes?: string;
 }
 
 export interface GetConsultationsOptions {
@@ -83,8 +105,10 @@ export interface IConsultationRepository {
    * Update an existing consultation
    * Returns null if consultation not found
    * Note: Business validation (status checks) should be in use case layer
+   * If expectedVersion is supplied, throws ConflictError on a version mismatch
+   * (used by the offline-sync push path to detect concurrent edits).
    */
-  update(id: string, tenantId: string, data: ConsultationUpdateData): Promise<Consultation | null>;
+  update(id: string, tenantId: string, data: ConsultationUpdateData, expectedVersion?: number): Promise<Consultation | null>;
 
   /**
    * Finalize a consultation (REQ-CLIN-6: Lock consultation)
@@ -104,5 +128,5 @@ export interface IConsultationRepository {
   /**
    * Delete a consultation (soft delete if applicable)
    */
-  delete(id: string, tenantId: string): Promise<void>;
+  delete(id: string, tenantId: string, userId?: string): Promise<void>;
 }

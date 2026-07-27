@@ -8,6 +8,8 @@
 
 import { PrismaClient } from '@prisma/client';
 import { NotFoundError, ValidationError } from '../../../shared/errors/AppError';
+import { matchesDrugClassGroup } from '../../../shared/constants/drug-class-groups';
+import { checkDrugInteractions } from '../../services/drug-interaction-checker.service';
 
 export interface DispenseMedicationDto {
   prescriptionId: string;
@@ -64,6 +66,10 @@ export class DispenseMedicationUseCase {
       throw new ValidationError(`Cannot dispense prescription with status: ${prescription.status}`);
     }
 
+    if (!Number.isInteger(dto.quantityDispensed) || dto.quantityDispensed <= 0) {
+      throw new ValidationError('quantityDispensed must be a positive integer');
+    }
+
     // 2. Verify patient allergies (REQ-PHARM-7)
     const allergyWarnings = this.checkForAllergies(
       prescription.medicationName,
@@ -73,6 +79,24 @@ export class DispenseMedicationUseCase {
     if (allergyWarnings.length > 0) {
       throw new ValidationError(
         `ALLERGY WARNING: Patient is allergic to ${allergyWarnings.join(', ')}. Dispensing blocked.`
+      );
+    }
+
+    // 2.5 Re-check drug interactions at dispense time (REQ-PHARM-6) — this
+    // was previously only checked once, at prescribing time, and only ever
+    // shown to the pharmacist as a UI warning they could click through with
+    // no server-side gate at all. A CRITICAL interaction blocks the same
+    // way an allergy does; lower severities remain advisory in the response.
+    const interactionCheck = await checkDrugInteractions(
+      this.prisma,
+      tenantId,
+      prescription.patientId,
+      prescription.medicationName
+    );
+
+    if (interactionCheck.highestSeverity === 'CRITICAL') {
+      throw new ValidationError(
+        `CRITICAL DRUG INTERACTION: ${interactionCheck.interactionDetails.join('; ')}. Dispensing blocked.`
       );
     }
 
@@ -119,15 +143,20 @@ export class DispenseMedicationUseCase {
         },
       });
 
-      // Deduct quantity from batch (REQ-PHARM-3)
-      await tx.medicationBatch.update({
-        where: { id: dto.batchId },
+      // Deduct quantity from batch (REQ-PHARM-3) — guarded so two concurrent
+      // dispenses against the same batch can't both pass the earlier
+      // findFirst-based check and both decrement past zero.
+      const batchUpdateResult = await tx.medicationBatch.updateMany({
+        where: { id: dto.batchId, tenantId, quantity: { gte: dto.quantityDispensed } },
         data: {
           quantity: {
             decrement: dto.quantityDispensed,
           },
         },
       });
+      if (batchUpdateResult.count === 0) {
+        throw new ValidationError('Insufficient stock — it may have just been dispensed by another pharmacist');
+      }
 
       // Update medication total stock
       await tx.medication.update({
@@ -161,8 +190,8 @@ export class DispenseMedicationUseCase {
       warnings.push('Allergy warning flagged during prescription');
     }
 
-    if (prescription.interactionWarning) {
-      warnings.push('Drug interaction warning flagged');
+    if (interactionCheck.interactionWarning) {
+      warnings.push(...interactionCheck.interactionDetails);
     }
 
     return {
@@ -174,7 +203,7 @@ export class DispenseMedicationUseCase {
       labelUrl: result.dispensingRecord.labelUrl || undefined,
       warnings: {
         allergy: prescription.allergyWarning,
-        interaction: prescription.interactionWarning,
+        interaction: interactionCheck.interactionWarning,
         details: warnings,
       },
     };
@@ -191,8 +220,13 @@ export class DispenseMedicationUseCase {
     allergies.forEach((allergy) => {
       const allergyLower = allergy.toLowerCase();
 
-      // Check if medication name contains allergy or vice versa
-      if (medLower.includes(allergyLower) || allergyLower.includes(medLower)) {
+      // Check if medication name contains allergy or vice versa, or the two
+      // fall in the same curated drug-class group (e.g. Penicillin -> Amoxicillin)
+      if (
+        medLower.includes(allergyLower) ||
+        allergyLower.includes(medLower) ||
+        matchesDrugClassGroup(allergy, medicationName)
+      ) {
         matchingAllergies.push(allergy);
       }
     });

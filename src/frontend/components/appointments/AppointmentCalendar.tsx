@@ -34,6 +34,9 @@ export interface AppointmentEvent {
     status: string;
     appointmentType: string;
     reason?: string;
+    // For optimistic-concurrency checks on offline-queued writes — see
+    // AppointmentsPage.tsx's handleMarkNoShow.
+    version?: number;
   };
 }
 

@@ -9,6 +9,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import authService from '../../services/auth.service';
 import { CreateUserDto } from '../../types/auth.types';
 import ErrorAlert from '../../components/common/ErrorAlert';
+import Dropdown from '../../components/common/Dropdown';
 
 const CreateUserPage: React.FC = () => {
   const navigate = useNavigate();
@@ -158,7 +159,7 @@ const CreateUserPage: React.FC = () => {
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     Role <span className="text-red-500">*</span>
                   </label>
-                  <select
+                  <Dropdown
                     name="role"
                     value={formData.role}
                     onChange={handleInputChange}
@@ -171,7 +172,9 @@ const CreateUserPage: React.FC = () => {
                     <option value="NURSE">Nurse</option>
                     <option value="PHARMACIST">Pharmacist</option>
                     <option value="RECEPTIONIST">Receptionist</option>
-                  </select>
+                    <option value="CASHIER">Cashier</option>
+                    <option value="LAB_TECH">Lab Technician</option>
+                  </Dropdown>
                 </div>
 
                 <div>

@@ -10,7 +10,6 @@
  * - REQ-CLIN-6: Lock finalized consultations
  */
 
-import { logger } from '../../config/logger';
 
 export enum ConsultationStatus {
   DRAFT = 'DRAFT',
@@ -33,22 +32,38 @@ export interface Consultation {
   // Vital Signs (REQ-CLIN-2)
   bloodPressure: string | null;
   heartRate: number | null;
+  respiratoryRate: number | null;
   temperature: number | null;
   weight: number | null;
   height: number | null;
+  headCircumference: number | null;
+  muac: number | null;
   spO2: number | null;
   bmi: number | null;
 
-  // ICD-10 Codes (REQ-CLIN-5)
-  icd10Codes: string | null; // JSON array stored as string
+  // WHO Z-Scores (optional cache)
+  zScoreWeightForAge: number | null;
+  zScoreHeightForAge: number | null;
+  zScoreWeightForHeight: number | null;
+  zScoreBMIForAge: number | null;
+
+  // Diagnoses (ICD-11/10) (REQ-CLIN-5)
+  diagnoses: any[]; // Array of ConsultationDiagnosis
+  icd10Codes?: string[];
 
   // Status (REQ-CLIN-6)
   status: ConsultationStatus;
+  billingStatus: string;
   finalizedAt: Date | null;
 
   consultationDate: Date;
   createdAt: Date;
   updatedAt: Date;
+
+  // Optimistic-concurrency token — callers must echo this back on update so
+  // a stale save (autosave racing a manual save, or two tabs editing the
+  // same consultation) gets a conflict instead of silently overwriting.
+  version?: number;
 }
 
 export class ConsultationEntity implements Consultation {
@@ -63,17 +78,26 @@ export class ConsultationEntity implements Consultation {
     public readonly plan: string | null,
     public readonly bloodPressure: string | null,
     public readonly heartRate: number | null,
+    public readonly respiratoryRate: number | null,
     public readonly temperature: number | null,
     public readonly weight: number | null,
     public readonly height: number | null,
+    public readonly headCircumference: number | null,
+    public readonly muac: number | null,
     public readonly spO2: number | null,
     public readonly bmi: number | null,
-    public readonly icd10Codes: string | null,
+    public readonly zScoreWeightForAge: number | null,
+    public readonly zScoreHeightForAge: number | null,
+    public readonly zScoreWeightForHeight: number | null,
+    public readonly zScoreBMIForAge: number | null,
+    public readonly diagnoses: any[],
     public readonly status: ConsultationStatus,
+    public readonly billingStatus: string,
     public readonly finalizedAt: Date | null,
     public readonly consultationDate: Date,
     public readonly createdAt: Date,
-    public readonly updatedAt: Date
+    public readonly updatedAt: Date,
+    public readonly icd10Codes?: string[]
   ) {}
 
   /**
@@ -149,20 +173,10 @@ export class ConsultationEntity implements Consultation {
   }
 
   /**
-   * Parse ICD-10 codes from JSON string to array
+   * Get formatted diagnoses
    */
-  getICD10Codes(): string[] {
-    if (!this.icd10Codes) {
-      return [];
-    }
-
-    try {
-      const parsed = JSON.parse(this.icd10Codes);
-      return Array.isArray(parsed) ? parsed : [];
-    } catch (error) {
-      logger.error('Error parsing ICD-10 codes:', error);
-      return [];
-    }
+  getDiagnoses(): any[] {
+    return this.diagnoses || [];
   }
 
   /**
@@ -209,19 +223,34 @@ export class ConsultationEntity implements Consultation {
       data.objective,
       data.assessment,
       data.plan,
-      data.bloodPressure,
+      data.bloodPressure || (data.systolicBP && data.diastolicBP ? `${data.systolicBP}/${data.diastolicBP}` : null),
       data.heartRate,
+      data.respiratoryRate,
       data.temperature,
       data.weight,
       data.height,
+      data.headCircumference,
+      data.muac,
       data.spO2,
-      data.bmi,
-      data.icd10Codes,
+      data.bmi !== null ? Number(data.bmi) : null,
+      data.zScoreWeightForAge || null,
+      data.zScoreHeightForAge || null,
+      data.zScoreWeightForHeight || null,
+      data.zScoreBMIForAge || null,
+      Array.isArray(data.diagnoses) ? data.diagnoses.map((d: any) => ({
+        diagnosisId: d.diagnosisId,
+        code: d.diagnosis?.code,
+        name: d.diagnosis?.name,
+        isPrimary: d.isPrimary,
+        notes: d.notes,
+      })) : [],
       data.status as ConsultationStatus,
-      data.finalizedAt,
-      data.consultationDate,
-      data.createdAt,
-      data.updatedAt
+      data.billingStatus || 'UNBILLED',
+      data.finalizedAt ? new Date(data.finalizedAt) : null,
+      data.consultationDate ? new Date(data.consultationDate) : new Date(),
+      data.createdAt ? new Date(data.createdAt) : new Date(),
+      data.updatedAt ? new Date(data.updatedAt) : new Date(),
+      Array.isArray(data.icd10Codes) ? data.icd10Codes : []
     );
   }
 
@@ -240,12 +269,20 @@ export class ConsultationEntity implements Consultation {
       plan: this.plan,
       bloodPressure: this.bloodPressure,
       heartRate: this.heartRate,
+      respiratoryRate: this.respiratoryRate,
       temperature: this.temperature,
       weight: this.weight,
       height: this.height,
+      headCircumference: this.headCircumference,
+      muac: this.muac,
       spO2: this.spO2,
       bmi: this.bmi,
-      icd10Codes: this.icd10Codes,
+      zScoreWeightForAge: this.zScoreWeightForAge,
+      zScoreHeightForAge: this.zScoreHeightForAge,
+      zScoreWeightForHeight: this.zScoreWeightForHeight,
+      zScoreBMIForAge: this.zScoreBMIForAge,
+      icd10Codes: this.icd10Codes ? JSON.stringify(this.icd10Codes) : null,
+      diagnoses: this.diagnoses,
       status: this.status,
       finalizedAt: this.finalizedAt,
       consultationDate: this.consultationDate,

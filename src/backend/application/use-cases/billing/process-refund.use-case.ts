@@ -5,7 +5,7 @@
  */
 
 import { PrismaClient } from '@prisma/client';
-import { NotFoundError, ValidationError } from '../../../shared/errors/AppError';
+import { NotFoundError, ValidationError, ConflictError } from '../../../shared/errors/AppError';
 import { ProcessRefundDto } from '../../dtos/billing/ProcessRefund.dto';
 
 export class ProcessRefundUseCase {
@@ -32,30 +32,13 @@ export class ProcessRefundUseCase {
       throw new ValidationError('Refund must be approved before processing');
     }
 
-    // Calculate invoice amounts
-    const invoice = refund.invoice;
-    const newPaidAmount = invoice.paidAmount - refund.amount;
-    const newBalance = invoice.totalAmount - newPaidAmount;
-
-    let paymentStatus: 'UNPAID' | 'PARTIALLY_PAID' | 'PAID' | 'REFUNDED';
-    let invoiceStatus: 'DRAFT' | 'ISSUED' | 'PAID' | 'PARTIALLY_PAID' | 'CANCELLED' | 'REFUNDED';
-
-    if (newPaidAmount === 0) {
-      paymentStatus = 'REFUNDED';
-      invoiceStatus = 'REFUNDED';
-    } else if (newPaidAmount > 0 && newBalance > 0) {
-      paymentStatus = 'PARTIALLY_PAID';
-      invoiceStatus = 'PARTIALLY_PAID';
-    } else {
-      paymentStatus = 'PAID';
-      invoiceStatus = 'PAID';
-    }
-
-    // Use transaction to ensure atomicity: refund, invoice, and payment updates must all succeed or all fail
+    // Use transaction to ensure atomicity: refund, invoice, and payment updates must all succeed or all fail.
+    // Both the refund's own status transition and the invoice update are
+    // guarded so two concurrent "process this refund" calls (or a refund
+    // racing a payment on the same invoice) can't both apply their delta.
     const result = await this.prisma.$transaction(async (tx) => {
-      // Update refund status
-      const updatedRefund = await tx.refund.update({
-        where: { id: refundId },
+      const refundUpdateResult = await tx.refund.updateMany({
+        where: { id: refundId, tenantId, status: 'APPROVED' },
         data: {
           status: 'COMPLETED',
           referenceNumber: dto.referenceNumber,
@@ -63,9 +46,41 @@ export class ProcessRefundUseCase {
         }
       });
 
-      // Update invoice
-      const updatedInvoice = await tx.invoice.update({
-        where: { id: refund.invoiceId },
+      if (refundUpdateResult.count === 0) {
+        throw new ConflictError('This refund was already processed by another request.');
+      }
+
+      const current = await tx.invoice.findUniqueOrThrow({ where: { id: refund.invoiceId } });
+      const newPaidAmount = Number(current.paidAmount) - Number(refund.amount);
+      const newBalance = Number(current.totalAmount) - newPaidAmount;
+
+      // request-refund only validates a new request against the invoice's
+      // *current* paidAmount, which doesn't move until a refund is actually
+      // processed — so two refund requests can each individually look valid
+      // before either is processed. This is the last line of defense against
+      // that: refuse to let paidAmount go negative no matter how it got here.
+      if (newPaidAmount < 0) {
+        throw new ValidationError(
+          'This refund would exceed the amount actually paid on this invoice — another refund may have already been processed.'
+        );
+      }
+
+      let paymentStatus: 'UNPAID' | 'PARTIALLY_PAID' | 'PAID' | 'REFUNDED';
+      let invoiceStatus: 'DRAFT' | 'ISSUED' | 'PAID' | 'PARTIALLY_PAID' | 'CANCELLED' | 'REFUNDED';
+
+      if (newPaidAmount === 0) {
+        paymentStatus = 'REFUNDED';
+        invoiceStatus = 'REFUNDED';
+      } else if (newPaidAmount > 0 && newBalance > 0) {
+        paymentStatus = 'PARTIALLY_PAID';
+        invoiceStatus = 'PARTIALLY_PAID';
+      } else {
+        paymentStatus = 'PAID';
+        invoiceStatus = 'PAID';
+      }
+
+      const invoiceUpdateResult = await tx.invoice.updateMany({
+        where: { id: refund.invoiceId, paidAmount: current.paidAmount },
         data: {
           paidAmount: newPaidAmount,
           balance: newBalance,
@@ -73,6 +88,10 @@ export class ProcessRefundUseCase {
           status: invoiceStatus
         }
       });
+
+      if (invoiceUpdateResult.count === 0) {
+        throw new ConflictError('This invoice was modified concurrently — please retry.');
+      }
 
       // Update payment status if specific payment was refunded
       if (refund.paymentId) {
@@ -84,19 +103,14 @@ export class ProcessRefundUseCase {
         });
       }
 
+      const updatedRefund = await tx.refund.findUniqueOrThrow({ where: { id: refundId } });
+      const updatedInvoice = await tx.invoice.findUniqueOrThrow({ where: { id: refund.invoiceId } });
       return { updatedRefund, updatedInvoice };
     });
 
     return {
       refund: result.updatedRefund,
-      invoice: {
-        ...invoice,
-        ...result.updatedInvoice,
-        paidAmount: newPaidAmount,
-        balance: newBalance,
-        paymentStatus,
-        status: invoiceStatus
-      }
+      invoice: result.updatedInvoice
     };
   }
 }

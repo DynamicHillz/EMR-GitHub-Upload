@@ -13,6 +13,9 @@ export interface UpdateBillingConfigDto {
   taxName?: string;
   taxId?: string;
 
+  // Pharmacy Pricing
+  defaultMarkupPercent?: number; // Percentage applied to unit cost to suggest a batch selling price
+
   // Payment Methods
   acceptCash?: boolean;
   acceptCard?: boolean;

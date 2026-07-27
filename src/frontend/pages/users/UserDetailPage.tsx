@@ -7,7 +7,8 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import authService from '../../services/auth.service';
-import { User, UpdateUserDto } from '../../types/auth.types';
+import { User, UpdateUserDto, UserSession } from '../../types/auth.types';
+import Dropdown from '../../components/common/Dropdown';
 
 const UserDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -20,6 +21,9 @@ const UserDetailPage: React.FC = () => {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [isEditing, setIsEditing] = useState(false);
+  const [resetPasswordInfo, setResetPasswordInfo] = useState<{ temporaryPassword?: string; note?: string } | null>(null);
+  const [sessions, setSessions] = useState<UserSession[]>([]);
+  const [sessionsLoading, setSessionsLoading] = useState(false);
 
   // Form state
   const [formData, setFormData] = useState<UpdateUserDto>({
@@ -33,8 +37,33 @@ const UserDetailPage: React.FC = () => {
   useEffect(() => {
     if (id) {
       fetchUser();
+      if (hasRole(['SUPER_ADMIN', 'ADMIN'])) {
+        fetchSessions();
+      }
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
+
+  const fetchSessions = async () => {
+    try {
+      setSessionsLoading(true);
+      const response = await authService.listUserSessions(id!);
+      setSessions(response.sessions);
+    } catch (err) {
+      console.error('Fetch sessions error:', err);
+    } finally {
+      setSessionsLoading(false);
+    }
+  };
+
+  const handleRevokeSession = async (sessionId: string) => {
+    try {
+      await authService.revokeUserSession(id!, sessionId);
+      fetchSessions();
+    } catch (err: any) {
+      setError(err.response?.data?.message || 'Failed to revoke session');
+    }
+  };
 
   const fetchUser = async () => {
     try {
@@ -122,7 +151,25 @@ const UserDetailPage: React.FC = () => {
     }
   };
 
-  const canEdit = hasRole(['SUPER_ADMIN', 'ADMIN', 'MANAGER']) || currentUser?.id === id;
+  const handleResetPassword = async () => {
+    if (!window.confirm("Are you sure you want to force-reset this user's password?")) {
+      return;
+    }
+
+    try {
+      setResetPasswordInfo(null);
+      const response = await authService.forceResetPassword(id!);
+      setSuccess(response.message || 'Password force-reset successfully');
+      setResetPasswordInfo({
+        temporaryPassword: response.temporaryPassword,
+        note: response.note,
+      });
+    } catch (err: any) {
+      setError(err.response?.data?.message || 'Failed to force reset password');
+    }
+  };
+
+  const canEdit = hasRole(['SUPER_ADMIN', 'ADMIN']) || currentUser?.id === id;
   const canManage = hasRole(['SUPER_ADMIN', 'ADMIN']);
 
   if (loading) {
@@ -177,6 +224,17 @@ const UserDetailPage: React.FC = () => {
       {success && (
         <div className="mb-6 p-4 bg-green-50 border border-green-200 rounded-lg">
           <p className="text-sm text-green-600">{success}</p>
+        </div>
+      )}
+      {resetPasswordInfo && (
+        <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+          <p className="text-sm font-bold text-blue-800">Temporary Password Generated</p>
+          <p className="text-sm text-blue-600 mt-2">
+            Password: <span className="font-mono bg-blue-100 px-2 py-1 rounded">{resetPasswordInfo.temporaryPassword}</span>
+          </p>
+          {resetPasswordInfo.note && (
+            <p className="text-xs text-blue-500 mt-2 italic">{resetPasswordInfo.note}</p>
+          )}
         </div>
       )}
 
@@ -250,7 +308,7 @@ const UserDetailPage: React.FC = () => {
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Role</label>
                   {isEditing && canManage ? (
-                    <select
+                    <Dropdown
                       name="role"
                       value={formData.role}
                       onChange={handleInputChange}
@@ -261,7 +319,9 @@ const UserDetailPage: React.FC = () => {
                       <option value="NURSE">Nurse</option>
                       <option value="PHARMACIST">Pharmacist</option>
                       <option value="RECEPTIONIST">Receptionist</option>
-                    </select>
+                      <option value="CASHIER">Cashier</option>
+                      <option value="LAB_TECH">Lab Technician</option>
+                    </Dropdown>
                   ) : (
                     <p className="text-gray-900">{user.role}</p>
                   )}
@@ -270,7 +330,7 @@ const UserDetailPage: React.FC = () => {
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
                   {isEditing && canManage ? (
-                    <select
+                    <Dropdown
                       name="status"
                       value={formData.status}
                       onChange={handleInputChange}
@@ -279,7 +339,7 @@ const UserDetailPage: React.FC = () => {
                       <option value="ACTIVE">Active</option>
                       <option value="INACTIVE">Inactive</option>
                       <option value="SUSPENDED">Suspended</option>
-                    </select>
+                    </Dropdown>
                   ) : (
                     <span
                       className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
@@ -346,6 +406,40 @@ const UserDetailPage: React.FC = () => {
             </div>
           </div>
 
+          {/* Active Sessions */}
+          {canManage && (
+            <div className="card">
+              <h2 className="text-lg font-semibold text-gray-900 mb-4">Active Sessions</h2>
+              {sessionsLoading ? (
+                <p className="text-sm text-gray-500">Loading sessions...</p>
+              ) : sessions.length === 0 ? (
+                <p className="text-sm text-gray-500">No active sessions.</p>
+              ) : (
+                <div className="space-y-3">
+                  {sessions.map((session) => (
+                    <div key={session.id} className="flex items-start justify-between gap-3 text-sm border-b border-gray-100 pb-3 last:border-0 last:pb-0">
+                      <div className="min-w-0">
+                        <p className="text-gray-900 truncate" title={session.userAgent || undefined}>
+                          {session.userAgent || 'Unknown device'}
+                        </p>
+                        <p className="text-gray-500">{session.ipAddress || 'Unknown IP'}</p>
+                        <p className="text-xs text-gray-400">
+                          Signed in {new Date(session.createdAt).toLocaleString()} · Expires {new Date(session.expiresAt).toLocaleDateString()}
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => handleRevokeSession(session.id)}
+                        className="text-red-600 hover:text-red-900 text-xs font-medium flex-shrink-0"
+                      >
+                        Revoke
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Actions */}
           {canManage && user.id !== currentUser?.id && (
             <div className="card">
@@ -366,6 +460,11 @@ const UserDetailPage: React.FC = () => {
                     Reactivate User
                   </button>
                 )}
+                <div className="border-t border-gray-200 my-4 pt-4">
+                  <button onClick={handleResetPassword} className="btn w-full bg-blue-600 hover:bg-blue-700 text-white">
+                    Force Reset Password
+                  </button>
+                </div>
               </div>
             </div>
           )}

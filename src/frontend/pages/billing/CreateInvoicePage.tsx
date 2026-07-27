@@ -63,7 +63,7 @@ const CreateInvoicePage: React.FC = () => {
       }
 
       const response = await fetch(
-        `http://localhost:3000/api/patients/search?query=${encodeURIComponent(query)}`,
+        `${window.location.protocol}//${window.location.hostname}:3000/api/patients/search?query=${encodeURIComponent(query)}&lite=true`,
         {
           headers: {
             'Authorization': `Bearer ${token}`,

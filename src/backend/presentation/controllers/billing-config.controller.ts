@@ -37,7 +37,6 @@ export const getBillingConfig = async (req: Request, res: Response) => {
     res.status(500).json({
       success: false,
       message: 'Failed to fetch billing configuration',
-      error: error.message
     });
   }
 };
@@ -105,7 +104,6 @@ export const updateBillingConfig = async (req: Request, res: Response) => {
     res.status(500).json({
       success: false,
       message: 'Failed to update billing configuration',
-      error: error.message
     });
   }
 };

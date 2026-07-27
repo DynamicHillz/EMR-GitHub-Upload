@@ -34,7 +34,11 @@ describe('UpdateConsultationUseCase', () => {
     height: 175,
     spO2: 98,
     bmi: 22.86,
-    icd10Codes: JSON.stringify(['R51']),
+    // The real repository (IConsultationRepository.update/findById) already
+    // parses this into an array before returning — see
+    // consultation.repository.ts's mapToEntity — so the mock must match that
+    // contract rather than returning the raw JSON-string DB column value.
+    icd10Codes: ['R51'],
     status: 'DRAFT',
     consultationDate: new Date(),
     finalizedAt: null,
@@ -91,7 +95,8 @@ describe('UpdateConsultationUseCase', () => {
           subjective: updateDto.subjective,
           assessment: updateDto.assessment,
           plan: updateDto.plan,
-        })
+        }),
+        undefined // updateDto.version — not set in this test's DTO
       );
 
       expect(result).toMatchObject({
@@ -222,7 +227,7 @@ describe('UpdateConsultationUseCase', () => {
       mockConsultationRepository.findById.mockResolvedValue(draftConsultation);
       mockConsultationRepository.update.mockResolvedValue({
         ...draftConsultation,
-        icd10Codes: JSON.stringify(newCodes),
+        icd10Codes: newCodes,
         updatedAt: new Date(),
       });
 

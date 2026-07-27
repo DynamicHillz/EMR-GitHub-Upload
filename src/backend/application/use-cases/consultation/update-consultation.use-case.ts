@@ -38,21 +38,29 @@ export class UpdateConsultationUseCase {
       objective: dto.objective,
       assessment: dto.assessment,
       plan: dto.plan,
-      bloodPressure: dto.bloodPressure,
+      // @ts-ignore - Temporary fix for schema alignment
+      systolicBP: dto.bloodPressure ? parseInt(dto.bloodPressure.split("/")[0]) : undefined,
+      diastolicBP: dto.bloodPressure ? parseInt(dto.bloodPressure.split("/")[1]) : undefined,
       heartRate: dto.heartRate,
+      respiratoryRate: dto.respiratoryRate,
       temperature: dto.temperature,
       weight: dto.weight,
       height: dto.height,
+      headCircumference: dto.headCircumference,
+      muac: dto.muac,
       spO2: dto.spO2,
-      icd10Codes: dto.icd10Codes,
-    });
+      diagnoses: dto.diagnoses,
+      icd10Codes: dto.icd10Codes ? JSON.stringify(dto.icd10Codes) : undefined,
+    }, dto.version);
 
     // 4. Return response DTO
     const updatedEntity = ConsultationEntity.fromDatabase(updated);
-    return this.toResponseDto(updatedEntity);
+    // fromDatabase() doesn't carry `version` through — read it directly off
+    // the repository's mapped result so the caller can save it for the next update.
+    return this.toResponseDto(updatedEntity, (updated as any).version);
   }
 
-  private toResponseDto(consultation: ConsultationEntity): ConsultationResponseDto {
+  private toResponseDto(consultation: ConsultationEntity, version?: number): ConsultationResponseDto {
     return {
       id: consultation.id,
       patientId: consultation.patientId,
@@ -68,15 +76,23 @@ export class UpdateConsultationUseCase {
       vitalSigns: {
         bloodPressure: consultation.bloodPressure,
         heartRate: consultation.heartRate,
+        respiratoryRate: consultation.respiratoryRate,
         temperature: consultation.temperature,
         weight: consultation.weight,
         height: consultation.height,
+        headCircumference: consultation.headCircumference,
+        muac: consultation.muac,
         spO2: consultation.spO2,
         bmi: consultation.bmi,
         bmiCategory: consultation.getBMICategory(),
+        zScoreWeightForAge: consultation.zScoreWeightForAge,
+        zScoreHeightForAge: consultation.zScoreHeightForAge,
+        zScoreWeightForHeight: consultation.zScoreWeightForHeight,
+        zScoreBMIForAge: consultation.zScoreBMIForAge,
       },
 
-      icd10Codes: consultation.getICD10Codes(),
+      diagnoses: consultation.getDiagnoses(),
+      icd10Codes: consultation.icd10Codes,
 
       status: consultation.status,
       canEdit: consultation.canEdit(),
@@ -86,6 +102,7 @@ export class UpdateConsultationUseCase {
       consultationDate: consultation.consultationDate.toISOString(),
       createdAt: consultation.createdAt.toISOString(),
       updatedAt: consultation.updatedAt.toISOString(),
+      version,
     };
   }
 }

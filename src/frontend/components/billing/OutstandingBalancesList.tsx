@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import billingService from '../../services/billing.service';
+import { getErrorMessage } from '../../utils/errorHandler';
 import {
   Invoice,
   AgingAnalysis,
@@ -53,7 +54,7 @@ const OutstandingBalancesList: React.FC<OutstandingBalancesListProps> = ({
       setInvoices(transformedInvoices);
       setAgingAnalysis(aging);
     } catch (err: any) {
-      setError(err.message || 'Failed to load outstanding balances');
+      setError(getErrorMessage(err, 'Failed to load outstanding balances'));
       console.error('Error loading outstanding balances:', err);
     } finally {
       setLoading(false);

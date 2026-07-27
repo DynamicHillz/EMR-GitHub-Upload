@@ -7,6 +7,8 @@
 
 import React, { useState, useEffect } from 'react';
 import { Wifi, WifiOff, RefreshCw } from 'lucide-react';
+import { getAllQueuedWrites } from '../services/offlineQueue';
+import { replayQueuedWrites } from '../services/offlineSync';
 
 interface NetworkStatus {
   online: boolean;
@@ -70,11 +72,6 @@ const NetworkStatusIndicator: React.FC = () => {
       }
     }
   };
-
-  // Don't render in web browser for now (optional)
-  if (!isElectron) {
-    return null;
-  }
 
   return (
     <div
@@ -172,9 +169,31 @@ export const SyncStatusIndicator: React.FC = () => {
   const [syncStatus, setSyncStatus] = useState({
     lastSync: null as Date | null,
     pendingChanges: 0,
-    syncInProgress: false,
+    failedChanges: 0,
+    conflictChanges: 0,
   });
   const [isSyncing, setIsSyncing] = useState(false);
+
+  // Previously this whole component was a no-op in the web app — every
+  // branch below only ever ran `if (electronAvailable)`, so there was no
+  // persistent indication anywhere that an offline write was pending,
+  // failed, or in conflict; a stuck FAILED write (e.g. a phone-number
+  // collision on replay) retried silently every 60s forever with nothing on
+  // screen to notice. getPendingWriteCount/getAllQueuedWrites existed in
+  // offlineQueue.ts specifically for this but were never imported anywhere.
+  const getWebSyncStatus = async () => {
+    try {
+      const all = await getAllQueuedWrites();
+      setSyncStatus((prev) => ({
+        ...prev,
+        pendingChanges: all.filter((w) => w.status === 'PENDING').length,
+        failedChanges: all.filter((w) => w.status === 'FAILED').length,
+        conflictChanges: all.filter((w) => w.status === 'CONFLICT').length,
+      }));
+    } catch (error) {
+      console.error('Error reading offline write queue:', error);
+    }
+  };
 
   useEffect(() => {
     const electronAvailable = typeof window !== 'undefined' && 'electron' in window;
@@ -195,6 +214,14 @@ export const SyncStatusIndicator: React.FC = () => {
       return () => {
         cleanup();
         clearInterval(interval);
+      };
+    } else {
+      getWebSyncStatus();
+      const interval = setInterval(getWebSyncStatus, 10000);
+      window.addEventListener('online', getWebSyncStatus);
+      return () => {
+        clearInterval(interval);
+        window.removeEventListener('online', getWebSyncStatus);
       };
     }
   }, []);
@@ -221,31 +248,45 @@ export const SyncStatusIndicator: React.FC = () => {
       } finally {
         setIsSyncing(false);
       }
+    } else {
+      try {
+        setIsSyncing(true);
+        await replayQueuedWrites();
+        setSyncStatus((prev) => ({ ...prev, lastSync: new Date() }));
+        await getWebSyncStatus();
+      } catch (error) {
+        console.error('Error starting sync:', error);
+      } finally {
+        setIsSyncing(false);
+      }
     }
   };
 
-  const hasPendingChanges = syncStatus.pendingChanges > 0;
+  const hasConflicts = syncStatus.conflictChanges > 0;
+  const hasOutstanding = hasConflicts || syncStatus.pendingChanges > 0 || syncStatus.failedChanges > 0;
 
   return (
     <button
       onClick={handleSyncNow}
       disabled={isSyncing}
       className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-        hasPendingChanges
+        hasConflicts
+          ? 'bg-red-100 text-red-800 hover:bg-red-200 border border-red-200'
+          : hasOutstanding
           ? 'bg-amber-100 text-amber-800 hover:bg-amber-200 border border-amber-200'
           : 'bg-gray-100 text-gray-700 hover:bg-gray-200 border border-gray-200'
       } disabled:opacity-50 disabled:cursor-not-allowed`}
       title={
         syncStatus.lastSync
           ? `Last synced: ${new Date(syncStatus.lastSync).toLocaleString()}`
-          : 'Never synced'
+          : 'Click to sync now'
       }
     >
       <RefreshCw className={`w-4 h-4 ${isSyncing ? 'animate-spin' : ''}`} />
-      {hasPendingChanges ? (
-        <span>
-          {syncStatus.pendingChanges} pending
-        </span>
+      {hasConflicts ? (
+        <span>{syncStatus.conflictChanges} conflict{syncStatus.conflictChanges === 1 ? '' : 's'} — needs review</span>
+      ) : hasOutstanding ? (
+        <span>{syncStatus.pendingChanges + syncStatus.failedChanges} pending</span>
       ) : (
         <span>Synced</span>
       )}

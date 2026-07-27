@@ -16,6 +16,7 @@ import {
   searchPatients,
   getPatientById,
   getPatientByPatientNumber,
+  getPatientClinicalSummary,
   updatePatient,
   deletePatient,
 } from '../controllers/patient.controller';
@@ -24,16 +25,31 @@ const router = Router();
 
 // View patients: ADMIN, DOCTOR, NURSE, LAB_TECH, PHARMACIST, CASHIER, RECEPTIONIST
 const CAN_VIEW_PATIENTS = requireRole([
-  'SUPER_ADMIN', 'ADMIN', 'DOCTOR', 'NURSE', 'PHARMACIST', 'CASHIER', 'RECEPTIONIST',
+  'SUPER_ADMIN', 'ADMIN', 'DOCTOR', 'NURSE', 'LAB_TECH', 'PHARMACIST', 'CASHIER', 'RECEPTIONIST',
 ]);
 
-// Create/update patients: ADMIN, DOCTOR, NURSE, RECEPTIONIST
+// Update patients: ADMIN, DOCTOR, NURSE, RECEPTIONIST (correcting/adding to
+// an existing record is a reasonable admin task)
 const CAN_MANAGE_PATIENTS = requireRole([
   'SUPER_ADMIN', 'ADMIN', 'DOCTOR', 'NURSE', 'RECEPTIONIST',
 ]);
 
+// Register (create) new patients: DOCTOR, NURSE, RECEPTIONIST only — front
+// desk/clinical staff, not admin accounts.
+const CAN_REGISTER_PATIENTS = requireRole(
+  ['DOCTOR', 'NURSE', 'RECEPTIONIST'],
+  'Admin accounts cannot register patients. Please ask a receptionist, nurse, or doctor to complete registration.'
+);
+
 // Delete patients: ADMIN only
 const CAN_DELETE_PATIENTS = requireRole(['SUPER_ADMIN', 'ADMIN']);
+
+// Clinical summary (diagnoses + active prescriptions): clinicians only — this
+// is meaningfully more sensitive than the demographic data CAN_VIEW_PATIENTS
+// otherwise gates, and its only caller is ConsultationModal.tsx (a
+// DOCTOR-only page). CASHIER/RECEPTIONIST/LAB_TECH/PHARMACIST have no
+// legitimate need for a patient's diagnosis history or active medications.
+const CAN_VIEW_CLINICAL_SUMMARY = requireRole(['SUPER_ADMIN', 'ADMIN', 'DOCTOR', 'NURSE']);
 
 router.get(
   '/search',
@@ -49,6 +65,12 @@ router.get(
 );
 
 router.get(
+  '/:id/clinical-summary',
+  CAN_VIEW_CLINICAL_SUMMARY,
+  asyncHandler(getPatientClinicalSummary)
+);
+
+router.get(
   '/:id',
   CAN_VIEW_PATIENTS,
   asyncHandler(getPatientById)
@@ -56,7 +78,7 @@ router.get(
 
 router.post(
   '/',
-  CAN_MANAGE_PATIENTS,
+  CAN_REGISTER_PATIENTS,
   validateRequest(createPatientSchema, 'body'),
   asyncHandler(registerPatient)
 );

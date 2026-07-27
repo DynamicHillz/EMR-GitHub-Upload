@@ -23,11 +23,11 @@ import {
 
 const router = Router();
 
-// View consultations: ADMIN, DOCTOR, NURSE
-const CAN_VIEW = requireRole(['SUPER_ADMIN', 'ADMIN', 'DOCTOR', 'NURSE']);
+// View consultations: ADMIN, DOCTOR, NURSE, CASHIER
+const CAN_VIEW = requireRole(['SUPER_ADMIN', 'ADMIN', 'DOCTOR', 'NURSE', 'CASHIER']);
 
-// Create/update/finalize consultations: ADMIN, DOCTOR only
-const CAN_MANAGE = requireRole(['SUPER_ADMIN', 'ADMIN', 'DOCTOR']);
+// Create/update/finalize consultations: DOCTOR only
+const CAN_MANAGE = requireRole(['DOCTOR']);
 
 // Delete: ADMIN only
 const ADMIN_ONLY = requireRole(['SUPER_ADMIN', 'ADMIN']);
@@ -55,14 +55,14 @@ router.delete('/:id', ADMIN_ONLY, asyncHandler(deleteConsultation));
 // Prescriptions from consultation: DOCTOR only
 router.post(
   '/:id/prescriptions',
-  requireRole(['SUPER_ADMIN', 'ADMIN', 'DOCTOR']),
+  requireRole(['DOCTOR']),
   asyncHandler(createPrescription)
 );
 
-// Lab test ordering from consultation: ADMIN, DOCTOR
+// Lab test ordering from consultation: DOCTOR only
 router.post(
   '/:id/lab-tests',
-  requireRole(['SUPER_ADMIN', 'ADMIN', 'DOCTOR']),
+  requireRole(['DOCTOR']),
   asyncHandler(orderLabTest)
 );
 

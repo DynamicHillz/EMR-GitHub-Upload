@@ -35,14 +35,14 @@ async function checkDatabaseConnection() {
     // Step 3: Verify critical tables exist
     console.log('3. Verifying critical tables...');
     const tables = [
-      'Tenant',
-      'User',
-      'Patient',
-      'Appointment',
-      'Consultation',
-      'Invoice',
-      'Payment',
-      'AuditLog',
+      'tenants',
+      'users',
+      'patients',
+      'appointments',
+      'consultations',
+      'invoices',
+      'payments',
+      'audit_logs',
     ];
 
     for (const table of tables) {

@@ -7,6 +7,7 @@
 import React, { useState, useEffect } from 'react';
 import { Package, AlertTriangle, Plus, Calendar, TrendingDown } from 'lucide-react';
 import AddBatchModal from '../components/pharmacy/AddBatchModal';
+import { formatDate } from '../utils/formatters';
 
 interface Batch {
   id: string;
@@ -39,7 +40,7 @@ const InventoryPage: React.FC = () => {
   const fetchInventory = async () => {
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch('http://localhost:3000/api/pharmacy/inventory', {
+      const response = await fetch(`${window.location.protocol}//${window.location.hostname}:3000/api/pharmacy/inventory`, {
         headers: {
           Authorization: `Bearer ${token}`,
         },
@@ -57,7 +58,7 @@ const InventoryPage: React.FC = () => {
   };
 
   const formatExpiryDate = (dateString: string, daysUntilExpiry: number) => {
-    const date = new Date(dateString).toLocaleDateString();
+    const date = formatDate(dateString);
 
     if (daysUntilExpiry < 0) {
       return <span className="text-red-600 font-semibold">Expired ({date})</span>;

@@ -29,7 +29,7 @@ const createConsultationUseCase = new CreateConsultationUseCase(
 const updateConsultationUseCase = new UpdateConsultationUseCase(consultationRepository);
 const finalizeConsultationUseCase = new FinalizeConsultationUseCase(consultationRepository);
 const getConsultationUseCase = new GetConsultationUseCase(consultationRepository);
-const getPatientConsultationsUseCase = new GetPatientConsultationsUseCase(consultationRepository);
+const getPatientConsultationsUseCase = new GetPatientConsultationsUseCase(prisma);
 const createPrescriptionUseCase = new CreatePrescriptionUseCase(prisma, patientRepository);
 const orderLabTestUseCase = new OrderLabTestUseCase(prisma, patientRepository);
 
@@ -50,7 +50,7 @@ export const createConsultation = async (req: Request, res: Response) => {
       });
     }
 
-    const consultation = await createConsultationUseCase.execute(req.body, tenantId);
+    const consultation = await createConsultationUseCase.execute(req.body, tenantId, req.user);
 
     return res.status(201).json({
       success: true,
@@ -70,7 +70,6 @@ export const createConsultation = async (req: Request, res: Response) => {
     return res.status(500).json({
       success: false,
       message: 'Failed to create consultation',
-      error: error.message,
     });
   }
 };
@@ -118,10 +117,9 @@ export const updateConsultation = async (req: Request, res: Response) => {
       });
     }
 
-    return res.status(500).json({
+    return res.status(error.statusCode || 500).json({
       success: false,
-      message: 'Failed to update consultation',
-      error: error.message,
+      message: error.statusCode ? error.message : 'Failed to update consultation',
     });
   }
 };
@@ -170,7 +168,6 @@ export const finalizeConsultation = async (req: Request, res: Response) => {
     return res.status(500).json({
       success: false,
       message: 'Failed to finalize consultation',
-      error: error.message,
     });
   }
 };
@@ -211,7 +208,6 @@ export const getConsultationById = async (req: Request, res: Response) => {
     return res.status(500).json({
       success: false,
       message: 'Failed to get consultation',
-      error: error.message,
     });
   }
 };
@@ -234,7 +230,6 @@ export const getPatientConsultations = async (req: Request, res: Response) => {
 
     const { patientId } = req.params;
     const limit = req.query.limit ? parseInt(req.query.limit as string) : undefined;
-
     const consultations = await getPatientConsultationsUseCase.execute(
       patientId,
       tenantId,
@@ -252,7 +247,6 @@ export const getPatientConsultations = async (req: Request, res: Response) => {
     return res.status(500).json({
       success: false,
       message: 'Failed to get patient consultations',
-      error: error.message,
     });
   }
 };
@@ -273,8 +267,9 @@ export const deleteConsultation = async (req: Request, res: Response) => {
     }
 
     const { id } = req.params;
+    const userId = req.user?.id;
 
-    await consultationRepository.delete(id, tenantId);
+    await consultationRepository.delete(id, tenantId, userId);
 
     return res.status(200).json({
       success: true,
@@ -293,7 +288,6 @@ export const deleteConsultation = async (req: Request, res: Response) => {
     return res.status(500).json({
       success: false,
       message: 'Failed to delete consultation',
-      error: error.message,
     });
   }
 };
@@ -357,7 +351,6 @@ export const createPrescription = async (req: Request, res: Response) => {
     return res.status(500).json({
       success: false,
       message: 'Failed to create prescription',
-      error: error.message,
     });
   }
 };
@@ -410,7 +403,6 @@ export const orderLabTest = async (req: Request, res: Response) => {
     return res.status(500).json({
       success: false,
       message: 'Failed to order lab test',
-      error: error.message,
     });
   }
 };

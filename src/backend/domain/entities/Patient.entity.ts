@@ -21,6 +21,7 @@ export class PatientEntity {
     public readonly address: string | null,
     public readonly city: string | null,
     public readonly state: string | null,
+    public readonly lga: string | null,
     public readonly country: string,
     public readonly nationality: string | null,
     public readonly occupation: string | null,
@@ -28,10 +29,14 @@ export class PatientEntity {
     public readonly bloodGroup: string | null,
     public readonly genotype: string | null,
     public readonly allergies: string[],
+    public readonly patientAllergies: any[],
     public readonly chronicConditions: string[],
     public readonly pastSurgicalHistory: string | null,
     public readonly emergencyContact: EmergencyContact | null,
     public readonly nhisNumber: string | null,
+    public readonly patientType: 'PRIVATE' | 'HMO',
+    public readonly hmoProvider: string | null,
+    public readonly hmoNumber: string | null,
     public readonly photoUrl: string | null,
     public readonly consentGiven: boolean, // US-PAT-006: Consent tracking
     public readonly consentDate: Date | null,
@@ -39,7 +44,8 @@ export class PatientEntity {
     public readonly status: PatientStatus,
     public readonly createdAt: Date,
     public readonly updatedAt: Date,
-    public readonly deletedAt: Date | null
+    public readonly deletedAt: Date | null,
+    public readonly version: number = 1
   ) {}
 
   /**
@@ -137,6 +143,14 @@ export class PatientEntity {
    * Create a new patient entity from database record
    */
   static fromDatabase(data: any): PatientEntity {
+    let parsedEmergencyContact = data.emergencyContact;
+    if (typeof data.emergencyContact === 'string') {
+      try {
+        parsedEmergencyContact = JSON.parse(data.emergencyContact);
+      } catch (e) {
+        // Ignore
+      }
+    }
     return new PatientEntity(
       data.id,
       data.tenantId,
@@ -150,6 +164,7 @@ export class PatientEntity {
       data.address,
       data.city,
       data.state,
+      data.lga,
       data.country,
       data.nationality,
       data.occupation,
@@ -157,10 +172,14 @@ export class PatientEntity {
       data.bloodGroup,
       data.genotype,
       data.allergies,
+      data.PatientAllergy || [],
       data.chronicConditions,
       data.pastSurgicalHistory,
-      data.emergencyContact,
+      parsedEmergencyContact,
       data.nhisNumber,
+      data.patientType || 'PRIVATE',
+      data.hmoProvider || null,
+      data.hmoNumber || null,
       data.photoUrl,
       data.consentGiven || false, // US-PAT-006: Default to false if not provided
       data.consentDate || null,
@@ -168,7 +187,8 @@ export class PatientEntity {
       data.status,
       data.createdAt,
       data.updatedAt,
-      data.deletedAt
+      data.deletedAt,
+      data.version ?? 1
     );
   }
 }

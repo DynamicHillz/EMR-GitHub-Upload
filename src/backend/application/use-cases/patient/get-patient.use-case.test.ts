@@ -27,7 +27,7 @@ describe('GetPatientUseCase', () => {
     phone: '+2348012345678',
     email: 'john.doe@example.com',
     address: '123 Test Street, Lagos',
-    bloodGroup: 'O+' as const,
+    bloodGroup: 'O_POSITIVE' as const,
     genotype: 'AA' as const,
     allergies: ['Penicillin'],
     chronicConditions: ['Hypertension'],

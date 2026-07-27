@@ -1,14 +1,44 @@
 import { Router, Request, Response } from 'express';
 import { asyncHandler } from '../middleware/errorHandler';
 
+import { prisma } from '../../infrastructure/database/prisma.client';
+import { authenticate } from '../middleware/auth.middleware';
+import { requireRole } from '../middleware/auth';
+import { getPrescriptions, createPrescription, checkInteractions } from '../controllers/prescription.controller';
+
 const router = Router();
 
-router.get('/', asyncHandler(async (_req: Request, res: Response) => {
-  res.json({ message: 'List prescriptions - To be implemented' });
+router.use(authenticate);
+
+// Prescribing is a clinical act — DOCTOR only, matching the same restriction
+// already enforced on the consultation-scoped prescription route.
+const CAN_PRESCRIBE = requireRole(['DOCTOR']);
+const CAN_VIEW_PRESCRIPTIONS = requireRole(['SUPER_ADMIN', 'ADMIN', 'DOCTOR', 'NURSE', 'PHARMACIST']);
+
+router.get('/patient/:patientId', CAN_VIEW_PRESCRIPTIONS, asyncHandler(async (req: Request, res: Response) => {
+  const { patientId } = req.params;
+  const tenantId = req.user?.tenantId;
+
+  if (!tenantId) {
+    res.status(401).json({ message: 'Unauthorized' });
+    return;
+  }
+
+  const prescriptions = await prisma.prescription.findMany({
+    where: { patientId, tenantId },
+    orderBy: { createdAt: 'desc' }
+  });
+
+  res.json({
+    message: 'Prescriptions fetched successfully',
+    data: prescriptions
+  });
 }));
 
-router.post('/', asyncHandler(async (_req: Request, res: Response) => {
-  res.json({ message: 'Create prescription - To be implemented' });
-}));
+router.get('/check-interactions', CAN_VIEW_PRESCRIPTIONS, asyncHandler(checkInteractions));
+
+router.get('/', CAN_VIEW_PRESCRIPTIONS, asyncHandler(getPrescriptions));
+
+router.post('/', CAN_PRESCRIBE, asyncHandler(createPrescription));
 
 export default router;

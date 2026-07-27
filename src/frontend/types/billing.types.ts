@@ -110,11 +110,16 @@ export interface UpdateServiceDto {
 
 export interface InvoiceLineItem {
   id?: string;
+  serviceCode?: string;
   description: string;
   quantity: number;
   unitPrice: number;
   tax: number;
+  taxAmount?: number;
   total: number;
+  subtotal?: number;
+  insuranceCoverage?: number;
+  patientOutOfPocket?: number;
 }
 
 export interface Invoice {
@@ -133,11 +138,13 @@ export interface Invoice {
   status: InvoiceStatus;
   paymentStatus: PaymentStatus;
   notes?: string;
+  version?: number;
   createdAt: string;
   updatedAt: string;
   lineItems?: InvoiceLineItem[];
   patient?: {
     id: string;
+    patientId?: string;
     firstName: string;
     lastName: string;
     email?: string;
@@ -162,6 +169,9 @@ export interface UpdateInvoiceDto {
   dueDate?: string;
   discount?: number;
   notes?: string;
+  // Expected version for optimistic-concurrency conflict detection — also
+  // used as offlineFetch's baseVersion when this update is queued offline.
+  version?: number;
 }
 
 // ============================================
@@ -216,6 +226,7 @@ export interface RecordPaymentDto {
   // Fraud prevention fields
   receiptPhotoUrl?: string;      // Photo of physical receipt (required for cash)
   proofDocumentUrl?: string;     // Additional proof document (bank slip, etc.)
+  approverName?: string;         // Required above the cash/transfer threshold — who authorized it
 }
 
 export interface InitiateGatewayPaymentDto {

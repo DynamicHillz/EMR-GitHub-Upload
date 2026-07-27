@@ -4,10 +4,11 @@ import billingService from '../../services/billing.service';
 import {
   Refund,
   RefundStatus,
-  RefundMethod,
   RefundFilters,
 } from '../../types/billing.types';
 import ErrorAlert from '../common/ErrorAlert';
+import Dropdown from '../common/Dropdown';
+import { getErrorMessage } from '../../utils/errorHandler';
 
 interface RefundListProps {
   onApprove?: (refund: Refund) => void;
@@ -23,7 +24,7 @@ const RefundList: React.FC<RefundListProps> = ({ onApprove, onReject }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedRefund, setSelectedRefund] = useState<Refund | null>(null);
   const [showApprovalModal, setShowApprovalModal] = useState(false);
-  const [approvalAction, setApprovalAction] = useState<'approve' | 'reject' | null>(null);
+  const [approvalAction, setApprovalAction] = useState<'approve' | 'reject' | 'process' | null>(null);
   const [rejectionReason, setRejectionReason] = useState('');
   const [actionLoading, setActionLoading] = useState(false);
 
@@ -38,7 +39,7 @@ const RefundList: React.FC<RefundListProps> = ({ onApprove, onReject }) => {
       const data = await billingService.getRefunds(filters);
       setRefunds(data);
     } catch (err: any) {
-      setError(err.message || 'Failed to load refunds');
+      setError(getErrorMessage(err, 'Failed to load refunds'));
       console.error('Error loading refunds:', err);
     } finally {
       setLoading(false);
@@ -58,6 +59,12 @@ const RefundList: React.FC<RefundListProps> = ({ onApprove, onReject }) => {
     setShowApprovalModal(true);
   };
 
+  const handleProcessClick = (refund: Refund) => {
+    setSelectedRefund(refund);
+    setApprovalAction('process');
+    setShowApprovalModal(true);
+  };
+
   const handleConfirmAction = async () => {
     if (!selectedRefund || !approvalAction) return;
 
@@ -66,16 +73,19 @@ const RefundList: React.FC<RefundListProps> = ({ onApprove, onReject }) => {
       setActionError('');
 
       if (approvalAction === 'approve') {
-        await billingService.approveRefund(selectedRefund.id);
+        await billingService.approveRefund(selectedRefund.id, {});
         onApprove?.(selectedRefund);
-      } else {
+      } else if (approvalAction === 'reject') {
         if (!rejectionReason.trim()) {
           setActionError('Please provide a reason for rejection');
           setActionLoading(false);
           return;
         }
-        await billingService.rejectRefund(selectedRefund.id, rejectionReason);
+        await billingService.rejectRefund(selectedRefund.id, { rejectionReason });
         onReject?.(selectedRefund);
+      } else {
+        // process — money actually leaves at this step
+        await billingService.processRefund(selectedRefund.id);
       }
 
       setShowApprovalModal(false);
@@ -84,7 +94,7 @@ const RefundList: React.FC<RefundListProps> = ({ onApprove, onReject }) => {
       setRejectionReason('');
       loadRefunds();
     } catch (err: any) {
-      setActionError(err.message || `Failed to ${approvalAction} refund`);
+      setActionError(err.response?.data?.message || getErrorMessage(err, `Failed to ${approvalAction} refund`));
     } finally {
       setActionLoading(false);
     }
@@ -126,16 +136,17 @@ const RefundList: React.FC<RefundListProps> = ({ onApprove, onReject }) => {
     if (!searchTerm) return true;
     const term = searchTerm.toLowerCase();
     return (
-      refund.payment?.referenceNumber?.toLowerCase().includes(term) ||
-      refund.payment?.invoice?.invoiceNumber?.toLowerCase().includes(term) ||
-      refund.payment?.invoice?.patient?.firstName?.toLowerCase().includes(term) ||
-      refund.payment?.invoice?.patient?.lastName?.toLowerCase().includes(term)
+      refund.referenceNumber?.toLowerCase().includes(term) ||
+      refund.invoice?.invoiceNumber?.toLowerCase().includes(term) ||
+      refund.patient?.firstName?.toLowerCase().includes(term) ||
+      refund.patient?.lastName?.toLowerCase().includes(term)
     );
   });
 
   const pendingRefunds = filteredRefunds.filter((r) => r.status === 'PENDING');
+  const approvedRefunds = filteredRefunds.filter((r) => r.status === 'APPROVED');
   const totalRefundAmount = filteredRefunds.reduce(
-    (sum, refund) => sum + refund.refundAmount,
+    (sum, refund) => sum + refund.amount,
     0
   );
 
@@ -185,7 +196,7 @@ const RefundList: React.FC<RefundListProps> = ({ onApprove, onReject }) => {
             <label className="block text-sm font-medium text-gray-700 mb-1">
               Status
             </label>
-            <select
+            <Dropdown
               value={filters.status || ''}
               onChange={(e) =>
                 setFilters({
@@ -201,7 +212,7 @@ const RefundList: React.FC<RefundListProps> = ({ onApprove, onReject }) => {
               <option value="REJECTED">Rejected</option>
               <option value="COMPLETED">Completed</option>
               <option value="CANCELLED">Cancelled</option>
-            </select>
+            </Dropdown>
           </div>
 
           {/* Clear Filters */}
@@ -220,7 +231,7 @@ const RefundList: React.FC<RefundListProps> = ({ onApprove, onReject }) => {
       </div>
 
       {/* Summary Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <div className="bg-white rounded-lg shadow p-4">
           <div className="text-sm text-gray-600 mb-1">Total Refunds</div>
           <div className="text-2xl font-bold text-gray-900">
@@ -231,6 +242,12 @@ const RefundList: React.FC<RefundListProps> = ({ onApprove, onReject }) => {
           <div className="text-sm text-gray-600 mb-1">Pending Approval</div>
           <div className="text-2xl font-bold text-yellow-600">
             {pendingRefunds.length}
+          </div>
+        </div>
+        <div className="bg-white rounded-lg shadow p-4">
+          <div className="text-sm text-gray-600 mb-1">Awaiting Processing</div>
+          <div className="text-2xl font-bold text-blue-600">
+            {approvedRefunds.length}
           </div>
         </div>
         <div className="bg-white rounded-lg shadow p-4">
@@ -300,42 +317,36 @@ const RefundList: React.FC<RefundListProps> = ({ onApprove, onReject }) => {
                 {filteredRefunds.map((refund) => (
                   <tr key={refund.id} className="hover:bg-gray-50">
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {formatDate(refund.requestDate)}
+                      {formatDate(refund.requestedAt)}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="text-sm">
-                        {refund.payment?.referenceNumber && (
+                        {refund.referenceNumber && (
                           <div className="font-medium text-gray-900">
-                            Ref: {refund.payment.referenceNumber}
+                            Ref: {refund.referenceNumber}
                           </div>
                         )}
-                        {refund.payment?.invoice?.invoiceNumber && (
+                        {refund.invoice?.invoiceNumber && (
                           <Link
-                            to={`/billing/invoices/${refund.payment.invoiceId}`}
+                            to={`/billing/invoices/${refund.invoiceId}`}
                             className="text-blue-600 hover:text-blue-800 text-xs"
                           >
-                            {refund.payment.invoice.invoiceNumber}
+                            {refund.invoice.invoiceNumber}
                           </Link>
                         )}
                       </div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
-                      {refund.payment?.invoice?.patient ? (
-                        <div>
-                          <div className="text-sm font-medium text-gray-900">
-                            {refund.payment.invoice.patient.firstName}{' '}
-                            {refund.payment.invoice.patient.lastName}
-                          </div>
-                          <div className="text-xs text-gray-500">
-                            {refund.payment.invoice.patient.phone}
-                          </div>
+                      {refund.patient ? (
+                        <div className="text-sm font-medium text-gray-900">
+                          {refund.patient.firstName} {refund.patient.lastName}
                         </div>
                       ) : (
                         <span className="text-sm text-gray-500">-</span>
                       )}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-right text-red-600">
-                      {formatCurrency(refund.refundAmount)}
+                      {formatCurrency(refund.amount)}
                     </td>
                     <td className="px-6 py-4 text-sm text-gray-900 max-w-xs truncate">
                       {refund.reason}
@@ -395,6 +406,15 @@ const RefundList: React.FC<RefundListProps> = ({ onApprove, onReject }) => {
                           </button>
                         </div>
                       )}
+                      {refund.status === 'APPROVED' && (
+                        <button
+                          onClick={() => handleProcessClick(refund)}
+                          className="text-blue-600 hover:text-blue-900 text-xs font-medium px-2 py-1 border border-blue-300 rounded"
+                          title="Process Refund — money leaves at this step"
+                        >
+                          Process Refund
+                        </button>
+                      )}
                       {refund.status === 'REJECTED' && refund.rejectionReason && (
                         <div className="text-xs text-red-600 max-w-xs truncate">
                           {refund.rejectionReason}
@@ -414,8 +434,13 @@ const RefundList: React.FC<RefundListProps> = ({ onApprove, onReject }) => {
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg shadow-xl p-6 max-w-md w-full mx-4">
             <h3 className="text-lg font-bold text-gray-900 mb-4">
-              {approvalAction === 'approve' ? 'Approve Refund' : 'Reject Refund'}
+              {approvalAction === 'approve' ? 'Approve Refund' : approvalAction === 'reject' ? 'Reject Refund' : 'Process Refund'}
             </h3>
+            {approvalAction === 'process' && (
+              <p className="text-sm text-gray-600 mb-4">
+                This is the final step — confirming will mark the refund as completed. Make sure the money has actually been returned to the patient before confirming.
+              </p>
+            )}
 
             {/* Action Error Alert */}
             {actionError && (
@@ -433,7 +458,7 @@ const RefundList: React.FC<RefundListProps> = ({ onApprove, onReject }) => {
                 <div>
                   <span className="text-gray-600">Amount:</span>{' '}
                   <span className="font-medium">
-                    {formatCurrency(selectedRefund.refundAmount)}
+                    {formatCurrency(selectedRefund.amount)}
                   </span>
                 </div>
                 <div>
@@ -478,14 +503,18 @@ const RefundList: React.FC<RefundListProps> = ({ onApprove, onReject }) => {
                 className={`px-4 py-2 text-white rounded-md transition-colors disabled:opacity-50 ${
                   approvalAction === 'approve'
                     ? 'bg-green-600 hover:bg-green-700'
-                    : 'bg-red-600 hover:bg-red-700'
+                    : approvalAction === 'reject'
+                    ? 'bg-red-600 hover:bg-red-700'
+                    : 'bg-blue-600 hover:bg-blue-700'
                 }`}
               >
                 {actionLoading
                   ? 'Processing...'
                   : approvalAction === 'approve'
                   ? 'Approve'
-                  : 'Reject'}
+                  : approvalAction === 'reject'
+                  ? 'Reject'
+                  : 'Confirm Processed'}
               </button>
             </div>
           </div>

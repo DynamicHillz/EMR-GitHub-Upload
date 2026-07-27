@@ -42,8 +42,8 @@ export class GetServiceCatalogUseCase {
       serviceName: service.serviceName,
       description: service.description || undefined,
       category: service.category,
-      basePrice: service.basePrice,
-      taxRate: service.taxRate,
+      basePrice: Number(service.basePrice),
+      taxRate: Number(service.taxRate),
       isActive: service.isActive
     }));
   }
@@ -64,8 +64,8 @@ export class GetServiceCatalogUseCase {
       serviceName: service.serviceName,
       description: service.description || undefined,
       category: service.category,
-      basePrice: service.basePrice,
-      taxRate: service.taxRate,
+      basePrice: Number(service.basePrice),
+      taxRate: Number(service.taxRate),
       isActive: service.isActive
     }));
   }

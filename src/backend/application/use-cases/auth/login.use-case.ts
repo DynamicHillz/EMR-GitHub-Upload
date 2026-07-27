@@ -14,8 +14,23 @@ import { logger } from '../../../config/logger';
 export class LoginUseCase {
   constructor(private prisma: PrismaClient) {}
 
-  async execute(dto: LoginUserDto, tenantId: string): Promise<LoginUserResponseDto> {
+  async execute(dto: LoginUserDto, tenantId: string, requestMeta?: { ipAddress?: string; userAgent?: string }): Promise<LoginUserResponseDto> {
     try {
+      // Reject login for a suspended/inactive clinic before even looking up
+      // the user — Tenant.status existed in the schema but was never
+      // enforced anywhere, making the SUPER_ADMIN "suspend a clinic" action
+      // a no-op. Message deliberately contains "suspended"/"inactive" so
+      // auth.controller.ts's existing substring check maps it to a 403.
+      const tenant = await this.prisma.tenant.findUnique({
+        where: { id: tenantId },
+        select: { status: true },
+      });
+
+      if (tenant && tenant.status !== 'ACTIVE') {
+        logger.warn(`Login attempt for ${tenant.status} tenant ${tenantId}`);
+        throw new Error(`This clinic account is ${tenant.status.toLowerCase()}. Please contact support.`);
+      }
+
       // Find user by email and tenant
       const user = await this.prisma.user.findUnique({
         where: {
@@ -79,7 +94,7 @@ export class LoginUseCase {
             },
           });
 
-          const remainingAttempts = UserService.shouldLockAccount(0) ? 5 - newFailedAttempts : 0;
+          const remainingAttempts = 5 - newFailedAttempts;
           logger.warn(
             `Failed login attempt for ${user.email}. Attempts: ${newFailedAttempts}. Remaining: ${remainingAttempts}`
           );
@@ -99,6 +114,11 @@ export class LoginUseCase {
         },
       });
 
+      // Check if password has expired
+      const passwordExpired = UserService.isPasswordExpired(
+        (user as any).passwordChangedAt || null
+      );
+
       // Generate tokens
       const accessToken = TokenService.generateAccessToken({
         id: user.id,
@@ -117,6 +137,8 @@ export class LoginUseCase {
             userId: user.id,
             token: refreshToken,
             expiresAt,
+            ipAddress: requestMeta?.ipAddress,
+            userAgent: requestMeta?.userAgent,
           },
         });
       }
@@ -146,6 +168,8 @@ export class LoginUseCase {
           lastName: user.lastName,
           role: user.role,
           tenantId: user.tenantId,
+          // @ts-ignore - Temporary fix for schema alignment
+          requirePasswordChange: user.requirePasswordChange || passwordExpired,
         },
         accessToken,
         refreshToken,

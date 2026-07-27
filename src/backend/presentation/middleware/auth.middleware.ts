@@ -56,12 +56,22 @@ export const authenticate = async (req: Request, res: Response, next: NextFuncti
         tenantId: true,
         status: true,
         lockedUntil: true,
+        tenant: { select: { status: true } },
       },
     });
 
     if (!user) {
       return res.status(401).json({
         message: 'User not found',
+      });
+    }
+
+    // A suspended/inactive clinic must be cut off immediately — see auth.ts
+    // for the identical check on the other auth stack, and login.use-case.ts
+    // for the same gate at login time.
+    if (user.tenant && user.tenant.status !== 'ACTIVE') {
+      return res.status(403).json({
+        message: `This clinic account is ${user.tenant.status.toLowerCase()}. Please contact support.`,
       });
     }
 

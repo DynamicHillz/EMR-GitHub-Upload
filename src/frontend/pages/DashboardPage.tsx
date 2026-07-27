@@ -1,12 +1,15 @@
 import React, { useState, useEffect } from 'react';
-import { Users, Calendar, TestTube, Receipt } from 'lucide-react';
+import { Users, Calendar, TestTube, Receipt, UserCog, Building2 } from 'lucide-react';
 import ErrorAlert from '../components/common/ErrorAlert';
+import { useAuth } from '../contexts/AuthContext';
 
 interface DashboardStats {
   totalPatients: number;
   todaysAppointments: number;
   pendingLabTests: number;
   unpaidInvoices: number;
+  activeUsers?: number;
+  totalTenants?: number;
 }
 
 interface RecentPatient {
@@ -40,6 +43,7 @@ interface UpcomingAppointment {
 }
 
 const DashboardPage: React.FC = () => {
+  const { hasRole } = useAuth();
   const [stats, setStats] = useState<DashboardStats>({
     totalPatients: 0,
     todaysAppointments: 0,
@@ -62,13 +66,13 @@ const DashboardPage: React.FC = () => {
       const token = localStorage.getItem('token');
 
       const [statsRes, patientsRes, appointmentsRes] = await Promise.all([
-        fetch('http://localhost:3000/api/dashboard/stats', {
+        fetch(`${window.location.protocol}//${window.location.hostname}:3000/api/dashboard/stats`, {
           headers: { Authorization: `Bearer ${token}` },
         }),
-        fetch('http://localhost:3000/api/dashboard/recent-patients', {
+        fetch(`${window.location.protocol}//${window.location.hostname}:3000/api/dashboard/recent-patients`, {
           headers: { Authorization: `Bearer ${token}` },
         }),
-        fetch('http://localhost:3000/api/dashboard/upcoming-appointments', {
+        fetch(`${window.location.protocol}//${window.location.hostname}:3000/api/dashboard/upcoming-appointments`, {
           headers: { Authorization: `Bearer ${token}` },
         }),
       ]);
@@ -100,6 +104,14 @@ const DashboardPage: React.FC = () => {
     { name: "Today's Appointments", value: stats.todaysAppointments, icon: Calendar, color: 'bg-green-500' },
     { name: 'Pending Lab Tests', value: stats.pendingLabTests, icon: TestTube, color: 'bg-yellow-500' },
     { name: 'Unpaid Invoices', value: stats.unpaidInvoices, icon: Receipt, color: 'bg-red-500' },
+    // Admin-only widgets — the backend only computes/returns these fields
+    // for ADMIN/SUPER_ADMIN callers in the first place (dashboard.controller.ts).
+    ...(hasRole(['SUPER_ADMIN', 'ADMIN']) && stats.activeUsers !== undefined
+      ? [{ name: 'Active Users', value: stats.activeUsers, icon: UserCog, color: 'bg-purple-500' }]
+      : []),
+    ...(hasRole(['SUPER_ADMIN']) && stats.totalTenants !== undefined
+      ? [{ name: 'Clinics on Platform', value: stats.totalTenants, icon: Building2, color: 'bg-indigo-500' }]
+      : []),
   ];
 
   const formatDate = (dateString: string) => {

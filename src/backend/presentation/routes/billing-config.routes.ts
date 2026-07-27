@@ -5,7 +5,7 @@
  */
 
 import { Router } from 'express';
-import { authMiddleware } from '../middleware/auth';
+import { authMiddleware, requireRole } from '../middleware/auth';
 import { asyncHandler } from '../middleware/errorHandler';
 import {
   getBillingConfig,
@@ -17,10 +17,10 @@ const router = Router();
 // All routes require authentication
 router.use(authMiddleware);
 
-// Get billing configuration
-router.get('/', asyncHandler(getBillingConfig));
+// Get billing configuration (Admin, Cashier)
+router.get('/', requireRole(['SUPER_ADMIN', 'ADMIN', 'CASHIER']), asyncHandler(getBillingConfig));
 
 // Update billing configuration (Admin only)
-router.put('/', asyncHandler(updateBillingConfig));
+router.put('/', requireRole(['SUPER_ADMIN', 'ADMIN']), asyncHandler(updateBillingConfig));
 
 export default router;

@@ -11,6 +11,7 @@ import { Pill, AlertTriangle, Clock, User, Search, CheckCircle, XCircle, Package
 import { useNavigate } from 'react-router-dom';
 import DispenseModal from '../components/pharmacy/DispenseModal';
 import StockAlertsWidget from '../components/pharmacy/StockAlertsWidget';
+import Dropdown from '../components/common/Dropdown';
 
 interface Prescription {
   id: string;
@@ -18,6 +19,8 @@ interface Prescription {
   patientName: string;
   patientAge: number;
   patientGender: string;
+  patientDob: string;
+  allergies: string[];
   medicationName: string;
   dosage: string;
   frequency: string;
@@ -50,7 +53,7 @@ const PharmacyPage: React.FC = () => {
   const fetchPrescriptions = async () => {
     try {
       const token = localStorage.getItem('token');
-      let url = `http://localhost:3000/api/pharmacy/prescriptions?status=${statusFilter}`;
+      let url = `${window.location.protocol}//${window.location.hostname}:3000/api/pharmacy/prescriptions?status=${statusFilter}`;
 
       if (searchQuery) {
         url += `&search=${encodeURIComponent(searchQuery)}`;
@@ -170,6 +173,13 @@ const PharmacyPage: React.FC = () => {
               <Package className="w-5 h-5" />
               Inventory
             </button>
+            <button
+              onClick={() => navigate('/pharmacy/consumables')}
+              className="btn btn-secondary flex items-center gap-2"
+            >
+              <Package className="w-5 h-5" />
+              Consumables
+            </button>
           </div>
         </div>
       </div>
@@ -236,7 +246,7 @@ const PharmacyPage: React.FC = () => {
             <label className="block text-sm font-medium text-gray-700 mb-2">
               Status
             </label>
-            <select
+            <Dropdown
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value)}
               className="input w-full"
@@ -244,7 +254,7 @@ const PharmacyPage: React.FC = () => {
               <option value="PENDING">Pending</option>
               <option value="DISPENSED">Dispensed</option>
               <option value="CANCELLED">Cancelled</option>
-            </select>
+            </Dropdown>
           </div>
         </div>
       </div>
@@ -329,7 +339,7 @@ const PharmacyPage: React.FC = () => {
                          )}
                       </div>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
+                    <td className="px-6 py-4 max-w-xs">
                       <div className="text-sm text-gray-900">{prescription.dosage}</div>
                       <div className="text-sm text-gray-500">{prescription.frequency}</div>
                     </td>

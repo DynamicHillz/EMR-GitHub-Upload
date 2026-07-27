@@ -14,6 +14,7 @@ export interface GetWaitingQueueResponse {
   queue?: Array<{
     id: string;
     patientId: string;
+    patientName?: string;
     appointmentTime: string;
     appointmentType: string;
     checkedInAt: Date;
@@ -43,6 +44,7 @@ export class GetWaitingQueueUseCase {
       const queue = appointments.map((apt, index) => ({
         id: apt.id,
         patientId: apt.patientId,
+        patientName: apt.patient ? `${apt.patient.firstName} ${apt.patient.lastName}` : `Patient ${apt.patientId.substring(0, 8)}`,
         appointmentTime: apt.appointmentTime,
         appointmentType: apt.appointmentType,
         checkedInAt: apt.checkedInAt!,

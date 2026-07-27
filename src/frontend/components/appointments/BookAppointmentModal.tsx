@@ -7,6 +7,8 @@
 
 import React, { useState, useEffect } from 'react';
 import { format } from 'date-fns';
+import Dropdown from '../common/Dropdown';
+import { getErrorMessage } from '../../utils/errorHandler';
 
 interface BookAppointmentModalProps {
   isOpen: boolean;
@@ -82,7 +84,7 @@ const BookAppointmentModal: React.FC<BookAppointmentModalProps> = ({
 
     setIsSearching(true);
     try {
-      const response = await fetch(`/api/patients/search?query=${encodeURIComponent(query)}`, {
+      const response = await fetch(`${window.location.protocol}//${window.location.hostname}:3000/api/patients/search?query=${encodeURIComponent(query)}&lite=true&_t=${Date.now()}`, {
         headers: {
           Authorization: `Bearer ${localStorage.getItem('token')}`,
         },
@@ -90,13 +92,17 @@ const BookAppointmentModal: React.FC<BookAppointmentModalProps> = ({
 
       if (response.ok) {
         const result = await response.json();
+        console.log("SEARCH RESULTS:", result);
+        const patientsList = result.data || result.patients || [];
         setPatients(
-          result.data.map((p: any) => ({
+          patientsList.map((p: any) => ({
             id: p.id,
             name: `${p.firstName} ${p.lastName}`,
-            patientNumber: p.patientNumber,
+            patientNumber: p.patientId || p.patientNumber,
           }))
         );
+      } else {
+        console.error("API error:", await response.text());
       }
     } catch (error) {
       console.error('Error searching patients:', error);
@@ -144,7 +150,7 @@ const BookAppointmentModal: React.FC<BookAppointmentModalProps> = ({
       });
       setPatientSearch('');
     } catch (error: any) {
-      setError(error.message || 'Failed to book appointment');
+      setError(getErrorMessage(error, 'Failed to book appointment'));
     } finally {
       setIsSubmitting(false);
     }
@@ -184,7 +190,7 @@ const BookAppointmentModal: React.FC<BookAppointmentModalProps> = ({
                 value={patientSearch}
                 onChange={(e) => setPatientSearch(e.target.value)}
                 placeholder="Search by name or patient number..."
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
                 disabled={isSubmitting}
               />
               {isSearching && <p className="text-sm text-gray-500 mt-1">Searching...</p>}
@@ -199,7 +205,7 @@ const BookAppointmentModal: React.FC<BookAppointmentModalProps> = ({
                         setPatientSearch(`${patient.name} (${patient.patientNumber})`);
                         setPatients([]);
                       }}
-                      className="w-full text-left px-3 py-2 hover:bg-blue-50 border-b border-gray-100 last:border-b-0"
+                      className="w-full text-left px-3 py-2 hover:bg-primary-50 border-b border-gray-100 last:border-b-0"
                     >
                       <div className="font-medium">{patient.name}</div>
                       <div className="text-sm text-gray-500">{patient.patientNumber}</div>
@@ -214,10 +220,10 @@ const BookAppointmentModal: React.FC<BookAppointmentModalProps> = ({
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Doctor *
               </label>
-              <select
+              <Dropdown
                 value={formData.doctorId}
                 onChange={(e) => setFormData({ ...formData, doctorId: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
                 required
                 disabled={isSubmitting}
               >
@@ -227,7 +233,7 @@ const BookAppointmentModal: React.FC<BookAppointmentModalProps> = ({
                     {doctor.name}
                   </option>
                 ))}
-              </select>
+              </Dropdown>
             </div>
 
             {/* Date and Time */}
@@ -241,7 +247,7 @@ const BookAppointmentModal: React.FC<BookAppointmentModalProps> = ({
                   value={formData.appointmentDate}
                   onChange={(e) => setFormData({ ...formData, appointmentDate: e.target.value })}
                   min={format(new Date(), 'yyyy-MM-dd')}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
                   required
                   disabled={isSubmitting}
                 />
@@ -254,7 +260,7 @@ const BookAppointmentModal: React.FC<BookAppointmentModalProps> = ({
                   type="time"
                   value={formData.appointmentTime}
                   onChange={(e) => setFormData({ ...formData, appointmentTime: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
                   required
                   disabled={isSubmitting}
                 />
@@ -267,10 +273,10 @@ const BookAppointmentModal: React.FC<BookAppointmentModalProps> = ({
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Type *
                 </label>
-                <select
+                <Dropdown
                   value={formData.appointmentType}
                   onChange={(e) => setFormData({ ...formData, appointmentType: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
                   required
                   disabled={isSubmitting}
                 >
@@ -279,7 +285,7 @@ const BookAppointmentModal: React.FC<BookAppointmentModalProps> = ({
                       {type}
                     </option>
                   ))}
-                </select>
+                </Dropdown>
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -292,7 +298,7 @@ const BookAppointmentModal: React.FC<BookAppointmentModalProps> = ({
                   min="5"
                   max="480"
                   step="5"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
                   required
                   disabled={isSubmitting}
                 />
@@ -309,7 +315,7 @@ const BookAppointmentModal: React.FC<BookAppointmentModalProps> = ({
                 onChange={(e) => setFormData({ ...formData, reason: e.target.value })}
                 rows={3}
                 placeholder="Describe the reason for this appointment..."
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
                 disabled={isSubmitting}
               />
             </div>
@@ -326,7 +332,7 @@ const BookAppointmentModal: React.FC<BookAppointmentModalProps> = ({
               </button>
               <button
                 type="submit"
-                className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:bg-blue-300"
+                className="btn btn-primary"
                 disabled={isSubmitting}
               >
                 {isSubmitting ? 'Booking...' : 'Book Appointment'}

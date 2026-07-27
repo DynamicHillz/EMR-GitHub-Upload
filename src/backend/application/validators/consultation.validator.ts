@@ -47,13 +47,13 @@ export const createConsultationSchema = Joi.object<any>({
     }),
 
   heartRate: Joi.number().optional().min(30).max(250).allow(null).messages({
-    'number.min': 'Heart rate must be at least 30 bpm',
-    'number.max': 'Heart rate cannot exceed 250 bpm',
+    'number.min': 'Pulse rate must be at least 30 bpm',
+    'number.max': 'Pulse rate cannot exceed 250 bpm',
   }),
 
-  temperature: Joi.number().optional().min(30).max(45).allow(null).messages({
-    'number.min': 'Temperature must be at least 30°C',
-    'number.max': 'Temperature cannot exceed 45°C',
+  temperature: Joi.number().optional().min(30).max(115).allow(null).messages({
+    'number.min': 'Temperature must be at least 30',
+    'number.max': 'Temperature cannot exceed 115',
   }),
 
   weight: Joi.number().optional().min(0.5).max(500).allow(null).messages({
@@ -66,22 +66,48 @@ export const createConsultationSchema = Joi.object<any>({
     'number.max': 'Height cannot exceed 300 cm',
   }),
 
+  respiratoryRate: Joi.number().optional().min(10).max(100).allow(null).messages({
+    'number.min': 'Respiratory rate must be at least 10 bpm',
+    'number.max': 'Respiratory rate cannot exceed 100 bpm',
+  }),
+
+  headCircumference: Joi.number().optional().min(20).max(70).allow(null).messages({
+    'number.min': 'Head circumference must be at least 20 cm',
+    'number.max': 'Head circumference cannot exceed 70 cm',
+  }),
+
+  muac: Joi.number().optional().min(5).max(50).allow(null).messages({
+    'number.min': 'MUAC must be at least 5 cm',
+    'number.max': 'MUAC cannot exceed 50 cm',
+  }),
+
   spO2: Joi.number().optional().min(0).max(100).integer().allow(null).messages({
     'number.min': 'SpO2 must be at least 0%',
     'number.max': 'SpO2 cannot exceed 100%',
     'number.integer': 'SpO2 must be a whole number',
   }),
 
-  // ICD-10 Codes
-  icd10Codes: Joi.array()
+  // Diagnoses
+  diagnoses: Joi.array()
     .optional()
-    .items(Joi.string().trim().max(20))
+    .items(
+      Joi.object({
+        diagnosisId: Joi.string().required(),
+        code: Joi.string().optional().allow('', null),
+        name: Joi.string().optional().allow('', null),
+        type: Joi.string().optional().allow('', null),
+        isPrimary: Joi.boolean().default(false),
+        certainty: Joi.string().valid('CONFIRMED', 'PRESUMPTIVE', 'DIFFERENTIAL').default('CONFIRMED').optional(),
+        notes: Joi.string().max(200).allow('', null).optional()
+      })
+    )
     .max(10)
     .allow(null)
     .messages({
-      'array.max': 'Cannot add more than 10 ICD-10 codes',
-      'string.max': 'Each ICD-10 code cannot exceed 20 characters',
+      'array.max': 'Cannot add more than 10 diagnoses',
     }),
+  
+  icd10Codes: Joi.array().items(Joi.string()).optional().allow(null),
 });
 
 /**
@@ -105,17 +131,32 @@ export const updateConsultationSchema = Joi.object<any>({
     }),
 
   heartRate: Joi.number().optional().min(30).max(250).allow(null),
-  temperature: Joi.number().optional().min(30).max(45).allow(null),
+  temperature: Joi.number().optional().min(30).max(115).allow(null),
   weight: Joi.number().optional().min(0.5).max(500).allow(null),
   height: Joi.number().optional().min(20).max(300).allow(null),
+  respiratoryRate: Joi.number().optional().min(10).max(100).allow(null),
+  headCircumference: Joi.number().optional().min(20).max(70).allow(null),
+  muac: Joi.number().optional().min(5).max(50).allow(null),
   spO2: Joi.number().optional().min(0).max(100).integer().allow(null),
 
-  // ICD-10 Codes
-  icd10Codes: Joi.array()
+  // Diagnoses
+  diagnoses: Joi.array()
     .optional()
-    .items(Joi.string().trim().max(20))
+    .items(
+      Joi.object({
+        diagnosisId: Joi.string().required(),
+        code: Joi.string().optional().allow('', null),
+        name: Joi.string().optional().allow('', null),
+        type: Joi.string().optional().allow('', null),
+        isPrimary: Joi.boolean().default(false),
+        certainty: Joi.string().valid('CONFIRMED', 'PRESUMPTIVE', 'DIFFERENTIAL').default('CONFIRMED').optional(),
+        notes: Joi.string().max(200).allow('', null).optional()
+      })
+    )
     .max(10)
     .allow(null),
+  
+  icd10Codes: Joi.array().items(Joi.string()).optional().allow(null),
 }).min(1).messages({
   'object.min': 'At least one field must be provided for update',
 });

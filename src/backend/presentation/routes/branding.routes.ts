@@ -5,8 +5,9 @@
  */
 
 import { Router } from 'express';
-import { authMiddleware } from '../middleware/auth';
+import { authMiddleware, requireRole } from '../middleware/auth';
 import { asyncHandler } from '../middleware/errorHandler';
+import { uploadLogoMiddleware } from '../middleware/upload.middleware';
 import {
   getBranding,
   getPublicBranding,
@@ -26,9 +27,9 @@ router.use(authMiddleware);
 router.get('/', asyncHandler(getBranding));
 
 // Update branding settings (Admin only)
-router.put('/', asyncHandler(updateBranding));
+router.put('/', requireRole(['SUPER_ADMIN', 'ADMIN']), asyncHandler(updateBranding));
 
 // Upload logo (Admin only)
-router.post('/upload-logo', asyncHandler(uploadLogo));
+router.post('/upload-logo', requireRole(['SUPER_ADMIN', 'ADMIN']), uploadLogoMiddleware, asyncHandler(uploadLogo));
 
 export default router;

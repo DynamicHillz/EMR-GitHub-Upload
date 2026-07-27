@@ -19,6 +19,14 @@ const hexToRgb = (hex: string): string => {
   // Remove # if present
   hex = hex.replace('#', '');
 
+  // Expand shorthand (e.g. "fff" -> "ffffff") — the admin settings page
+  // accepts 3-digit hex via its free-text field and the backend validation
+  // allows it too, so this must handle both forms or every derived shade
+  // silently breaks (NaN from slicing a 3-char string into 6-char chunks).
+  if (hex.length === 3) {
+    hex = hex.split('').map((c) => c + c).join('');
+  }
+
   // Parse hex values
   const r = parseInt(hex.substring(0, 2), 16);
   const g = parseInt(hex.substring(2, 4), 16);
@@ -107,7 +115,7 @@ export const applyTheme = (colors: BrandingColors) => {
  */
 export const loadAndApplyBranding = async (token: string) => {
   try {
-    const response = await fetch('http://localhost:3000/api/branding', {
+    const response = await fetch(`${window.location.protocol}//${window.location.hostname}:3000/api/branding`, {
       headers: {
         'Authorization': `Bearer ${token}`
       }

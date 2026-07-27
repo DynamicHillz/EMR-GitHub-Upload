@@ -10,6 +10,9 @@ import {
   ServiceCatalog,
 } from '../../types/billing.types';
 import billingService from '../../services/billing.service';
+import ConfirmDialog from '../common/ConfirmDialog';
+import { useConfirm } from '../../hooks/useConfirm';
+import Dropdown from '../common/Dropdown';
 
 interface InvoiceFormProps {
   patientId: string;
@@ -39,6 +42,7 @@ const InvoiceForm: React.FC<InvoiceFormProps> = ({
   const [dueDate, setDueDate] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { confirm, isOpen: confirmIsOpen, options: confirmOptions, loading: confirmLoading, handleConfirm, handleCancel } = useConfirm();
 
   useEffect(() => {
     loadServices();
@@ -119,6 +123,17 @@ const InvoiceForm: React.FC<InvoiceFormProps> = ({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+
+    const totalAmountForConfirm = calculateTotal();
+    const confirmed = await confirm({
+      title: 'Create Invoice',
+      message: `Create an invoice for ${patientName} totaling ${formatCurrency(totalAmountForConfirm)}? This creates a real financial record — double-check any custom prices before continuing.`,
+      confirmText: 'Create Invoice',
+      cancelText: 'Review Again',
+      variant: 'warning',
+    });
+    if (!confirmed) return;
+
     setIsSubmitting(true);
 
     try {
@@ -201,7 +216,7 @@ const InvoiceForm: React.FC<InvoiceFormProps> = ({
                 <label className="block text-xs font-medium text-gray-700 mb-1">
                   Select Service
                 </label>
-                <select
+                <Dropdown
                   onChange={(e) => handleServiceSelect(index, e.target.value)}
                   className="input text-sm"
                 >
@@ -211,7 +226,7 @@ const InvoiceForm: React.FC<InvoiceFormProps> = ({
                       {service.serviceName} - {formatCurrency(service.basePrice)}
                     </option>
                   ))}
-                </select>
+                </Dropdown>
               </div>
 
               {/* Description */}
@@ -373,6 +388,18 @@ const InvoiceForm: React.FC<InvoiceFormProps> = ({
           {isSubmitting ? 'Creating...' : 'Create Invoice'}
         </button>
       </div>
+
+      <ConfirmDialog
+        isOpen={confirmIsOpen}
+        onClose={handleCancel}
+        onConfirm={handleConfirm}
+        title={confirmOptions.title}
+        message={confirmOptions.message}
+        confirmText={confirmOptions.confirmText}
+        cancelText={confirmOptions.cancelText}
+        variant={confirmOptions.variant}
+        loading={confirmLoading}
+      />
     </form>
   );
 };

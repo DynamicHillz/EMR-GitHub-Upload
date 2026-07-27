@@ -38,10 +38,17 @@ export class SearchPatientsUseCase {
     const limit = dto.limit || 20;
     const skip = (page - 1) * limit;
 
-    // Search patients using repository
+    // Search patients using repository — status/gender/age filters are
+    // applied in the DB query itself (not after pagination) so `total`/
+    // `totalPages` always match what's actually returned.
     const { patients, total } = await this.patientRepository.search({
       tenantId,
       query: dto.query?.trim(),
+      status: dto.status,
+      gender: dto.gender,
+      ageMin: dto.ageMin,
+      ageMax: dto.ageMax,
+      lite: dto.lite,
       skip,
       take: limit,
     });
@@ -52,32 +59,10 @@ export class SearchPatientsUseCase {
       return this.toResponseDto(patientEntity);
     });
 
-    // Apply additional filters if needed
-    let filteredPatients = patientDtos;
-
-    // Filter by status if provided
-    if (dto.status && dto.status !== 'ALL') {
-      filteredPatients = filteredPatients.filter(p => p.status === dto.status);
-    }
-
-    // Filter by gender if provided
-    if (dto.gender) {
-      filteredPatients = filteredPatients.filter(p => p.gender === dto.gender);
-    }
-
-    // Filter by age range if provided
-    if (dto.ageMin !== undefined || dto.ageMax !== undefined) {
-      filteredPatients = filteredPatients.filter(p => {
-        if (dto.ageMin !== undefined && p.age < dto.ageMin) return false;
-        if (dto.ageMax !== undefined && p.age > dto.ageMax) return false;
-        return true;
-      });
-    }
-
     const totalPages = Math.ceil(total / limit);
 
     return {
-      patients: filteredPatients,
+      patients: patientDtos,
       total,
       page,
       limit,
@@ -93,7 +78,8 @@ export class SearchPatientsUseCase {
   private toResponseDto(patient: PatientEntity): PatientResponseDto {
     return {
       id: patient.id,
-      patientId: patient.patientNumber,
+      version: patient.version,
+      patientId: patient.patientId,
       firstName: patient.firstName,
       lastName: patient.lastName,
       fullName: patient.getFullName(),
@@ -103,20 +89,24 @@ export class SearchPatientsUseCase {
       phone: patient.phone,
       email: patient.email || null,
       address: patient.address || null,
-      city: null,
-      state: null,
-      country: 'Nigeria',
-      nationality: null,
-      occupation: null,
-      maritalStatus: null,
+      city: patient.city || null,
+      state: patient.state || null,
+      lga: patient.lga || null,
+      country: patient.country || 'Nigeria',
+      nationality: patient.nationality || null,
+      occupation: patient.occupation || null,
+      maritalStatus: patient.maritalStatus || null,
       bloodGroup: patient.bloodGroup || null,
       genotype: patient.genotype || null,
       allergies: patient.allergies || [],
       chronicConditions: patient.chronicConditions || [],
-      pastSurgicalHistory: patient.pastSurgicalHistory || null,
-      emergencyContact: patient.emergencyContact || null,
-      nhisNumber: null,
-      photoUrl: null,
+      pastSurgicalHistory: patient.pastSurgicalHistory,
+      emergencyContact: patient.emergencyContact,
+      nhisNumber: patient.nhisNumber,
+      patientType: patient.patientType,
+      hmoProvider: patient.hmoProvider,
+      hmoNumber: patient.hmoNumber,
+      photoUrl: patient.photoUrl,
       status: patient.status,
       hasAllergies: patient.hasAnyAllergies(),
       consentGiven: patient.consentGiven || false,

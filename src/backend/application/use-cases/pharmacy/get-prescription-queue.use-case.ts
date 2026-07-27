@@ -11,6 +11,8 @@ export interface PrescriptionQueueFilters {
   search?: string;
   limit?: number;
   offset?: number;
+  patientId?: string;
+  billingStatus?: 'UNBILLED' | 'BILLED';
 }
 
 export interface PrescriptionQueueItem {
@@ -19,9 +21,13 @@ export interface PrescriptionQueueItem {
   patientName: string;
   patientAge: number;
   patientGender: string;
+  patientDob: string;
+  allergies: string[];
   medicationName: string;
   dosage: string;
   frequency: string;
+  duration: string;
+  instructions: string | null;
   quantity: number | null;
   prescribedBy: string;
   prescribedByName: string;
@@ -30,6 +36,7 @@ export interface PrescriptionQueueItem {
   interactionWarning: boolean;
   status: string;
   clinicalIndication?: string;
+  unitPrice?: number;
 }
 
 export class GetPrescriptionQueueUseCase {
@@ -45,8 +52,10 @@ export class GetPrescriptionQueueUseCase {
     };
 
     if (filters.status) {
-      where.status = filters.status;
-    } else {
+      if (filters.status !== 'ALL' as any) {
+        where.status = filters.status;
+      }
+    } else if (!filters.patientId) {
       // Default to pending prescriptions
       where.status = 'PENDING';
     }
@@ -83,6 +92,13 @@ export class GetPrescriptionQueueUseCase {
       ];
     }
 
+    if (filters.billingStatus) {
+      where.billingStatus = filters.billingStatus;
+    }
+    if (filters.patientId) {
+      where.patientId = filters.patientId;
+    }
+
     // Fetch prescriptions with patient and doctor info
     const prescriptions = await this.prisma.prescription.findMany({
       where,
@@ -93,12 +109,18 @@ export class GetPrescriptionQueueUseCase {
             lastName: true,
             dateOfBirth: true,
             gender: true,
+            allergies: true,
           },
         },
         doctor: {
           select: {
             firstName: true,
             lastName: true,
+          },
+        },
+        medication: {
+          select: {
+            unitPrice: true,
           },
         },
         consultation: {
@@ -129,9 +151,13 @@ export class GetPrescriptionQueueUseCase {
         patientName: `${prescription.patient.firstName} ${prescription.patient.lastName}`,
         patientAge: age,
         patientGender: prescription.patient.gender,
+        patientDob: prescription.patient.dateOfBirth.toISOString(),
+        allergies: prescription.patient.allergies || [],
         medicationName: prescription.medicationName,
         dosage: prescription.dosage,
         frequency: prescription.frequency,
+        duration: prescription.duration,
+        instructions: prescription.instructions,
         quantity: prescription.quantity,
         prescribedBy: prescription.doctorId,
         prescribedByName: `${prescription.doctor.firstName} ${prescription.doctor.lastName}`,
@@ -139,6 +165,7 @@ export class GetPrescriptionQueueUseCase {
         allergyWarning: prescription.allergyWarning,
         interactionWarning: prescription.interactionWarning,
         status: prescription.status,
+        unitPrice: prescription.medication ? Number(prescription.medication.unitPrice) : 0,
         clinicalIndication: prescription.consultation?.subjective
         ? prescription.consultation.subjective.substring(0, 80) + (prescription.consultation.subjective.length > 80 ? '...' : '')
         : undefined,

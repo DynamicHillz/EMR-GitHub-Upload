@@ -20,6 +20,8 @@ import {
   FileText,
 } from 'lucide-react';
 import ErrorAlert from '../common/ErrorAlert';
+import { useToast } from '../ToastContainer';
+import Dropdown from '../common/Dropdown';
 
 interface LabTest {
   id: string;
@@ -37,6 +39,8 @@ interface LabTest {
   orderedBy: string;
   orderedByName: string;
   consultationId: string | null;
+  accessionNumber: string | null;
+  unitPrice: number;
   specimenType: string | null;
   specimenQuality: string | null;
   collectedAt: string | null;
@@ -55,18 +59,23 @@ interface LabTest {
 
 interface LabResultItem {
   parameter: string;
+  loincCode?: string | null;
   value: string;
   unit: string;
   referenceMin?: number;
   referenceMax?: number;
   referenceRange?: string;
+  jsonValue?: any;
+  hasDeltaAlert?: boolean;
+  deltaAlertNotes?: string;
+  severity?: 'HIGH' | 'LOW' | 'CRITICAL_HIGH' | 'CRITICAL_LOW' | 'ABNORMAL' | 'INVALID_VALUE' | null;
 }
 
 interface AbnormalFlag {
   parameter: string;
   value: string;
   referenceRange: string;
-  severity: 'HIGH' | 'LOW' | 'CRITICAL_HIGH' | 'CRITICAL_LOW' | 'ABNORMAL';
+  severity: 'HIGH' | 'LOW' | 'CRITICAL_HIGH' | 'CRITICAL_LOW' | 'ABNORMAL' | 'INVALID_VALUE';
 }
 
 interface LabTestDetailsModalProps {
@@ -80,6 +89,7 @@ const LabTestDetailsModal: React.FC<LabTestDetailsModalProps> = ({
   onClose,
   onSuccess,
 }) => {
+  const toast = useToast();
   const [labTest, setLabTest] = useState<LabTest | null>(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'details' | 'specimen' | 'results' | 'review'>(
@@ -97,10 +107,18 @@ const LabTestDetailsModal: React.FC<LabTestDetailsModalProps> = ({
   // Results entry state
   const [resultItems, setResultItems] = useState<LabResultItem[]>([]);
   const [resultNotes, setResultNotes] = useState('');
+  // Snapshot of each row's catalog-prefilled reference bounds, so an
+  // accidental edit to Min/Max is visible instead of indistinguishable
+  // from the correct default.
+  const originalRangesRef = React.useRef<Record<number, { min?: number; max?: number }>>({});
 
   // Review state
   const [reviewNotes, setReviewNotes] = useState('');
   const [approved, setApproved] = useState(true);
+
+  const safeJsonParse = (str: string) => {
+    try { return JSON.parse(str); } catch { return null; }
+  };
 
   useEffect(() => {
     fetchLabTestDetails();
@@ -109,7 +127,7 @@ const LabTestDetailsModal: React.FC<LabTestDetailsModalProps> = ({
   const fetchLabTestDetails = async () => {
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch(`http://localhost:3000/api/lab/tests/${testId}`, {
+      const response = await fetch(`${window.location.protocol}//${window.location.hostname}:3000/api/lab/tests/${testId}`, {
         headers: {
           Authorization: `Bearer ${token}`,
         },
@@ -126,61 +144,30 @@ const LabTestDetailsModal: React.FC<LabTestDetailsModalProps> = ({
         setCollectedAt(test.collectedAt ? test.collectedAt.split('T')[0] : '');
         setRejectionReason(test.rejectionReason || '');
 
-        // Initialize results
-        if (test.results) {
-          setResultItems(test.results);
-        } else {
-          // Initialize with common test parameters based on test code
-          setResultItems(getDefaultParameters(test.testCode));
-        }
+        // Initialize results (now backend guarantees it's populated from the test parameters if empty)
+        const results: LabResultItem[] = test.results || [];
+        setResultItems(results);
+        originalRangesRef.current = results.reduce((acc, item, index) => {
+          acc[index] = { min: item.referenceMin, max: item.referenceMax };
+          return acc;
+        }, {} as Record<number, { min?: number; max?: number }>);
 
         setResultNotes(test.resultNotes || '');
         setReviewNotes(test.reviewNotes || '');
       }
     } catch (error) {
       console.error('Error fetching lab test details:', error);
-      alert('Failed to load lab test details');
+      toast.error('Failed to load lab test details');
     } finally {
       setLoading(false);
     }
   };
 
-  const getDefaultParameters = (testCode: string | null): LabResultItem[] => {
-    // Common test parameters
-    const commonTests: Record<string, LabResultItem[]> = {
-      CBC: [
-        { parameter: 'WBC', value: '', unit: 'x10³/µL', referenceMin: 4.5, referenceMax: 11 },
-        { parameter: 'RBC', value: '', unit: 'x10⁶/µL', referenceMin: 4.5, referenceMax: 5.5 },
-        { parameter: 'Hemoglobin', value: '', unit: 'g/dL', referenceMin: 13, referenceMax: 17 },
-        { parameter: 'Hematocrit', value: '', unit: '%', referenceMin: 38, referenceMax: 50 },
-        { parameter: 'Platelets', value: '', unit: 'x10³/µL', referenceMin: 150, referenceMax: 400 },
-      ],
-      BMP: [
-        { parameter: 'Sodium', value: '', unit: 'mmol/L', referenceMin: 136, referenceMax: 145 },
-        { parameter: 'Potassium', value: '', unit: 'mmol/L', referenceMin: 3.5, referenceMax: 5.1 },
-        { parameter: 'Chloride', value: '', unit: 'mmol/L', referenceMin: 98, referenceMax: 107 },
-        { parameter: 'Glucose', value: '', unit: 'mg/dL', referenceMin: 70, referenceMax: 100 },
-        { parameter: 'Creatinine', value: '', unit: 'mg/dL', referenceMin: 0.7, referenceMax: 1.3 },
-      ],
-      LIPID: [
-        { parameter: 'Total Cholesterol', value: '', unit: 'mg/dL', referenceMax: 200 },
-        { parameter: 'LDL', value: '', unit: 'mg/dL', referenceMax: 100 },
-        { parameter: 'HDL', value: '', unit: 'mg/dL', referenceMin: 40 },
-        { parameter: 'Triglycerides', value: '', unit: 'mg/dL', referenceMax: 150 },
-      ],
-    };
-
-    return (
-      commonTests[testCode || ''] || [
-        { parameter: 'Result', value: '', unit: '', referenceRange: '' },
-      ]
-    );
-  };
 
   const handleUpdateStatus = async (newStatus: string) => {
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch(`http://localhost:3000/api/lab/tests/${testId}/status`, {
+      const response = await fetch(`${window.location.protocol}//${window.location.hostname}:3000/api/lab/tests/${testId}/status`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -190,16 +177,16 @@ const LabTestDetailsModal: React.FC<LabTestDetailsModalProps> = ({
       });
 
       if (response.ok) {
-        alert(`Status updated to ${newStatus}`);
+        toast.success(`Status updated to ${newStatus}`);
         fetchLabTestDetails();
         onSuccess();
       } else {
         const result = await response.json();
-        alert(`Error: ${result.message}`);
+        toast.error(`Error: ${result.message}`);
       }
     } catch (error) {
       console.error('Error updating status:', error);
-      alert('Failed to update status');
+      toast.error('Failed to update status');
     }
   };
 
@@ -207,13 +194,13 @@ const LabTestDetailsModal: React.FC<LabTestDetailsModalProps> = ({
     e.preventDefault();
 
     if (specimenQuality === 'REJECTED' && !rejectionReason) {
-      alert('Please provide a rejection reason');
+      toast.error('Please provide a rejection reason');
       return;
     }
 
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch(`http://localhost:3000/api/lab/tests/${testId}/specimen`, {
+      const response = await fetch(`${window.location.protocol}//${window.location.hostname}:3000/api/lab/tests/${testId}/specimen`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -228,16 +215,16 @@ const LabTestDetailsModal: React.FC<LabTestDetailsModalProps> = ({
       });
 
       if (response.ok) {
-        alert('Specimen details updated successfully');
+        toast.success('Specimen details updated successfully');
         fetchLabTestDetails();
         onSuccess();
       } else {
         const result = await response.json();
-        alert(`Error: ${result.message}`);
+        toast.error(`Error: ${result.message}`);
       }
     } catch (error) {
       console.error('Error updating specimen:', error);
-      alert('Failed to update specimen details');
+      toast.error('Failed to update specimen details');
     }
   };
 
@@ -247,36 +234,39 @@ const LabTestDetailsModal: React.FC<LabTestDetailsModalProps> = ({
     // Validate all results have values
     const emptyResults = resultItems.filter((item) => !item.value);
     if (emptyResults.length > 0) {
-      alert('Please fill in all result values');
+      toast.error('Please fill in all result values');
       return;
     }
 
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch(`http://localhost:3000/api/lab/tests/${testId}/results`, {
+      const response = await fetch(`${window.location.protocol}//${window.location.hostname}:3000/api/lab/tests/${testId}/results`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
-          results: resultItems,
+          results: resultItems.map((item) => ({
+            ...item,
+            jsonValue: typeof item.jsonValue === 'string' ? safeJsonParse(item.jsonValue) : item.jsonValue,
+          })),
           resultNotes,
         }),
       });
 
       if (response.ok) {
-        alert('Results submitted successfully! Abnormal values have been flagged automatically.');
+        toast.success('Results submitted successfully! Abnormal values have been flagged automatically.');
         fetchLabTestDetails();
         onSuccess();
         setActiveTab('review');
       } else {
         const result = await response.json();
-        alert(`Error: ${result.message}`);
+        toast.error(`Error: ${result.message}`);
       }
     } catch (error) {
       console.error('Error submitting results:', error);
-      alert('Failed to submit results');
+      toast.error('Failed to submit results');
     }
   };
 
@@ -285,7 +275,7 @@ const LabTestDetailsModal: React.FC<LabTestDetailsModalProps> = ({
 
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch(`http://localhost:3000/api/lab/tests/${testId}/review`, {
+      const response = await fetch(`${window.location.protocol}//${window.location.hostname}:3000/api/lab/tests/${testId}/review`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -298,7 +288,7 @@ const LabTestDetailsModal: React.FC<LabTestDetailsModalProps> = ({
       });
 
       if (response.ok) {
-        alert(approved ? 'Results approved and finalized' : 'Review notes saved');
+        toast.success(approved ? 'Results approved and finalized' : 'Review notes saved');
         fetchLabTestDetails();
         onSuccess();
         if (approved) {
@@ -306,11 +296,11 @@ const LabTestDetailsModal: React.FC<LabTestDetailsModalProps> = ({
         }
       } else {
         const result = await response.json();
-        alert(`Error: ${result.message}`);
+        toast.error(`Error: ${result.message}`);
       }
     } catch (error) {
       console.error('Error reviewing results:', error);
-      alert('Failed to review results');
+      toast.error('Failed to review results');
     }
   };
 
@@ -336,6 +326,10 @@ const LabTestDetailsModal: React.FC<LabTestDetailsModalProps> = ({
       case 'CRITICAL_HIGH':
       case 'CRITICAL_LOW':
         return 'bg-red-100 text-red-800 border-red-300';
+      case 'INVALID_VALUE':
+        // Deliberately distinct from HIGH/LOW/ABNORMAL — this isn't a
+        // clinical finding, it's a data-quality problem that needs re-entry.
+        return 'bg-purple-100 text-purple-800 border-purple-300';
       case 'HIGH':
       case 'LOW':
         return 'bg-orange-100 text-orange-800 border-orange-300';
@@ -345,6 +339,8 @@ const LabTestDetailsModal: React.FC<LabTestDetailsModalProps> = ({
         return 'bg-gray-100 text-gray-800 border-gray-300';
     }
   };
+
+  const getSeverityLabel = (severity: string) => (severity === 'INVALID_VALUE' ? 'Needs Re-entry' : severity);
 
   if (loading) {
     return (
@@ -375,12 +371,23 @@ const LabTestDetailsModal: React.FC<LabTestDetailsModalProps> = ({
               Patient: {labTest.patientName} ({labTest.patientAge}y, {labTest.patientGender})
             </p>
           </div>
-          <button
-            onClick={onClose}
-            className="text-gray-400 hover:text-gray-600 transition-colors"
-          >
-            <X className="w-6 h-6" />
-          </button>
+          <div className="flex items-center gap-4">
+            {(labTest.status === 'COMPLETED' || labTest.status === 'REVIEWED') && (
+              <button
+                onClick={() => window.open(`/lab/report/${labTest.id}`, '_blank')}
+                className="btn btn-secondary flex items-center gap-2 text-sm"
+              >
+                <FileText className="w-4 h-4" />
+                Print Report
+              </button>
+            )}
+            <button
+              onClick={onClose}
+              className="text-gray-400 hover:text-gray-600 transition-colors"
+            >
+              <X className="w-6 h-6" />
+            </button>
+          </div>
         </div>
 
         {/* Tabs */}
@@ -480,8 +487,16 @@ const LabTestDetailsModal: React.FC<LabTestDetailsModalProps> = ({
                 <h3 className="font-semibold text-lg mb-3">Test Information</h3>
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <p className="text-sm text-gray-600">Test Code</p>
+                    <p className="text-sm text-gray-600">Test Code / LOINC</p>
                     <p className="font-medium">{labTest.testCode || 'N/A'}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-gray-600">Accession No.</p>
+                    <p className="font-medium font-mono">{labTest.accessionNumber || 'N/A'}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-gray-600">Price (₦)</p>
+                    <p className="font-medium">{labTest.unitPrice.toLocaleString()}</p>
                   </div>
                   <div>
                     <p className="text-sm text-gray-600">Urgency</p>
@@ -558,7 +573,7 @@ const LabTestDetailsModal: React.FC<LabTestDetailsModalProps> = ({
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Specimen Type
                 </label>
-                <select
+                <Dropdown
                   value={specimenType}
                   onChange={(e) => setSpecimenType(e.target.value)}
                   className="input w-full"
@@ -571,14 +586,14 @@ const LabTestDetailsModal: React.FC<LabTestDetailsModalProps> = ({
                   <option value="Swab">Swab</option>
                   <option value="Tissue">Tissue</option>
                   <option value="Other">Other</option>
-                </select>
+                </Dropdown>
               </div>
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Specimen Quality
                 </label>
-                <select
+                <Dropdown
                   value={specimenQuality}
                   onChange={(e) => setSpecimenQuality(e.target.value)}
                   className="input w-full"
@@ -588,7 +603,7 @@ const LabTestDetailsModal: React.FC<LabTestDetailsModalProps> = ({
                   <option value="ACCEPTABLE">Acceptable</option>
                   <option value="POOR">Poor</option>
                   <option value="REJECTED">Rejected</option>
-                </select>
+                </Dropdown>
               </div>
 
               <div>
@@ -649,7 +664,7 @@ const LabTestDetailsModal: React.FC<LabTestDetailsModalProps> = ({
                           {flag.parameter}: {flag.value}
                         </p>
                         <p className="text-sm">
-                          Reference: {flag.referenceRange} | Severity: {flag.severity}
+                          Reference: {flag.referenceRange} | Severity: {getSeverityLabel(flag.severity)}
                         </p>
                       </div>
                     ))}
@@ -685,6 +700,11 @@ const LabTestDetailsModal: React.FC<LabTestDetailsModalProps> = ({
                           className="input w-full text-sm"
                           disabled={labTest.status === 'COMPLETED' || labTest.status === 'REVIEWED'}
                         />
+                        {item.loincCode && (
+                          <span className="text-xs text-gray-500 mt-1 block">
+                            LOINC: {item.loincCode}
+                          </span>
+                        )}
                       </div>
                       <div className="col-span-2">
                         <input
@@ -718,10 +738,17 @@ const LabTestDetailsModal: React.FC<LabTestDetailsModalProps> = ({
                             )
                           }
                           placeholder="Min"
-                          className="input w-full text-sm"
+                          className={`input w-full text-sm ${
+                            originalRangesRef.current[index] && item.referenceMin !== originalRangesRef.current[index].min
+                              ? 'border-amber-400 bg-amber-50'
+                              : ''
+                          }`}
                           step="0.01"
                           disabled={labTest.status === 'COMPLETED' || labTest.status === 'REVIEWED'}
                         />
+                        {originalRangesRef.current[index] && item.referenceMin !== originalRangesRef.current[index].min && (
+                          <span className="text-xs text-amber-700 font-medium">edited</span>
+                        )}
                       </div>
                       <div className="col-span-2">
                         <input
@@ -735,10 +762,17 @@ const LabTestDetailsModal: React.FC<LabTestDetailsModalProps> = ({
                             )
                           }
                           placeholder="Max"
-                          className="input w-full text-sm"
+                          className={`input w-full text-sm ${
+                            originalRangesRef.current[index] && item.referenceMax !== originalRangesRef.current[index].max
+                              ? 'border-amber-400 bg-amber-50'
+                              : ''
+                          }`}
                           step="0.01"
                           disabled={labTest.status === 'COMPLETED' || labTest.status === 'REVIEWED'}
                         />
+                        {originalRangesRef.current[index] && item.referenceMax !== originalRangesRef.current[index].max && (
+                          <span className="text-xs text-amber-700 font-medium">edited</span>
+                        )}
                       </div>
                       <div className="col-span-1">
                         <button
@@ -750,6 +784,53 @@ const LabTestDetailsModal: React.FC<LabTestDetailsModalProps> = ({
                           <XCircle className="w-5 h-5" />
                         </button>
                       </div>
+
+                      {/* Delta Alert Indicator */}
+                      {item.hasDeltaAlert && (
+                        <div className="col-span-12 bg-red-50 text-red-700 p-2 text-sm rounded mt-1 flex items-center gap-2 border border-red-200">
+                          <AlertTriangle className="w-4 h-4" />
+                          <span className="font-semibold">DELTA ALERT:</span> {item.deltaAlertNotes}
+                        </div>
+                      )}
+
+                      {/* Microbiology JSON Input */}
+                      {labTest.testCategory === 'Microbiology' && (
+                        <div className="col-span-12 bg-blue-50 p-3 rounded mt-2 border border-blue-100">
+                          <label className="block text-xs font-semibold text-blue-900 mb-1">
+                            Microbiology Data (Organisms & Sensitivities JSON)
+                          </label>
+                          <textarea
+                            className="input w-full font-mono text-xs text-gray-800"
+                            rows={5}
+                            disabled={labTest.status === 'COMPLETED' || labTest.status === 'REVIEWED'}
+                            placeholder="{\n  'organisms': [\n    { 'name': 'E. coli', 'sensitivity': 'Ciprofloxacin' }\n  ]\n}"
+                            value={
+                              typeof item.jsonValue === 'string'
+                                ? item.jsonValue
+                                : item.jsonValue
+                                ? JSON.stringify(item.jsonValue, null, 2)
+                                : ''
+                            }
+                            onChange={(e) => {
+                              // We just store it as string while they type. 
+                              // On submit, backend or a pre-processor can parse it, or we just parse it on blur.
+                              // Actually, the API accepts JSON, so we must parse it before sending.
+                              updateResultItem(index, 'jsonValue', e.target.value);
+                            }}
+                            onBlur={(e) => {
+                              if (e.target.value.trim() !== '') {
+                                try {
+                                  const parsed = JSON.parse(e.target.value);
+                                  updateResultItem(index, 'jsonValue', parsed);
+                                } catch (err) {
+                                  // Keep it as string if invalid, API might reject it but user won't lose data
+                                }
+                              }
+                            }}
+                          />
+                        </div>
+                      )}
+
                     </div>
                   ))}
                 </div>
@@ -791,15 +872,27 @@ const LabTestDetailsModal: React.FC<LabTestDetailsModalProps> = ({
                 <div className="bg-gray-50 rounded-lg p-4">
                   <h3 className="font-semibold text-lg mb-3">Test Results</h3>
                   <div className="space-y-2">
-                    {labTest.results.map((result, index) => (
-                      <div key={index} className="grid grid-cols-4 gap-4 text-sm">
-                        <div className="font-medium">{result.parameter}</div>
-                        <div className="font-bold">{result.value} {result.unit}</div>
-                        <div className="text-gray-600 col-span-2">
-                          Ref: {result.referenceMin || '-'} - {result.referenceMax || '-'} {result.unit}
+                    {[...labTest.results]
+                      .sort((a, b) => (a.severity ? 0 : 1) - (b.severity ? 0 : 1))
+                      .map((result, index) => (
+                        <div
+                          key={index}
+                          className={`grid grid-cols-4 gap-4 text-sm p-2 rounded border ${
+                            result.severity ? getSeverityColor(result.severity) : 'border-transparent'
+                          }`}
+                        >
+                          <div className="font-medium">{result.parameter}</div>
+                          <div className="font-bold">{result.value} {result.unit}</div>
+                          <div className="col-span-2">
+                            <span className={result.severity ? '' : 'text-gray-600'}>
+                              Ref: {result.referenceRange || `${result.referenceMin ?? '-'} - ${result.referenceMax ?? '-'} ${result.unit}`}
+                            </span>
+                            {result.severity && (
+                              <span className="ml-2 font-semibold">{getSeverityLabel(result.severity)}</span>
+                            )}
+                          </div>
                         </div>
-                      </div>
-                    ))}
+                      ))}
                   </div>
                   {labTest.resultNotes && (
                     <div className="mt-3 pt-3 border-t border-gray-200">

@@ -17,6 +17,7 @@ export interface LoginUserResponseDto {
     lastName: string;
     role: string;
     tenantId: string;
+    requirePasswordChange?: boolean;
   };
   accessToken: string;
   refreshToken?: string;

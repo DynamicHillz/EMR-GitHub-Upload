@@ -27,6 +27,9 @@ export class GetBillingConfigUseCase {
         taxName: true,
         taxId: true,
 
+        // Pharmacy Pricing
+        defaultMarkupPercent: true,
+
         // Payment Methods
         acceptCash: true,
         acceptCard: true,

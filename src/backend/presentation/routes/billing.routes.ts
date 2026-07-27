@@ -20,6 +20,7 @@ import {
   getPaymentHistory,
   getOutstandingInvoices,
   getPatientBalance,
+  getUnbilledQueue,
   requestRefund,
   approveRefund,
   rejectRefund,
@@ -27,12 +28,16 @@ import {
   getRefundRequests,
   initiateGatewayPayment,
   verifyGatewayPayment,
+  getPaymentReceipt,
+  markReceiptPrinted,
+  emailPaymentReceipt,
+  getFraudPreventionSettingsForPaymentForm,
 } from '../controllers/billing.controller';
 
 const router = Router();
 
-// View billing: ADMIN, DOCTOR, CASHIER
-const CAN_VIEW = requireRole(['SUPER_ADMIN', 'ADMIN', 'DOCTOR', 'CASHIER']);
+// View billing: ADMIN, DOCTOR, CASHIER, LAB_TECH, NURSE
+const CAN_VIEW = requireRole(['SUPER_ADMIN', 'ADMIN', 'DOCTOR', 'NURSE', 'LAB_TECH', 'CASHIER']);
 
 // Create invoices & record payments: ADMIN, CASHIER
 const CAN_BILL = requireRole(['SUPER_ADMIN', 'ADMIN', 'CASHIER']);
@@ -55,15 +60,20 @@ router.get('/invoices/:id', CAN_VIEW, asyncHandler(getInvoiceDetails));
 router.post('/invoices/generate', CAN_BILL, asyncHandler(generateInvoice));
 router.post('/invoices', CAN_BILL, asyncHandler(createInvoice));
 router.put('/invoices/:id', CAN_BILL, asyncHandler(updateInvoice));
-router.delete('/invoices/:id', ADMIN_ONLY, asyncHandler(cancelInvoice));
-router.post('/invoices/:id/cancel', ADMIN_ONLY, asyncHandler(cancelInvoice));
+router.delete('/invoices/:id', CAN_BILL, asyncHandler(cancelInvoice));
+router.post('/invoices/:id/cancel', CAN_BILL, asyncHandler(cancelInvoice));
 
 // ── Payments ──────────────────────────────────────────────────────────────────
+router.get('/fraud-prevention-settings', CAN_VIEW, asyncHandler(getFraudPreventionSettingsForPaymentForm));
 router.get('/payments', CAN_VIEW, asyncHandler(getPaymentHistory));
 router.post('/payments', CAN_BILL, asyncHandler(recordPayment));
+router.get('/payments/:id/receipt', CAN_VIEW, asyncHandler(getPaymentReceipt));
+router.patch('/payments/:id/receipt/printed', CAN_VIEW, asyncHandler(markReceiptPrinted));
+router.post('/payments/:id/receipt/email', CAN_BILL, asyncHandler(emailPaymentReceipt));
 
 // ── Outstanding Balances ──────────────────────────────────────────────────────
 router.get('/outstanding', CAN_VIEW, asyncHandler(getOutstandingInvoices));
+router.get('/unbilled', CAN_VIEW, asyncHandler(getUnbilledQueue));
 router.get('/outstanding/:patientId', CAN_VIEW, asyncHandler(getPatientBalance));
 
 // ── Refunds ───────────────────────────────────────────────────────────────────

@@ -9,6 +9,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { X, AlertTriangle, Pill, Package, Calendar, AlertCircle } from 'lucide-react';
+import { matchesDrugClassGroup } from '../../utils/drugClassGroups';
 
 interface MedicationBatch {
   id: string;
@@ -20,15 +21,22 @@ interface MedicationBatch {
 
 interface Prescription {
   id: string;
+  patientId: string;
   patientName: string;
   patientAge: number;
   patientGender: string;
+  patientDob: string;
+  allergies: string[];
   medicationName: string;
   dosage: string;
   frequency: string;
   quantity: number | null;
   allergyWarning: boolean;
   interactionWarning: boolean;
+}
+
+function isBatchExpired(expiryDate: string): boolean {
+  return new Date(expiryDate).getTime() < Date.now();
 }
 
 interface DispenseModalProps {
@@ -56,6 +64,19 @@ const DispenseModal: React.FC<DispenseModalProps> = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState('');
 
+  const matchingAllergies = (prescription.allergies || []).filter((allergy) => {
+    const allergyLower = allergy.toLowerCase();
+    const medLower = prescription.medicationName.toLowerCase();
+    return (
+      medLower.includes(allergyLower) ||
+      allergyLower.includes(medLower) ||
+      matchesDrugClassGroup(allergy, prescription.medicationName)
+    );
+  });
+
+  const selectedBatch = batches.find((b) => b.id === selectedBatchId);
+  const selectedBatchExpired = !!selectedBatch && isBatchExpired(selectedBatch.expiryDate);
+
   useEffect(() => {
     if (isOpen) {
       fetchAvailableBatches();
@@ -66,7 +87,7 @@ const DispenseModal: React.FC<DispenseModalProps> = ({
   const checkDrugInteractions = async () => {
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch('http://localhost:3000/api/pharmacy/interactions/check', {
+      const response = await fetch(`${window.location.protocol}//${window.location.hostname}:3000/api/pharmacy/interactions/check`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -96,7 +117,7 @@ const DispenseModal: React.FC<DispenseModalProps> = ({
     try {
       const token = localStorage.getItem('token');
       const response = await fetch(
-        `http://localhost:3000/api/pharmacy/batches?medicationName=${encodeURIComponent(
+        `${window.location.protocol}//${window.location.hostname}:3000/api/pharmacy/batches?medicationName=${encodeURIComponent(
           prescription.medicationName
         )}`,
         {
@@ -110,9 +131,11 @@ const DispenseModal: React.FC<DispenseModalProps> = ({
         const result = await response.json();
         setBatches(result.data || []);
 
-        // Auto-select first batch with sufficient quantity
+        // Auto-select first non-expired batch with sufficient quantity
+        // (batches already come back FEFO-ordered from the API, so this is
+        // still the earliest-expiring valid batch, just never an expired one)
         const availableBatch = result.data.find(
-          (b: MedicationBatch) => b.quantity >= quantityToDispense
+          (b: MedicationBatch) => b.quantity >= quantityToDispense && !isBatchExpired(b.expiryDate)
         );
         if (availableBatch) {
           setSelectedBatchId(availableBatch.id);
@@ -139,9 +162,13 @@ const DispenseModal: React.FC<DispenseModalProps> = ({
       return;
     }
 
-    const selectedBatch = batches.find((b) => b.id === selectedBatchId);
-    if (selectedBatch && quantityToDispense > selectedBatch.quantity) {
-      setError(`Insufficient stock. Available: ${selectedBatch.quantity}`);
+    const chosenBatch = batches.find((b) => b.id === selectedBatchId);
+    if (chosenBatch && quantityToDispense > chosenBatch.quantity) {
+      setError(`Insufficient stock. Available: ${chosenBatch.quantity}`);
+      return;
+    }
+    if (chosenBatch && isBatchExpired(chosenBatch.expiryDate)) {
+      setError('This batch has expired and cannot be dispensed. Please select a different batch.');
       return;
     }
 
@@ -150,7 +177,7 @@ const DispenseModal: React.FC<DispenseModalProps> = ({
 
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch('http://localhost:3000/api/pharmacy/dispense', {
+      const response = await fetch(`${window.location.protocol}//${window.location.hostname}:3000/api/pharmacy/dispense`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -222,7 +249,11 @@ const DispenseModal: React.FC<DispenseModalProps> = ({
             <p className="text-sm text-gray-600 mt-1">
               {prescription.patientName} - {prescription.patientAge}y /{' '}
               {prescription.patientGender}
+              {prescription.patientDob && (
+                <> · DOB {new Date(prescription.patientDob).toLocaleDateString()}</>
+              )}
             </p>
+            <p className="text-xs text-gray-400 font-mono mt-0.5">Patient ID: {prescription.patientId}</p>
           </div>
           <button
             onClick={onClose}
@@ -241,9 +272,15 @@ const DispenseModal: React.FC<DispenseModalProps> = ({
                 <div>
                   <p className="font-semibold text-red-900">Allergy Warning</p>
                   <p className="text-sm text-red-700">
-                    Patient has a documented allergy to this medication or its components.
-                    Dispensing may be blocked.
+                    {matchingAllergies.length > 0
+                      ? `Patient is allergic to ${matchingAllergies.join(', ')}. Dispensing may be blocked.`
+                      : 'Patient has a documented allergy to this medication or its components. Dispensing may be blocked.'}
                   </p>
+                  {prescription.allergies.length > 0 && (
+                    <p className="text-xs text-red-600 mt-1">
+                      All documented allergies: {prescription.allergies.join(', ')}
+                    </p>
+                  )}
                 </div>
               </div>
             )}
@@ -346,44 +383,55 @@ const DispenseModal: React.FC<DispenseModalProps> = ({
               </div>
             ) : (
               <div className="space-y-2">
-                {batches.map((batch) => (
-                  <label
-                    key={batch.id}
-                    className={`block p-4 border rounded-lg cursor-pointer transition-colors ${
-                      selectedBatchId === batch.id
-                        ? 'border-purple-500 bg-purple-50'
-                        : 'border-gray-300 hover:border-purple-300'
-                    }`}
-                  >
-                    <div className="flex items-center">
-                      <input
-                        type="radio"
-                        name="batch"
-                        value={batch.id}
-                        checked={selectedBatchId === batch.id}
-                        onChange={() => setSelectedBatchId(batch.id)}
-                        className="mr-3"
-                      />
-                      <div className="flex-1">
-                        <div className="flex justify-between items-start">
-                          <div>
-                            <p className="font-medium">Batch: {batch.batchNumber}</p>
-                            <p className="text-sm text-gray-600">
-                              Available: {batch.quantity} units
-                            </p>
-                          </div>
-                          <div className="text-right text-sm">
-                            <p className="text-gray-500 flex items-center gap-1">
-                              <Calendar className="w-4 h-4" />
-                              Expiry:
-                            </p>
-                            <p>{formatExpiryDate(batch.expiryDate)}</p>
+                {batches.map((batch) => {
+                  const expired = isBatchExpired(batch.expiryDate);
+                  return (
+                    <label
+                      key={batch.id}
+                      className={`block p-4 border rounded-lg transition-colors ${
+                        expired
+                          ? 'cursor-not-allowed opacity-60 border-red-200 bg-red-50'
+                          : 'cursor-pointer ' + (selectedBatchId === batch.id
+                              ? 'border-purple-500 bg-purple-50'
+                              : 'border-gray-300 hover:border-purple-300')
+                      }`}
+                    >
+                      <div className="flex items-center">
+                        <input
+                          type="radio"
+                          name="batch"
+                          value={batch.id}
+                          checked={selectedBatchId === batch.id}
+                          onChange={() => !expired && setSelectedBatchId(batch.id)}
+                          disabled={expired}
+                          className="mr-3"
+                        />
+                        <div className="flex-1">
+                          <div className="flex justify-between items-start">
+                            <div>
+                              <p className="font-medium">Batch: {batch.batchNumber}</p>
+                              <p className="text-sm text-gray-600">
+                                Available: {batch.quantity} units
+                              </p>
+                              {expired && (
+                                <p className="text-xs text-red-700 font-medium mt-1">
+                                  Expired — cannot be dispensed
+                                </p>
+                              )}
+                            </div>
+                            <div className="text-right text-sm">
+                              <p className="text-gray-500 flex items-center gap-1">
+                                <Calendar className="w-4 h-4" />
+                                Expiry:
+                              </p>
+                              <p>{formatExpiryDate(batch.expiryDate)}</p>
+                            </div>
                           </div>
                         </div>
                       </div>
-                    </div>
-                  </label>
-                ))}
+                    </label>
+                  );
+                })}
               </div>
             )}
           </div>
@@ -424,7 +472,7 @@ const DispenseModal: React.FC<DispenseModalProps> = ({
           </button>
           <button
             onClick={handleDispense}
-            disabled={isSubmitting || batches.length === 0 || !selectedBatchId}
+            disabled={isSubmitting || batches.length === 0 || !selectedBatchId || selectedBatchExpired}
             className="btn btn-primary"
           >
             {isSubmitting ? 'Dispensing...' : 'Dispense Medication'}

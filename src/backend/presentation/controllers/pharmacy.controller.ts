@@ -17,7 +17,16 @@ import { CheckDrugInteractionsUseCase } from '../../application/use-cases/pharma
 import { GenerateMedicationLabelUseCase } from '../../application/use-cases/pharmacy/generate-medication-label.use-case';
 import { GetMedicationsUseCase } from '../../application/use-cases/pharmacy/get-medications.use-case';
 import { AddMedicationUseCase } from '../../application/use-cases/pharmacy/add-medication.use-case';
+import { UpdateMedicationUseCase } from '../../application/use-cases/pharmacy/update-medication.use-case';
+import { GetConsumablesUseCase } from '../../application/use-cases/pharmacy/get-consumables.use-case';
+import { AddConsumableUseCase } from '../../application/use-cases/pharmacy/add-consumable.use-case';
+import { UpdateConsumableUseCase } from '../../application/use-cases/pharmacy/update-consumable.use-case';
+import { AddConsumableBatchUseCase } from '../../application/use-cases/pharmacy/add-consumable-batch.use-case';
+import { GetConsumableInventoryUseCase } from '../../application/use-cases/pharmacy/get-consumable-inventory.use-case';
+import { RecordConsumableUsageUseCase } from '../../application/use-cases/pharmacy/record-consumable-usage.use-case';
+import { GetConsumableUsageUseCase } from '../../application/use-cases/pharmacy/get-consumable-usage.use-case';
 import { prisma } from '../../infrastructure/database/prisma.client';
+import { getSafeErrorMessage } from '../../shared/utils/error-message.util';
 
 // Initialize use cases
 const getPrescriptionQueueUseCase = new GetPrescriptionQueueUseCase(prisma);
@@ -31,6 +40,14 @@ const checkDrugInteractionsUseCase = new CheckDrugInteractionsUseCase(prisma);
 const generateMedicationLabelUseCase = new GenerateMedicationLabelUseCase(prisma);
 const getMedicationsUseCase = new GetMedicationsUseCase(prisma);
 const addMedicationUseCase = new AddMedicationUseCase(prisma);
+const updateMedicationUseCase = new UpdateMedicationUseCase(prisma);
+const getConsumablesUseCase = new GetConsumablesUseCase(prisma);
+const addConsumableUseCase = new AddConsumableUseCase(prisma);
+const updateConsumableUseCase = new UpdateConsumableUseCase(prisma);
+const addConsumableBatchUseCase = new AddConsumableBatchUseCase(prisma);
+const getConsumableInventoryUseCase = new GetConsumableInventoryUseCase(prisma);
+const recordConsumableUsageUseCase = new RecordConsumableUsageUseCase(prisma);
+const getConsumableUsageUseCase = new GetConsumableUsageUseCase(prisma);
 
 /**
  * GET /api/pharmacy/prescriptions
@@ -52,14 +69,23 @@ export const getPrescriptionQueue = async (req: Request, res: Response) => {
       search: req.query.search as string,
       limit: req.query.limit ? parseInt(req.query.limit as string) : undefined,
       offset: req.query.offset ? parseInt(req.query.offset as string) : undefined,
+      patientId: req.query.patientId as string,
+      billingStatus: req.query.billingStatus as any,
     };
 
     const queue = await getPrescriptionQueueUseCase.execute(filters, tenantId);
 
+    // Clinical narrative (a slice of the consultation note) has no reason
+    // to reach CASHIER — they're viewing this queue for billing/dispensing
+    // logistics, not clinical context.
+    const responseData = req.user?.role === 'CASHIER'
+      ? queue.map(({ clinicalIndication, ...rest }) => rest)
+      : queue;
+
     return res.status(200).json({
       success: true,
       message: 'Prescription queue retrieved successfully',
-      data: queue,
+      data: responseData,
     });
   } catch (error: any) {
     logger.error('Error fetching prescription queue:', error);
@@ -67,7 +93,6 @@ export const getPrescriptionQueue = async (req: Request, res: Response) => {
     return res.status(500).json({
       success: false,
       message: 'Failed to fetch prescription queue',
-      error: error.message,
     });
   }
 };
@@ -133,7 +158,6 @@ export const dispenseMedication = async (req: Request, res: Response) => {
     return res.status(500).json({
       success: false,
       message: 'Failed to dispense medication',
-      error: error.message,
     });
   }
 };
@@ -178,7 +202,6 @@ export const getMedicationBatches = async (req: Request, res: Response) => {
     return res.status(500).json({
       success: false,
       message: 'Failed to fetch medication batches',
-      error: error.message,
     });
   }
 };
@@ -229,7 +252,6 @@ export const addMedicationBatch = async (req: Request, res: Response) => {
     return res.status(500).json({
       success: false,
       message: 'Failed to add medication batch',
-      error: error.message,
     });
   }
 };
@@ -262,7 +284,6 @@ export const getInventory = async (req: Request, res: Response) => {
     return res.status(500).json({
       success: false,
       message: 'Failed to fetch inventory',
-      error: error.message,
     });
   }
 };
@@ -295,7 +316,6 @@ export const generateStockAlerts = async (req: Request, res: Response) => {
     return res.status(500).json({
       success: false,
       message: 'Failed to generate stock alerts',
-      error: error.message,
     });
   }
 };
@@ -334,7 +354,6 @@ export const getStockAlerts = async (req: Request, res: Response) => {
     return res.status(500).json({
       success: false,
       message: 'Failed to fetch stock alerts',
-      error: error.message,
     });
   }
 };
@@ -372,7 +391,6 @@ export const checkDrugInteractions = async (req: Request, res: Response) => {
     return res.status(500).json({
       success: false,
       message: 'Failed to check drug interactions',
-      error: error.message,
     });
   }
 };
@@ -415,7 +433,6 @@ export const generateMedicationLabel = async (req: Request, res: Response) => {
     return res.status(500).json({
       success: false,
       message: 'Failed to generate medication label',
-      error: error.message,
     });
   }
 };
@@ -448,7 +465,6 @@ export const getMedications = async (req: Request, res: Response) => {
     return res.status(500).json({
       success: false,
       message: 'Failed to fetch medications',
-      error: error.message,
     });
   }
 };
@@ -478,6 +494,7 @@ export const addMedication = async (req: Request, res: Response) => {
       strength: req.body.strength,
       drugClass: req.body.drugClass,
       reorderPoint: req.body.reorderPoint ? parseInt(req.body.reorderPoint) : undefined,
+      stockLevel: req.body.stockLevel !== undefined ? parseInt(req.body.stockLevel) : undefined,
       unitPrice: parseFloat(req.body.unitPrice),
     };
 
@@ -491,8 +508,270 @@ export const addMedication = async (req: Request, res: Response) => {
   } catch (error: any) {
     logger.error('Error adding medication:', error);
 
-    if (error.message.includes('already exists')) {
+    if (error.statusCode) {
+      return res.status(error.statusCode).json({
+        success: false,
+        message: error.message,
+      });
+    }
+
+    let errorMessage = getSafeErrorMessage(error, 'An unknown error occurred');
+
+    // Clean up Prisma validation errors to make them human-readable
+    if (errorMessage.includes('Invalid `this.prisma')) {
+      const lines = errorMessage.split('\n').filter((l: string) => l.trim().length > 0);
+      errorMessage = lines[lines.length - 1].trim() || 'Database validation error';
+    }
+
+    if (errorMessage.includes('already exists')) {
       return res.status(400).json({
+        success: false,
+        message: errorMessage,
+      });
+    }
+
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to add medication',
+      error: errorMessage,
+    });
+  }
+};
+
+/**
+ * PUT /api/pharmacy/medications/:id
+ * Update an existing medication
+ */
+export const updateMedication = async (req: Request, res: Response) => {
+  try {
+    const tenantId = (req as any).user.tenantId;
+    const { id } = req.params;
+
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        message: 'Medication ID is required',
+      });
+    }
+
+    if (!req.body.name || !req.body.unitPrice) {
+      return res.status(400).json({
+        success: false,
+        message: 'Medication name and unit price are required',
+      });
+    }
+
+    const medicationData = {
+      name: req.body.name,
+      genericName: req.body.genericName,
+      brandName: req.body.brandName,
+      activeIngredient: req.body.activeIngredient,
+      category: req.body.category,
+      dosageForm: req.body.dosageForm,
+      strength: req.body.strength,
+      drugClass: req.body.drugClass,
+      reorderPoint: req.body.reorderPoint ? parseInt(req.body.reorderPoint) : undefined,
+      stockLevel: req.body.stockLevel !== undefined ? parseInt(req.body.stockLevel) : undefined,
+      unitPrice: parseFloat(req.body.unitPrice),
+    };
+
+    const medication = await updateMedicationUseCase.execute(id, tenantId, medicationData);
+
+    return res.status(200).json({
+      success: true,
+      message: 'Medication updated successfully',
+      data: medication,
+    });
+  } catch (error: any) {
+    logger.error('Error updating medication:', error);
+
+    let errorMessage = getSafeErrorMessage(error, 'An unknown error occurred');
+
+    if (errorMessage.includes('not found')) {
+      return res.status(404).json({
+        success: false,
+        message: errorMessage,
+      });
+    }
+
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to update medication',
+    });
+  }
+};
+
+export const getInventoryCategories = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const categories = await prisma.inventoryCategory.findMany({
+      where: { tenantId },
+      orderBy: { name: 'asc' }
+    });
+    res.status(200).json({ success: true, data: categories });
+  } catch (error: any) {
+    logger.error('Error fetching inventory categories:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch categories' });
+  }
+};
+
+export const createInventoryCategory = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const { name, description } = req.body;
+    
+    const existing = await prisma.inventoryCategory.findFirst({
+      where: { tenantId, name }
+    });
+    
+    if (existing) {
+      res.status(400).json({ success: false, message: 'Category already exists' });
+      return;
+    }
+    
+    const category = await prisma.inventoryCategory.create({
+      data: { tenantId, name, description }
+    });
+    
+    res.status(201).json({ success: true, data: category });
+  } catch (error: any) {
+    logger.error('Error creating inventory category:', error);
+    res.status(500).json({ success: false, message: 'Failed to create category' });
+  }
+};
+
+export const updateInventoryCategory = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const { id } = req.params;
+    const { name, description } = req.body;
+    
+    const existing = await prisma.inventoryCategory.findFirst({
+      where: { tenantId, id }
+    });
+    
+    if (!existing) {
+      res.status(404).json({ success: false, message: 'Category not found' });
+      return;
+    }
+    
+    const category = await prisma.inventoryCategory.update({
+      where: { id },
+      data: { name, description }
+    });
+    
+    res.status(200).json({ success: true, data: category });
+  } catch (error: any) {
+    logger.error('Error updating inventory category:', error);
+    res.status(500).json({ success: false, message: 'Failed to update category' });
+  }
+};
+
+export const deleteInventoryCategory = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const { id } = req.params;
+    
+    const existing = await prisma.inventoryCategory.findFirst({
+      where: { tenantId, id }
+    });
+    
+    if (!existing) {
+      res.status(404).json({ success: false, message: 'Category not found' });
+      return;
+    }
+    
+    const inUse = await prisma.medication.findFirst({
+      where: { tenantId, category: existing.name }
+    });
+    
+    if (inUse) {
+      res.status(400).json({ success: false, message: 'Cannot delete category that is currently in use by an inventory item' });
+      return;
+    }
+    
+    await prisma.inventoryCategory.delete({
+      where: { id }
+    });
+    
+    res.status(204).send();
+  } catch (error: any) {
+    logger.error('Error deleting inventory category:', error);
+    res.status(500).json({ success: false, message: 'Failed to delete category' });
+  }
+};
+
+// ==================== CONSUMABLES ====================
+
+/**
+ * GET /api/pharmacy/consumables
+ * Get consumables catalog
+ */
+export const getConsumables = async (req: Request, res: Response) => {
+  try {
+    const tenantId = req.user?.tenantId;
+
+    if (!tenantId) {
+      return res.status(401).json({
+        success: false,
+        message: 'Unauthorized: No tenant ID found',
+      });
+    }
+
+    const consumables = await getConsumablesUseCase.execute(tenantId);
+
+    return res.status(200).json({
+      success: true,
+      message: 'Consumables retrieved successfully',
+      data: consumables,
+    });
+  } catch (error: any) {
+    logger.error('Error fetching consumables:', error);
+
+    return res.status(500).json({
+      success: false,
+      message: getSafeErrorMessage(error, 'Failed to fetch consumables'),
+    });
+  }
+};
+
+/**
+ * POST /api/pharmacy/consumables
+ * Add a new consumable
+ */
+export const addConsumable = async (req: Request, res: Response) => {
+  try {
+    const tenantId = req.user?.tenantId;
+
+    if (!tenantId) {
+      return res.status(401).json({
+        success: false,
+        message: 'Unauthorized: No tenant ID found',
+      });
+    }
+
+    const consumableData = {
+      name: req.body.name,
+      category: req.body.category,
+      unit: req.body.unit,
+      description: req.body.description,
+      reorderPoint: req.body.reorderPoint ? parseInt(req.body.reorderPoint) : undefined,
+      stockLevel: req.body.stockLevel !== undefined ? parseInt(req.body.stockLevel) : undefined,
+      unitPrice: parseFloat(req.body.unitPrice),
+    };
+
+    const consumable = await addConsumableUseCase.execute(consumableData, tenantId);
+
+    return res.status(201).json({
+      success: true,
+      message: 'Consumable added successfully',
+      data: consumable,
+    });
+  } catch (error: any) {
+    logger.error('Error adding consumable:', error);
+
+    if (error.statusCode) {
+      return res.status(error.statusCode).json({
         success: false,
         message: error.message,
       });
@@ -500,8 +779,236 @@ export const addMedication = async (req: Request, res: Response) => {
 
     return res.status(500).json({
       success: false,
-      message: 'Failed to add medication',
-      error: error.message,
+      message: getSafeErrorMessage(error, 'Failed to add consumable'),
+    });
+  }
+};
+
+/**
+ * PUT /api/pharmacy/consumables/:id
+ * Update an existing consumable
+ */
+export const updateConsumable = async (req: Request, res: Response) => {
+  try {
+    const tenantId = req.user?.tenantId;
+    const { id } = req.params;
+
+    if (!tenantId) {
+      return res.status(401).json({
+        success: false,
+        message: 'Unauthorized: No tenant ID found',
+      });
+    }
+
+    if (!req.body.name || req.body.unitPrice === undefined) {
+      return res.status(400).json({
+        success: false,
+        message: 'Consumable name and unit price are required',
+      });
+    }
+
+    const consumableData = {
+      name: req.body.name,
+      category: req.body.category,
+      unit: req.body.unit,
+      description: req.body.description,
+      reorderPoint: req.body.reorderPoint !== undefined ? parseInt(req.body.reorderPoint) : undefined,
+      stockLevel: req.body.stockLevel !== undefined ? parseInt(req.body.stockLevel) : undefined,
+      unitPrice: parseFloat(req.body.unitPrice),
+    };
+
+    const consumable = await updateConsumableUseCase.execute(id, tenantId, consumableData);
+
+    return res.status(200).json({
+      success: true,
+      message: 'Consumable updated successfully',
+      data: consumable,
+    });
+  } catch (error: any) {
+    logger.error('Error updating consumable:', error);
+
+    if (error.statusCode) {
+      return res.status(error.statusCode).json({
+        success: false,
+        message: error.message,
+      });
+    }
+
+    return res.status(500).json({
+      success: false,
+      message: getSafeErrorMessage(error, 'Failed to update consumable'),
+    });
+  }
+};
+
+/**
+ * GET /api/pharmacy/consumables/inventory
+ * Get consumables inventory (stock levels + batches)
+ */
+export const getConsumableInventory = async (req: Request, res: Response) => {
+  try {
+    const tenantId = req.user?.tenantId;
+
+    if (!tenantId) {
+      return res.status(401).json({
+        success: false,
+        message: 'Unauthorized: No tenant ID found',
+      });
+    }
+
+    const inventory = await getConsumableInventoryUseCase.execute(tenantId);
+
+    return res.status(200).json({
+      success: true,
+      message: 'Consumable inventory retrieved successfully',
+      data: inventory,
+    });
+  } catch (error: any) {
+    logger.error('Error fetching consumable inventory:', error);
+
+    return res.status(500).json({
+      success: false,
+      message: getSafeErrorMessage(error, 'Failed to fetch consumable inventory'),
+    });
+  }
+};
+
+/**
+ * POST /api/pharmacy/consumables/batches
+ * Add a new consumable batch (stock)
+ */
+export const addConsumableBatch = async (req: Request, res: Response) => {
+  try {
+    const tenantId = req.user?.tenantId;
+
+    if (!tenantId) {
+      return res.status(401).json({
+        success: false,
+        message: 'Unauthorized: No tenant ID found',
+      });
+    }
+
+    const batchData = {
+      consumableId: req.body.consumableId,
+      batchNumber: req.body.batchNumber,
+      expiryDate: req.body.expiryDate ? new Date(req.body.expiryDate) : undefined,
+      quantity: req.body.quantity,
+      unitCost: req.body.unitCost,
+      sellingPrice: req.body.sellingPrice,
+      supplier: req.body.supplier,
+      purchaseDate: req.body.purchaseDate ? new Date(req.body.purchaseDate) : undefined,
+    };
+
+    const result = await addConsumableBatchUseCase.execute(batchData, tenantId);
+
+    return res.status(201).json({
+      success: true,
+      message: 'Consumable batch added successfully',
+      data: result,
+    });
+  } catch (error: any) {
+    logger.error('Error adding consumable batch:', error);
+
+    if (error.statusCode) {
+      return res.status(error.statusCode).json({
+        success: false,
+        message: error.message,
+      });
+    }
+
+    return res.status(500).json({
+      success: false,
+      message: getSafeErrorMessage(error, 'Failed to add consumable batch'),
+    });
+  }
+};
+
+/**
+ * GET /api/pharmacy/consumables/usage
+ * List consumable usage records (filter by patientId / billingStatus)
+ */
+export const getConsumableUsage = async (req: Request, res: Response) => {
+  try {
+    const tenantId = req.user?.tenantId;
+
+    if (!tenantId) {
+      return res.status(401).json({
+        success: false,
+        message: 'Unauthorized: No tenant ID found',
+      });
+    }
+
+    const records = await getConsumableUsageUseCase.execute(tenantId, {
+      patientId: req.query.patientId as string | undefined,
+      billingStatus: req.query.billingStatus as 'UNBILLED' | 'BILLED' | undefined,
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: 'Consumable usage retrieved successfully',
+      data: records,
+    });
+  } catch (error: any) {
+    logger.error('Error fetching consumable usage:', error);
+
+    return res.status(500).json({
+      success: false,
+      message: getSafeErrorMessage(error, 'Failed to fetch consumable usage'),
+    });
+  }
+};
+
+/**
+ * POST /api/pharmacy/consumables/usage
+ * Record that a consumable was used on a patient (deducts stock, creates
+ * an unbilled charge) — single step, Pharmacist or Nurse.
+ */
+export const recordConsumableUsage = async (req: Request, res: Response) => {
+  try {
+    const tenantId = req.user?.tenantId;
+    const recordedById = req.user?.id;
+
+    if (!tenantId || !recordedById) {
+      return res.status(401).json({
+        success: false,
+        message: 'Unauthorized: No tenant ID found',
+      });
+    }
+
+    const usageData = {
+      patientId: req.body.patientId,
+      consumableId: req.body.consumableId,
+      batchId: req.body.batchId,
+      quantityUsed: parseInt(req.body.quantityUsed),
+      admissionId: req.body.admissionId || undefined,
+      consultationId: req.body.consultationId || undefined,
+      notes: req.body.notes,
+      flowRateLpm: req.body.flowRateLpm !== undefined ? parseFloat(req.body.flowRateLpm) : undefined,
+      deliveryMethod: req.body.deliveryMethod || undefined,
+      spO2Before: req.body.spO2Before !== undefined ? parseInt(req.body.spO2Before) : undefined,
+      spO2After: req.body.spO2After !== undefined ? parseInt(req.body.spO2After) : undefined,
+    };
+
+    const result = await recordConsumableUsageUseCase.execute(usageData, recordedById, tenantId);
+
+    return res.status(201).json({
+      success: true,
+      message: 'Consumable usage recorded successfully',
+      data: result,
+    });
+  } catch (error: any) {
+    logger.error('Error recording consumable usage:', error);
+
+    if (error.statusCode) {
+      return res.status(error.statusCode).json({
+        success: false,
+        message: error.message,
+      });
+    }
+
+    return res.status(400).json({
+      success: false,
+      message: getSafeErrorMessage(error, 'Failed to record consumable usage'),
     });
   }
 };

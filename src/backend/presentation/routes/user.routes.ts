@@ -16,6 +16,9 @@ import {
   suspendUser,
   reactivateUser,
   changePassword,
+  adminForceResetPassword,
+  listUserSessions,
+  revokeUserSession,
 } from '../controllers/user.controller';
 
 const router = Router();
@@ -92,5 +95,25 @@ router.post('/:id/suspend', adminOnly, asyncHandler(suspendUser));
  * @access  Private (Admin only)
  */
 router.post('/:id/reactivate', adminOnly, asyncHandler(reactivateUser));
+/**
+ * @route   POST /api/users/:id/force-reset-password
+ * @desc    Admin manually resets user password to default
+ * @access  Private (Admin only)
+ */
+router.post('/:id/force-reset-password', adminOnly, asyncHandler(adminForceResetPassword));
+
+/**
+ * @route   GET /api/users/:id/sessions
+ * @desc    List a user's active sessions (non-revoked, non-expired refresh tokens)
+ * @access  Private (Admin only)
+ */
+router.get('/:id/sessions', adminOnly, asyncHandler(listUserSessions));
+
+/**
+ * @route   POST /api/users/:id/sessions/:sessionId/revoke
+ * @desc    Revoke a single session, forcing that device to re-login
+ * @access  Private (Admin only)
+ */
+router.post('/:id/sessions/:sessionId/revoke', adminOnly, asyncHandler(revokeUserSession));
 
 export default router;

@@ -33,15 +33,14 @@ export class UpdatePatientUseCase {
       throw new NotFoundError('Patient', id);
     }
 
-    // If phone is being updated, check for duplicates
+    // If phone is being updated, check for duplicates. Exact lookup, not the
+    // fuzzy search() this used previously — that matched on ILIKE `contains`
+    // across firstName/lastName/patientId/phone/email, so a phone that was a
+    // substring of another patient's phone/ID/email (e.g. a typo one digit
+    // short) could false-positive as "already exists".
     if (dto.phone && dto.phone !== existingPatient.phone) {
-      const duplicateCheck = await this.patientRepository.search({
-        tenantId,
-        query: dto.phone,
-        take: 1,
-      });
-
-      if (duplicateCheck.total > 0) {
+      const duplicate = await this.patientRepository.findByPhone(dto.phone.trim(), tenantId);
+      if (duplicate && duplicate.id !== id) {
         throw new ConflictError('A patient with this phone number already exists');
       }
     }
@@ -55,14 +54,26 @@ export class UpdatePatientUseCase {
       ...(dto.phone && { phone: dto.phone.trim() }),
       ...(dto.email !== undefined && { email: dto.email?.trim() }),
       ...(dto.address !== undefined && { address: dto.address?.trim() }),
+      ...(dto.city !== undefined && { city: dto.city?.trim() }),
+      ...(dto.state !== undefined && { state: dto.state?.trim() }),
+      ...(dto.lga !== undefined && { lga: dto.lga?.trim() }),
+      ...(dto.country !== undefined && { country: dto.country?.trim() }),
+      ...(dto.nationality !== undefined && { nationality: dto.nationality?.trim() }),
+      ...(dto.occupation !== undefined && { occupation: dto.occupation?.trim() }),
+      ...(dto.maritalStatus !== undefined && { maritalStatus: dto.maritalStatus }),
       ...(dto.bloodGroup !== undefined && { bloodGroup: dto.bloodGroup }),
+      ...(dto.genotype !== undefined && { genotype: dto.genotype }),
       ...(dto.allergies && { allergies: dto.allergies }),
       ...(dto.chronicConditions && { chronicConditions: dto.chronicConditions }),
       ...(dto.emergencyContact && { emergencyContact: dto.emergencyContact }),
+      ...(dto.patientType && { patientType: dto.patientType }),
+      ...(dto.hmoProvider !== undefined && { hmoProvider: dto.hmoProvider }),
+      ...(dto.hmoNumber !== undefined && { hmoNumber: dto.hmoNumber }),
+      ...(dto.nhisNumber !== undefined && { nhisNumber: dto.nhisNumber }),
     };
 
     // Update patient in database
-    const updatedPatient = await this.patientRepository.update(id, tenantId, updateData);
+    const updatedPatient = await this.patientRepository.update(id, tenantId, updateData, dto.version);
 
     // Convert to entity and response DTO
     const patientEntity = PatientEntity.fromDatabase(updatedPatient);
@@ -77,6 +88,7 @@ export class UpdatePatientUseCase {
   private toResponseDto(patient: PatientEntity): PatientResponseDto {
     return {
       id: patient.id,
+      version: patient.version,
       patientId: patient.patientNumber,
       firstName: patient.firstName,
       lastName: patient.lastName,
@@ -87,20 +99,24 @@ export class UpdatePatientUseCase {
       phone: patient.phone,
       email: patient.email || null,
       address: patient.address || null,
-      city: null,
-      state: null,
-      country: 'Nigeria',
-      nationality: null,
-      occupation: null,
-      maritalStatus: null,
+      city: patient.city || null,
+      state: patient.state || null,
+      lga: patient.lga || null,
+      country: patient.country || 'Nigeria',
+      nationality: patient.nationality || null,
+      occupation: patient.occupation || null,
+      maritalStatus: patient.maritalStatus || null,
       bloodGroup: patient.bloodGroup || null,
       genotype: patient.genotype || null,
       allergies: patient.allergies || [],
       chronicConditions: patient.chronicConditions || [],
-      pastSurgicalHistory: patient.pastSurgicalHistory || null,
-      emergencyContact: patient.emergencyContact || null,
-      nhisNumber: null,
-      photoUrl: null,
+      pastSurgicalHistory: patient.pastSurgicalHistory,
+      emergencyContact: patient.emergencyContact,
+      nhisNumber: patient.nhisNumber,
+      patientType: patient.patientType,
+      hmoProvider: patient.hmoProvider,
+      hmoNumber: patient.hmoNumber,
+      photoUrl: patient.photoUrl,
       status: patient.status,
       hasAllergies: patient.hasAnyAllergies(),
       consentGiven: patient.consentGiven || false,

@@ -5,11 +5,15 @@
  */
 
 import { IAppointmentRepository } from '../../../domain/interfaces/IAppointmentRepository';
+import { IPatientRepository } from '../../../domain/interfaces/IPatientRepository';
 import { GetAppointmentsDto, GetAppointmentsResponse } from '../../dtos/appointment/GetAppointments.dto';
 import { logger } from '../../../config/logger';
 
 export class GetAppointmentsUseCase {
-  constructor(private appointmentRepository: IAppointmentRepository) {}
+  constructor(
+    private appointmentRepository: IAppointmentRepository,
+    private patientRepository: IPatientRepository
+  ) {}
 
   async execute(dto: GetAppointmentsDto, tenantId: string): Promise<GetAppointmentsResponse> {
     try {
@@ -31,26 +35,36 @@ export class GetAppointmentsUseCase {
         take: dto.take || 50,
       });
 
+      // Fetch unique patients to enrich appointments
+      const uniquePatientIds = [...new Set(result.appointments.map(a => a.patientId))];
+      const patients = await Promise.all(uniquePatientIds.map(id => this.patientRepository.findById(id, tenantId)));
+      const patientMap = new Map(patients.filter((p): p is NonNullable<typeof p> => p !== null).map(p => [p.id, p]));
+
       return {
         success: true,
         message: `Found ${result.total} appointment(s)`,
-        appointments: result.appointments.map(apt => ({
-          id: apt.id,
-          patientId: apt.patientId,
-          doctorId: apt.doctorId,
-          appointmentDate: apt.appointmentDate,
-          appointmentTime: apt.appointmentTime,
-          appointmentType: apt.appointmentType,
-          reason: apt.reason,
-          duration: apt.duration,
-          status: apt.status,
-          checkedInAt: apt.checkedInAt,
-          completedAt: apt.completedAt,
-          cancelledAt: apt.cancelledAt,
-          cancellationReason: apt.cancellationReason,
-          createdAt: apt.createdAt,
-          updatedAt: apt.updatedAt,
-        })),
+        appointments: result.appointments.map(apt => {
+          const patient = patientMap.get(apt.patientId);
+          return {
+            id: apt.id,
+            patientId: apt.patientId,
+            patientName: patient ? `${patient.firstName} ${patient.lastName}` : `Patient ${apt.patientId.substring(0, 8)}`,
+            patientNumber: patient?.patientId,
+            doctorId: apt.doctorId,
+            appointmentDate: apt.appointmentDate,
+            appointmentTime: apt.appointmentTime,
+            appointmentType: apt.appointmentType,
+            reason: apt.reason,
+            duration: apt.duration,
+            status: apt.status,
+            checkedInAt: apt.checkedInAt,
+            completedAt: apt.completedAt,
+            cancelledAt: apt.cancelledAt,
+            cancellationReason: apt.cancellationReason,
+            createdAt: apt.createdAt,
+            updatedAt: apt.updatedAt,
+          };
+        }),
         total: result.total,
       };
     } catch (error) {

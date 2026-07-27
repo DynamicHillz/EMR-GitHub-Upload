@@ -56,6 +56,9 @@ export class ChangePasswordUseCase {
           password: hashedPassword,
           failedLoginAttempts: 0,
           lockedUntil: null,
+          // @ts-ignore - Temporary fix for schema alignment
+          requirePasswordChange: false,
+          passwordChangedAt: new Date(),
         },
       });
 

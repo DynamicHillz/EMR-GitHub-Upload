@@ -27,8 +27,24 @@ import {
   Edit,
   CheckCircle,
   Shield,
+  Baby,
+  Syringe,
+  Bed,
 } from 'lucide-react';
+
+import AncTab from './mch/AncTab';
+import { offlineFetch } from '../services/offlineFetch';
+import { cachePatientCore, getCachedPatientCore } from '../services/offlineCache';
+import ImmunizationsTab from './mch/ImmunizationsTab';
 import { useToast } from './ToastContainer';
+import TriageAssessmentModal from './triage/TriageAssessmentModal';
+import PrescriptionModal from './consultations/PrescriptionModal';
+import { formatBloodGroup, formatDate } from '../utils/formatters';
+import { NIGERIA_LGA_MAP, NIGERIAN_STATES } from '../utils/nigeria-states';
+import outpatientVitalService, { OutpatientVital } from '../services/outpatient-vital.service';
+import triageService from '../services/triage.service';
+import InpatientService from '../services/InpatientService';
+import Dropdown from './common/Dropdown';
 
 interface Patient {
   id: string;
@@ -44,6 +60,7 @@ interface Patient {
   address: string | null;
   city: string | null;
   state: string | null;
+  lga: string | null;
   country: string;
   bloodGroup: string | null;
   genotype: string | null;
@@ -65,18 +82,30 @@ interface Patient {
 interface PatientDetailViewProps {
   patientId: string;
   onBack: () => void;
+  initialTab?: TabType;
 }
 
-type TabType = 'demographics' | 'medical' | 'consultations' | 'prescriptions' | 'labs' | 'timeline';
+type TabType = 'demographics' | 'medical' | 'consultations' | 'prescriptions' | 'labs' | 'timeline' | 'anc' | 'immunizations' | 'admissions';
 
-const PatientDetailView: React.FC<PatientDetailViewProps> = ({ patientId, onBack }) => {
+const PatientDetailView: React.FC<PatientDetailViewProps> = ({ patientId, onBack, initialTab = 'demographics' }) => {
   const navigate = useNavigate();
   const toast = useToast();
-  const [activeTab, setActiveTab] = useState<TabType>('demographics');
+  const [activeTab, setActiveTab] = useState<TabType>(initialTab);
   const [patient, setPatient] = useState<Patient | null>(null);
   const [branding, setBranding] = useState<any>(null);
+  const [vitals, setVitals] = useState<OutpatientVital[]>([]);
+  const [admissions, setAdmissions] = useState<any[]>([]);
+  const [admissionsLoading, setAdmissionsLoading] = useState(false);
+  const [timelineEvents, setTimelineEvents] = useState<any[]>([]);
+  const [timelineLoading, setTimelineLoading] = useState(false);
+  const [patientConsultations, setPatientConsultations] = useState<any[]>([]);
+  const [patientPrescriptions, setPatientPrescriptions] = useState<any[]>([]);
+  const [labResults, setLabResults] = useState<any[]>([]);
+  const [labResultsLoading, setLabResultsLoading] = useState(false);
+  const [showPrescriptionModal, setShowPrescriptionModal] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [showEditModal, setShowEditModal] = useState(false);
+  const [showTriageModal, setShowTriageModal] = useState(false);
   const [showConsentHistoryModal, setShowConsentHistoryModal] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [editFormData, setEditFormData] = useState({
@@ -89,6 +118,7 @@ const PatientDetailView: React.FC<PatientDetailViewProps> = ({ patientId, onBack
     address: '',
     city: '',
     state: '',
+    lga: '',
     bloodGroup: '',
     genotype: '',
     allergies: [] as string[],
@@ -98,18 +128,263 @@ const PatientDetailView: React.FC<PatientDetailViewProps> = ({ patientId, onBack
       phone: '',
       relationship: '',
     },
+    patientType: 'PRIVATE',
+    hmoProvider: '',
+    hmoNumber: '',
+    nhisNumber: '',
     updateReason: '',
   });
 
   useEffect(() => {
     fetchPatientDetails();
     fetchBranding();
+    fetchVitals();
   }, [patientId]);
+
+  const fetchAdmissions = async () => {
+    try {
+      setAdmissionsLoading(true);
+      const data = await InpatientService.getAdmissionsByPatientId(patientId);
+      setAdmissions(data || []);
+    } catch (error) {
+      console.error('Failed to fetch admissions', error);
+      toast.error('Error', 'Failed to fetch admission history');
+    } finally {
+      setAdmissionsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'admissions' && admissions.length === 0) {
+      fetchAdmissions();
+    }
+    if (activeTab === 'labs' && labResults.length === 0) {
+      fetchLabResults();
+    }
+  }, [activeTab, patientId]);
+
+  const fetchLabResults = async () => {
+    setLabResultsLoading(true);
+    try {
+      const token = localStorage.getItem('token');
+      const apiBaseUrl = import.meta.env.VITE_API_URL || `${window.location.protocol}//${window.location.hostname}:3000`;
+      const headers = { Authorization: `Bearer ${token}` };
+      const res = await fetch(`${apiBaseUrl}/api/lab/tests?patientId=${patientId}`, { headers });
+      const data = res.ok ? await res.json() : { data: [] };
+      setLabResults(data.data || []);
+    } catch (error) {
+      console.error('Failed to fetch lab results', error);
+    } finally {
+      setLabResultsLoading(false);
+    }
+  };
+
+  const fetchTimelineEvents = async () => {
+    if (!patient) return;
+    setTimelineLoading(true);
+    try {
+      const token = localStorage.getItem('token');
+      const apiBaseUrl = import.meta.env.VITE_API_URL || `${window.location.protocol}//${window.location.hostname}:3000`;
+      const headers = { Authorization: `Bearer ${token}` };
+      
+      // 1. Get Consultations
+      const consRes = await fetch(`${apiBaseUrl}/api/consultations/patient/${patientId}`, { headers });
+      const consData = consRes.ok ? await consRes.json() : { data: [] };
+      const consultations = consData.data || [];
+      setPatientConsultations(consultations);
+
+      // 1b. Get Prescriptions
+      const presRes = await fetch(`${apiBaseUrl}/api/prescriptions/patient/${patientId}`, { headers });
+      const presData = presRes.ok ? await presRes.json() : { data: [] };
+      setPatientPrescriptions(presData.data || []);
+
+      // 2. Get Admissions
+      let admissionEvents = admissions;
+      if (admissionEvents.length === 0) {
+        const admissionsData = await InpatientService.getAdmissionsByPatientId(patientId);
+        admissionEvents = admissionsData || [];
+      }
+
+      const events: any[] = [];
+      
+      events.push({
+        id: 'reg',
+        type: 'REGISTRATION',
+        title: 'Patient Registered',
+        date: patient.createdAt,
+        description: `Patient ${patient.fullName} was registered in the system.`,
+        icon: User,
+        colorClass: 'bg-blue-100 text-blue-600',
+      });
+
+      vitals.forEach(v => {
+        events.push({
+          id: `vital-${v.id}`,
+          type: 'VITALS',
+          title: 'Vitals Recorded',
+          date: v.recordedAt,
+          description: `BP: ${v.bloodPressure || 'N/A'}, PR: ${v.heartRate || 'N/A'}, Temp: ${v.temperature || 'N/A'}`,
+          icon: Heart,
+          colorClass: 'bg-red-100 text-red-600',
+        });
+      });
+
+      consultations.forEach((c: any) => {
+        events.push({
+          id: `cons-start-${c.id}`,
+          type: 'CONSULTATION',
+          title: `Consultation Started`,
+          date: c.consultationDate || c.createdAt,
+          description: c.doctor ? `Dr. ${c.doctor.firstName} ${c.doctor.lastName}` : 'Doctor consultation',
+          icon: FileText,
+          colorClass: 'bg-green-100 text-green-600',
+        });
+        
+        if (c.finalizedAt) {
+          events.push({
+            id: `cons-end-${c.id}`,
+            type: 'CONSULTATION',
+            title: `Consultation Finalized`,
+            date: c.finalizedAt,
+            description: c.doctor ? `Dr. ${c.doctor.firstName} ${c.doctor.lastName} finalized the consultation records.` : 'Consultation records finalized.',
+            icon: CheckCircle,
+            colorClass: 'bg-teal-100 text-teal-700',
+          });
+        } else if (c.status === 'FINALIZED' || c.status === 'LOCKED' || c.status === 'COMPLETED') {
+          events.push({
+            id: `cons-end-${c.id}`,
+            type: 'CONSULTATION',
+            title: `Consultation Finalized`,
+            date: c.updatedAt || c.createdAt,
+            description: c.doctor ? `Dr. ${c.doctor.firstName} ${c.doctor.lastName} finalized the consultation records.` : 'Consultation records finalized.',
+            icon: CheckCircle,
+            colorClass: 'bg-teal-100 text-teal-700',
+          });
+        }
+      });
+
+      admissionEvents.forEach((a: any) => {
+        events.push({
+          id: `adm-${a.id}`,
+          type: 'ADMISSION',
+          title: `Inpatient Admission`,
+          date: a.admissionDate,
+          description: `Admitted to ${a.ward?.name || 'Ward'} (Bed ${a.bed?.bedNumber || 'N/A'}). Reason: ${a.reason}`,
+          icon: Bed,
+          colorClass: 'bg-purple-100 text-purple-600',
+        });
+        if (a.dischargeDate) {
+          events.push({
+            id: `dis-${a.id}`,
+            type: 'DISCHARGE',
+            title: `Discharged`,
+            date: a.dischargeDate,
+            description: `Discharged from ${a.ward?.name || 'Ward'}.`,
+            icon: CheckCircle,
+            colorClass: 'bg-teal-100 text-teal-600',
+          });
+        }
+      });
+
+      events.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+      setTimelineEvents(events);
+    } catch (error) {
+      console.error('Failed to fetch timeline', error);
+    } finally {
+      setTimelineLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (['timeline', 'consultations', 'prescriptions'].includes(activeTab) && patientConsultations.length === 0) {
+      fetchTimelineEvents();
+    }
+  }, [activeTab, patientId, patient]);
+
+  const fetchVitals = async () => {
+    try {
+      const token = localStorage.getItem('token');
+      const apiBaseUrl = import.meta.env.VITE_API_URL || `${window.location.protocol}//${window.location.hostname}:3000`;
+
+      // Fetch outpatient/triage vitals
+      const outpatientData = await outpatientVitalService.getPatientVitals(patientId);
+      let allVitals: OutpatientVital[] = outpatientData || [];
+
+      // Fetch triage vitals
+      try {
+        const triageData = await triageService.getPatientTriageHistory(patientId);
+        const mappedTriageVitals = (triageData || []).map((t: any) => ({
+          id: t.id,
+          patientId: t.patientId,
+          recordedById: t.triageNurseId,
+          bloodPressure: (t.systolicBP && t.diastolicBP) ? `${t.systolicBP}/${t.diastolicBP}` : undefined,
+          heartRate: t.heartRate,
+          respiratoryRate: t.respiratoryRate,
+          temperature: t.temperature,
+          weight: t.weight,
+          spO2: t.spO2,
+          notes: t.chiefComplaint ? `Triage Complaint: ${t.chiefComplaint}` : undefined,
+          recordedAt: t.triageTime,
+          recordedBy: t.triageNurse ? {
+            id: t.triageNurse.id,
+            firstName: t.triageNurse.firstName,
+            lastName: t.triageNurse.lastName,
+            role: 'NURSE'
+          } : undefined
+        } as OutpatientVital));
+        allVitals = [...allVitals, ...mappedTriageVitals];
+      } catch (err) {
+        console.error('Error fetching triage vitals:', err);
+      }
+
+      // Fetch consultation vitals
+      const consResponse = await fetch(`${apiBaseUrl}/api/consultations/patient/${patientId}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+
+      if (consResponse.ok) {
+        const consResult = await consResponse.json();
+        const consultations = consResult.data || [];
+
+        // Extract vitals from consultations
+        const consVitals = consultations
+          .filter((c: any) => c.vitalSigns && (c.vitalSigns.bloodPressure || c.vitalSigns.heartRate || c.vitalSigns.temperature || c.vitalSigns.weight || c.vitalSigns.spO2))
+          .map((c: any) => ({
+            id: c.id,
+            patientId: patientId,
+            recordedById: c.doctorId,
+            consultationId: c.id,
+            bloodPressure: c.vitalSigns.bloodPressure || (c.vitalSigns.systolicBP && c.vitalSigns.diastolicBP ? `${c.vitalSigns.systolicBP}/${c.vitalSigns.diastolicBP}` : undefined),
+            heartRate: c.vitalSigns.heartRate,
+            temperature: c.vitalSigns.temperature,
+            weight: c.vitalSigns.weight,
+            height: c.vitalSigns.height,
+            spO2: c.vitalSigns.spO2,
+            recordedAt: c.consultationDate || c.createdAt,
+            recordedBy: c.doctor ? {
+              id: c.doctor.id,
+              firstName: c.doctor.firstName,
+              lastName: c.doctor.lastName,
+              role: 'DOCTOR'
+            } : undefined
+          } as OutpatientVital));
+
+        allVitals = [...allVitals, ...consVitals];
+      }
+
+      // Sort by recordedAt descending
+      allVitals.sort((a, b) => new Date(b.recordedAt).getTime() - new Date(a.recordedAt).getTime());
+
+      setVitals(allVitals);
+    } catch (error) {
+      console.error('Error fetching vitals:', error);
+    }
+  };
 
   const fetchBranding = async () => {
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch('http://localhost:3000/api/branding', {
+      const response = await fetch(`${window.location.protocol}//${window.location.hostname}:3000/api/branding`, {
         headers: {
           'Authorization': `Bearer ${token}`,
         },
@@ -128,7 +403,7 @@ const PatientDetailView: React.FC<PatientDetailViewProps> = ({ patientId, onBack
     setIsLoading(true);
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch(`http://localhost:3000/api/patients/${patientId}`, {
+      const response = await fetch(`${window.location.protocol}//${window.location.hostname}:3000/api/patients/${patientId}`, {
         headers: {
           'Authorization': `Bearer ${token}`,
         },
@@ -137,11 +412,22 @@ const PatientDetailView: React.FC<PatientDetailViewProps> = ({ patientId, onBack
       const data = await response.json();
       if (response.ok) {
         setPatient(data.data);
+        // Opportunistic offline read cache — bounded to the patient
+        // actually being viewed, not the whole database. See offlineCache.ts.
+        cachePatientCore(patientId!, data.data).catch(() => {});
       } else {
         console.error('Failed to fetch patient details:', data.message);
       }
     } catch (error) {
-      console.error('Error fetching patient details:', error);
+      console.error('Error fetching patient details — falling back to offline cache if available:', error);
+      const cached = await getCachedPatientCore(patientId!);
+      if (cached) {
+        setPatient(cached.data);
+        toast.warning(
+          'Showing Offline Data',
+          `Loaded from a snapshot saved ${new Date(cached.cachedAt).toLocaleString()} — no connection right now.`
+        );
+      }
     } finally {
       setIsLoading(false);
     }
@@ -152,7 +438,7 @@ const PatientDetailView: React.FC<PatientDetailViewProps> = ({ patientId, onBack
   if (!brandingData) {
     try {
       const token = localStorage.getItem('token');
-      const res = await fetch('http://localhost:3000/api/branding', {
+      const res = await fetch(`${window.location.protocol}//${window.location.hostname}:3000/api/branding`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       const data = await res.json();
@@ -361,7 +647,7 @@ const PatientDetailView: React.FC<PatientDetailViewProps> = ({ patientId, onBack
               </div>
               <div class="info-item">
                 <span class="label">Blood Group:</span>
-                <span class="value">${patient?.bloodGroup || 'Not recorded'}</span>
+                <span class="value">${formatBloodGroup(patient?.bloodGroup) || 'Not recorded'}</span>
               </div>
               <div class="info-item">
                 <span class="label">Phone:</span>
@@ -478,6 +764,7 @@ const PatientDetailView: React.FC<PatientDetailViewProps> = ({ patientId, onBack
       address: patient.address || '',
       city: patient.city || '',
       state: patient.state || '',
+      lga: patient.lga || '',
       bloodGroup: patient.bloodGroup || '',
       genotype: patient.genotype || '',
       allergies: patient.allergies || [],
@@ -487,6 +774,10 @@ const PatientDetailView: React.FC<PatientDetailViewProps> = ({ patientId, onBack
         phone: '',
         relationship: '',
       },
+      patientType: patient.patientType || 'PRIVATE',
+      hmoProvider: patient.hmoProvider || '',
+      hmoNumber: patient.hmoNumber || '',
+      nhisNumber: patient.nhisNumber || '',
       updateReason: '',
     });
     setShowEditModal(true);
@@ -494,9 +785,14 @@ const PatientDetailView: React.FC<PatientDetailViewProps> = ({ patientId, onBack
 
   const handleEditInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target;
-
-    // Handle nested emergencyContact fields
-    if (name.startsWith('emergencyContact.')) {
+    
+    if (name === 'state') {
+      setEditFormData((prev) => ({
+        ...prev,
+        state: value,
+        lga: '', // Reset LGA when state changes
+      }));
+    } else if (name.startsWith('emergencyContact.')) {
       const field = name.split('.')[1];
       setEditFormData(prev => ({
         ...prev,
@@ -556,27 +852,49 @@ const PatientDetailView: React.FC<PatientDetailViewProps> = ({ patientId, onBack
         email: editFormData.email || undefined,
         address: editFormData.address || undefined,
         city: editFormData.city || undefined,
-        state: editFormData.state,
+        state: editFormData.state || undefined,
+        lga: editFormData.lga || undefined,
         bloodGroup: editFormData.bloodGroup || undefined,
         genotype: editFormData.genotype || undefined,
         allergies: editFormData.allergies,
         chronicConditions: editFormData.chronicConditions,
         emergencyContact: editFormData.emergencyContact,
+        patientType: editFormData.patientType as 'PRIVATE' | 'HMO',
+        hmoProvider: editFormData.patientType === 'HMO' ? editFormData.hmoProvider : undefined,
+        hmoNumber: editFormData.patientType === 'HMO' ? editFormData.hmoNumber : undefined,
+        nhisNumber: editFormData.nhisNumber || undefined,
         updateReason: editFormData.updateReason || undefined,
+        version: (patient as any).version,
       };
 
-      const response = await fetch(`http://localhost:3000/api/patients/${patient.id}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
+      const response = await offlineFetch(
+        `${window.location.protocol}//${window.location.hostname}:3000/api/patients/${patient.id}`,
+        {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+          },
+          body: JSON.stringify(payload),
         },
-        body: JSON.stringify(payload),
-      });
+        { entityType: 'PATIENT', entityId: patient.id, baseVersion: (patient as any).version }
+      );
 
       const data = await response.json();
 
-      if (response.ok) {
+      if (response.status === 409) {
+        toast.error(
+          'Update Conflict',
+          'This patient was changed by someone else since you loaded this page. Please reload and try again.'
+        );
+      } else if (data.queued) {
+        toast.success(
+          'Saved Offline',
+          `${patient.fullName}'s information will sync automatically when your connection returns.`
+        );
+        setShowEditModal(false);
+        fetchPatientDetails();
+      } else if (response.ok) {
         toast.success(
           'Patient Updated Successfully!',
           `${patient.fullName}'s information has been updated.`
@@ -619,12 +937,15 @@ const PatientDetailView: React.FC<PatientDetailViewProps> = ({ patientId, onBack
     );
   }
 
-  const tabs = [
+  const tabs = [ 
     { id: 'demographics' as TabType, label: 'Demographics', icon: User },
     { id: 'medical' as TabType, label: 'Medical Summary', icon: Heart },
     { id: 'consultations' as TabType, label: 'Consultations', icon: FileText },
     { id: 'prescriptions' as TabType, label: 'Prescriptions', icon: Pill },
     { id: 'labs' as TabType, label: 'Lab Results', icon: TestTube },
+    { id: 'admissions' as TabType, label: 'Admissions', icon: Bed },
+    { id: 'anc' as TabType, label: 'Maternal Care', icon: Baby },
+    { id: 'immunizations' as TabType, label: 'Immunizations', icon: Syringe },
     { id: 'timeline' as TabType, label: 'Timeline', icon: Clock },
   ];
 
@@ -640,17 +961,44 @@ const PatientDetailView: React.FC<PatientDetailViewProps> = ({ patientId, onBack
             >
               ← Back to Search
             </button>
-            <h2 className="text-2xl font-bold">{patient.fullName}</h2>
+            <div className="flex items-center gap-3">
+              <h2 className="text-2xl font-bold">{patient.fullName}</h2>
+              {patient.patientType === 'HMO' ? (
+                <span className="px-2 py-1 text-xs font-semibold bg-purple-100 text-purple-800 rounded-full border border-purple-200">
+                  HMO Patient
+                </span>
+              ) : (
+                <span className="px-2 py-1 text-xs font-semibold bg-blue-100 text-blue-800 rounded-full border border-blue-200">
+                  Private Patient
+                </span>
+              )}
+            </div>
             <p className="text-gray-600">Patient ID: {patient.patientId}</p>
           </div>
-          <button
-            onClick={handlePrint}
-            className="btn btn-secondary flex items-center gap-2"
-          >
+          <div className="flex gap-2">
+            <button
+              onClick={() => setShowTriageModal(true)}
+              className="btn btn-primary flex items-center gap-2"
+            >
+              <Heart className="w-4 h-4" />
+              Take Vitals (Triage)
+            </button>
+            <button
+              onClick={handleEditClick}
+              className="btn btn-secondary flex items-center gap-2"
+            >
+              <Edit className="w-4 h-4" />
+              Edit Patient
+            </button>
+            <button
+              onClick={handlePrint}
+              className="btn btn-secondary flex items-center gap-2"
+            >
             <Printer className="w-4 h-4" />
             Print Medical Report
           </button>
         </div>
+      </div>
 
         {/* Allergy Warning Banner */}
         {patient.hasAllergies && (
@@ -705,13 +1053,6 @@ const PatientDetailView: React.FC<PatientDetailViewProps> = ({ patientId, onBack
           <div className="space-y-6">
             <div className="flex items-center justify-between border-b pb-2">
               <h3 className="text-lg font-semibold">Personal Information</h3>
-              <button
-                onClick={handleEditClick}
-                className="btn btn-secondary flex items-center gap-2 text-sm"
-              >
-                <Edit className="w-4 h-4" />
-                Edit
-              </button>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div>
@@ -750,11 +1091,37 @@ const PatientDetailView: React.FC<PatientDetailViewProps> = ({ patientId, onBack
               </div>
               <div>
                 <label className="text-sm text-gray-600">Registration Date</label>
-                <p className="font-medium">{new Date(patient.createdAt).toLocaleDateString()}</p>
+                <p className="font-medium">{formatDate(patient.createdAt)}</p>
               </div>
               <div>
                 <label className="text-sm text-gray-600">Last Updated</label>
-                <p className="font-medium">{new Date(patient.updatedAt).toLocaleDateString()}</p>
+                <p className="font-medium">{formatDate(patient.updatedAt)}</p>
+              </div>
+            </div>
+
+            <h3 className="text-lg font-semibold border-b pb-2 mt-8">Insurance & Billing Details</h3>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-4">
+              <div>
+                <label className="text-sm text-gray-600">Patient Type</label>
+                <p className="font-medium">
+                  {patient.patientType === 'HMO' ? 'HMO / Insurance' : 'Private (Out of pocket)'}
+                </p>
+              </div>
+              {patient.patientType === 'HMO' && (
+                <>
+                  <div>
+                    <label className="text-sm text-gray-600">HMO Provider</label>
+                    <p className="font-medium">{patient.hmoProvider || 'N/A'}</p>
+                  </div>
+                  <div>
+                    <label className="text-sm text-gray-600">HMO Number</label>
+                    <p className="font-medium">{patient.hmoNumber || 'N/A'}</p>
+                  </div>
+                </>
+              )}
+              <div>
+                <label className="text-sm text-gray-600">NHIS Number</label>
+                <p className="font-medium">{patient.nhisNumber || 'Not provided'}</p>
               </div>
             </div>
 
@@ -863,7 +1230,7 @@ const PatientDetailView: React.FC<PatientDetailViewProps> = ({ patientId, onBack
               <div>
                 <label className="text-sm text-gray-600">Blood Group</label>
                 <p className="font-medium text-lg">
-                  {patient.bloodGroup || (
+                  {formatBloodGroup(patient.bloodGroup) || (
                     <span className="text-gray-400 text-base">Not recorded</span>
                   )}
                 </p>
@@ -923,43 +1290,265 @@ const PatientDetailView: React.FC<PatientDetailViewProps> = ({ patientId, onBack
                 <p className="text-gray-400">No chronic conditions recorded</p>
               )}
             </div>
+
+            {/* Recent Vitals */}
+            <div className="pt-4 border-t border-gray-100">
+              <label className="text-sm font-semibold text-gray-800 mb-4 flex items-center gap-2">
+                <Heart className="w-4 h-4 text-rose-500" />
+                Recent Vitals
+              </label>
+              {vitals.length > 0 ? (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                  {vitals.slice(0, 4).map((vital, index) => (
+                    <div key={index} className="bg-gray-50 rounded-lg p-4 border border-gray-100 shadow-sm">
+                      <div className="text-xs text-gray-500 mb-2 flex items-center justify-between">
+                        <span>{formatDate(vital.recordedAt)}</span>
+                      </div>
+                      <div className="space-y-2">
+                        {vital.bloodPressure && (
+                          <div className="flex justify-between">
+                            <span className="text-sm text-gray-600">BP:</span>
+                            <span className="text-sm font-medium">{vital.bloodPressure} <span className="text-xs text-gray-400">mmHg</span></span>
+                          </div>
+                        )}
+                        {vital.heartRate && (
+                          <div className="flex justify-between">
+                            <span className="text-sm text-gray-600">PR:</span>
+                            <span className="text-sm font-medium">{vital.heartRate} <span className="text-xs text-gray-400">bpm</span></span>
+                          </div>
+                        )}
+                        {vital.temperature && (
+                          <div className="flex justify-between">
+                            <span className="text-sm text-gray-600">Temp:</span>
+                            <span className="text-sm font-medium">{vital.temperature}°C</span>
+                          </div>
+                        )}
+                        {vital.weight && (
+                          <div className="flex justify-between">
+                            <span className="text-sm text-gray-600">Weight:</span>
+                            <span className="text-sm font-medium">{vital.weight} <span className="text-xs text-gray-400">kg</span></span>
+                          </div>
+                        )}
+                        {vital.spO2 && (
+                          <div className="flex justify-between">
+                            <span className="text-sm text-gray-600">SpO2:</span>
+                            <span className="text-sm font-medium">{vital.spO2}%</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-gray-400 text-sm">No vitals recorded recently</p>
+              )}
+            </div>
           </div>
         )}
 
         {activeTab === 'consultations' && (
           <div className="space-y-4">
-            <h3 className="text-lg font-semibold border-b pb-2">Consultation History</h3>
-            <div className="text-center py-12 text-gray-500">
-              <FileText className="w-16 h-16 mx-auto mb-4 text-gray-300" />
-              <p>No consultations recorded yet</p>
+            <h3 className="text-lg font-semibold border-b pb-2 flex items-center justify-between">
+              Consultation History
               <button
-                className="btn btn-primary mt-4"
+                className="btn btn-primary text-sm py-1 px-3"
                 onClick={() => navigate('/consultations', { state: { patientId: patient?.id, patientName: patient?.fullName } })}
               >
                 Schedule Consultation
               </button>
-            </div>
+            </h3>
+            {timelineLoading ? (
+              <div className="flex justify-center p-8">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600"></div>
+              </div>
+            ) : patientConsultations.length === 0 ? (
+              <div className="text-center py-12 text-gray-500">
+                <FileText className="w-16 h-16 mx-auto mb-4 text-gray-300" />
+                <p>No consultations recorded yet</p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {patientConsultations.map((c: any) => (
+                  <div key={c.id} className="border border-gray-200 rounded-lg p-4 hover:bg-gray-50">
+                    <div className="flex justify-between items-start mb-2">
+                      <div>
+                        <h4 className="font-medium text-gray-900">{c.doctorName ? `Dr. ${c.doctorName}` : 'Doctor Consultation'}</h4>
+                        <p className="text-sm text-gray-500">
+                          {formatDate(c.consultationDate || c.createdAt)}
+                        </p>
+                      </div>
+                      <span className={`px-2 py-1 text-xs font-medium rounded-full ${
+                        c.status === 'COMPLETED' || c.status === 'FINALIZED' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'
+                      }`}>
+                        {c.status}
+                      </span>
+                    </div>
+                    {c.assessment && (
+                      <div className="mt-3">
+                        <p className="text-sm font-medium text-gray-700">Diagnosis/Assessment:</p>
+                        <p className="text-sm text-gray-600 mt-1">{c.assessment}</p>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
         {activeTab === 'prescriptions' && (
           <div className="space-y-4">
-            <h3 className="text-lg font-semibold border-b pb-2">Prescription History</h3>
-            <div className="text-center py-12 text-gray-500">
-              <Pill className="w-16 h-16 mx-auto mb-4 text-gray-300" />
-              <p>No prescriptions recorded yet</p>
+            <div className="flex justify-between items-center border-b pb-2">
+              <h3 className="text-lg font-semibold">Prescription History</h3>
+              <button
+                onClick={() => setShowPrescriptionModal(true)}
+                className="btn btn-primary flex items-center gap-2 text-sm"
+              >
+                <Pill className="w-4 h-4" /> Add Prescription
+              </button>
             </div>
+            {timelineLoading ? (
+              <div className="flex justify-center p-8">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600"></div>
+              </div>
+            ) : patientPrescriptions.length === 0 ? (
+              <div className="text-center py-12 text-gray-500">
+                <Pill className="w-16 h-16 mx-auto mb-4 text-gray-300" />
+                <p>No prescriptions recorded yet</p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {patientPrescriptions.map((p: any) => (
+                  <div key={p.id} className="border border-gray-200 rounded-lg p-4 hover:bg-gray-50">
+                    <div className="flex justify-between items-start mb-2">
+                      <div>
+                        <h4 className="font-medium text-gray-900">{p.medication?.name || p.medicationName || 'Medication'}</h4>
+                        <p className="text-sm text-gray-500">
+                          {p.dosage} - {p.frequency} for {p.duration}
+                        </p>
+                        <p className="text-xs text-gray-400 mt-1">
+                          Prescribed: {formatDate(p.createdAt)}
+                          {p.dispensedAt && ` · Dispensed: ${formatDate(p.dispensedAt)}`}
+                        </p>
+                      </div>
+                      <span className={`px-2 py-1 text-xs font-medium rounded-full ${
+                        p.status === 'DISPENSED' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'
+                      }`}>
+                        {p.status || 'PENDING'}
+                      </span>
+                    </div>
+                    {p.instructions && (
+                      <div className="mt-2 text-sm text-gray-600">
+                        <span className="font-medium">Instructions:</span> {p.instructions}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
         {activeTab === 'labs' && (
           <div className="space-y-4">
             <h3 className="text-lg font-semibold border-b pb-2">Laboratory Results</h3>
-            <div className="text-center py-12 text-gray-500">
-              <TestTube className="w-16 h-16 mx-auto mb-4 text-gray-300" />
-              <p>No lab results recorded yet</p>
-              <button className="btn btn-primary mt-4">Order Lab Test</button>
-            </div>
+            {labResultsLoading ? (
+              <div className="flex justify-center p-8">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600"></div>
+              </div>
+            ) : labResults.length === 0 ? (
+              <div className="text-center py-12 text-gray-500">
+                <TestTube className="w-16 h-16 mx-auto mb-4 text-gray-300" />
+                <p>No lab results recorded yet</p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {labResults.map((lab: any) => (
+                  <div key={lab.id} className="border border-gray-200 rounded-lg p-4 hover:bg-gray-50">
+                    <div className="flex justify-between items-start mb-2">
+                      <div>
+                        <h4 className="font-medium text-gray-900">{lab.testName || lab.labTest?.name || 'Lab Test'}</h4>
+                        <p className="text-sm text-gray-500">
+                          {formatDate(lab.orderedAt || lab.createdAt)}
+                        </p>
+                      </div>
+                      <span className={`px-2 py-1 text-xs font-medium rounded-full ${
+                        lab.status === 'COMPLETED' || lab.status === 'REVIEWED' ? 'bg-green-100 text-green-800' :
+                        lab.status === 'SAMPLE_COLLECTED' || lab.status === 'PROCESSING' ? 'bg-blue-100 text-blue-800' :
+                        lab.status === 'CANCELLED' ? 'bg-red-100 text-red-800' :
+                        'bg-yellow-100 text-yellow-800'
+                      }`}>
+                        {lab.status?.replace(/_/g, ' ')}
+                      </span>
+                    </div>
+                    {lab.results && (
+                      <div className="mt-3 bg-gray-50 rounded p-3">
+                        <p className="text-sm font-medium text-gray-700 mb-1">Results:</p>
+                        <p className="text-sm text-gray-600 whitespace-pre-wrap">{typeof lab.results === 'string' ? lab.results : JSON.stringify(lab.results, null, 2)}</p>
+                      </div>
+                    )}
+                    {lab.urgency && (
+                      <div className="mt-2">
+                        <span className={`text-xs font-medium px-2 py-0.5 rounded ${
+                          lab.urgency === 'STAT' ? 'bg-red-100 text-red-700' :
+                          lab.urgency === 'URGENT' ? 'bg-orange-100 text-orange-700' :
+                          'bg-gray-100 text-gray-600'
+                        }`}>
+                          {lab.urgency}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {activeTab === 'admissions' && (
+          <div className="space-y-4">
+            <h3 className="text-lg font-semibold border-b pb-2 flex items-center justify-between">
+              Admission History
+            </h3>
+            {admissionsLoading ? (
+              <div className="flex justify-center p-8">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600"></div>
+              </div>
+            ) : admissions.length === 0 ? (
+              <div className="text-center py-12 text-gray-500">
+                <Bed className="w-16 h-16 mx-auto mb-4 text-gray-300" />
+                <p>No admissions recorded for this patient.</p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {admissions.map(adm => (
+                  <div 
+                    key={adm.id} 
+                    onClick={() => navigate(`/inpatient/${adm.id}`)}
+                    className="border border-gray-200 rounded-lg p-4 hover:bg-gray-50 cursor-pointer transition-colors"
+                  >
+                    <div className="flex justify-between items-start mb-2">
+                      <div>
+                        <h4 className="font-medium text-gray-900">{adm.reason}</h4>
+                        <p className="text-sm text-gray-500">
+                          {adm.bed?.ward?.name} - Bed {adm.bed?.bedNumber}
+                        </p>
+                      </div>
+                      <span className={`px-2 py-1 text-xs font-medium rounded-full ${
+                        adm.status === 'ADMITTED' ? 'bg-primary-100 text-primary-800' : 
+                        adm.status === 'DISCHARGED' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'
+                      }`}>
+                        {adm.status}
+                      </span>
+                    </div>
+                    <div className="flex items-center text-xs text-gray-500 gap-4">
+                      <span>Admitted: {new Date(adm.admissionDate).toLocaleDateString()}</span>
+                      {adm.dischargeDate && <span>Discharged: {new Date(adm.dischargeDate).toLocaleDateString()}</span>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
@@ -967,40 +1556,93 @@ const PatientDetailView: React.FC<PatientDetailViewProps> = ({ patientId, onBack
           <div className="space-y-4">
             <h3 className="text-lg font-semibold border-b pb-2">Patient Timeline</h3>
             <div className="space-y-4">
-              {/* Registration Event */}
-              <div className="flex gap-4">
-                <div className="flex flex-col items-center">
-                  <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center">
-                    <User className="w-5 h-5 text-blue-600" />
-                  </div>
-                  <div className="w-0.5 h-full bg-gray-200 mt-2"></div>
+              {timelineLoading ? (
+                <div className="text-center py-8">
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
+                  <p className="text-gray-500 mt-4">Loading timeline events...</p>
                 </div>
-                <div className="flex-1 pb-8">
-                  <div className="bg-white border border-gray-200 rounded-lg p-4">
-                    <div className="flex items-center justify-between mb-2">
-                      <h4 className="font-semibold">Patient Registered</h4>
-                      <span className="text-sm text-gray-500">
-                        {new Date(patient.createdAt).toLocaleDateString()}
-                      </span>
+              ) : timelineEvents.length === 0 ? (
+                <div className="text-center py-8 text-gray-400">
+                  <p className="text-sm">No medical events found.</p>
+                </div>
+              ) : (
+                timelineEvents.map((event, index) => {
+                  const Icon = event.icon;
+                  const isLast = index === timelineEvents.length - 1;
+                  return (
+                    <div key={event.id} className="flex gap-4">
+                      <div className="flex flex-col items-center">
+                        <div className={`w-10 h-10 rounded-full flex items-center justify-center ${event.colorClass}`}>
+                          <Icon className="w-5 h-5" />
+                        </div>
+                        {!isLast && <div className="w-0.5 h-full bg-gray-200 mt-2"></div>}
+                      </div>
+                      <div className={`flex-1 ${!isLast ? 'pb-8' : ''}`}>
+                        <div className="bg-white border border-gray-200 rounded-lg p-4 shadow-sm hover:shadow-md transition-shadow">
+                          <div className="flex flex-wrap items-center justify-between mb-2 gap-2">
+                            <h4 className="font-semibold text-gray-900">{event.title}</h4>
+                            <span className="text-sm text-gray-500 bg-gray-50 px-2 py-1 rounded border">
+                              {formatDate(event.date)}
+                            </span>
+                          </div>
+                          <p className="text-sm text-gray-700">
+                            {event.description}
+                          </p>
+                          {event.type === 'REGISTRATION' && (
+                            <p className="text-xs text-gray-500 mt-2">
+                              Patient ID: {patient.patientId}
+                            </p>
+                          )}
+                        </div>
+                      </div>
                     </div>
-                    <p className="text-sm text-gray-600">
-                      Patient {patient.fullName} was registered in the system.
-                    </p>
-                    <p className="text-xs text-gray-500 mt-1">
-                      Patient ID: {patient.patientId}
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              {/* Placeholder for future events */}
-              <div className="text-center py-8 text-gray-400">
-                <p className="text-sm">Future medical events will appear here</p>
-              </div>
+                  );
+                })
+              )}
             </div>
           </div>
         )}
+
+        {activeTab === 'anc' && (
+          <AncTab patientId={patient.id} />
+        )}
+
+        {activeTab === 'immunizations' && (
+          <ImmunizationsTab patientId={patient.id} />
+        )}
       </div>
+
+      {showTriageModal && patient && (
+        <TriageAssessmentModal
+          isOpen={showTriageModal}
+          onClose={() => setShowTriageModal(false)}
+          patientId={patient.id}
+          patientName={patient.fullName}
+          onSuccess={() => {
+            setShowTriageModal(false);
+            toast.success('Success', 'Vitals and Triage recorded successfully');
+          }}
+        />
+      )}
+
+      {showPrescriptionModal && patient && (
+        <PrescriptionModal
+          context={{ type: 'general' }}
+          patient={{
+            id: patient.id,
+            firstName: patient.firstName,
+            lastName: patient.lastName,
+            fullName: patient.fullName,
+            allergies: patient.allergies || [],
+          }}
+          onClose={() => setShowPrescriptionModal(false)}
+          onSuccess={() => {
+            setShowPrescriptionModal(false);
+            toast.success('Success', 'Prescription created successfully');
+            fetchTimelineEvents();
+          }}
+        />
+      )}
 
       {/* Consent History Modal - US-PAT-006 */}
       {showConsentHistoryModal && (
@@ -1209,7 +1851,7 @@ const PatientDetailView: React.FC<PatientDetailViewProps> = ({ patientId, onBack
                   </div>
                   <div>
                     <label className="block text-sm font-medium mb-1">Gender *</label>
-                    <select
+                    <Dropdown
                       name="gender"
                       value={editFormData.gender}
                       onChange={handleEditInputChange}
@@ -1219,7 +1861,7 @@ const PatientDetailView: React.FC<PatientDetailViewProps> = ({ patientId, onBack
                       <option value="MALE">Male</option>
                       <option value="FEMALE">Female</option>
                       <option value="OTHER">Other</option>
-                    </select>
+                    </Dropdown>
                   </div>
                   <div>
                     <label className="block text-sm font-medium mb-1">Phone (+234XXXXXXXXXX) *</label>
@@ -1265,14 +1907,33 @@ const PatientDetailView: React.FC<PatientDetailViewProps> = ({ patientId, onBack
                   </div>
                   <div>
                     <label className="block text-sm font-medium mb-1">State *</label>
-                    <input
-                      type="text"
+                    <Dropdown
                       name="state"
                       value={editFormData.state}
                       onChange={handleEditInputChange}
                       className="input w-full"
                       required
-                    />
+                    >
+                      <option value="">Select State</option>
+                      {NIGERIAN_STATES.map(s => <option key={s} value={s}>{s}</option>)}
+                    </Dropdown>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium mb-1">LGA</label>
+                    <Dropdown
+                      name="lga"
+                      value={editFormData.lga}
+                      onChange={handleEditInputChange}
+                      className="input w-full"
+                      disabled={!editFormData.state}
+                    >
+                      <option value="">Select LGA</option>
+                      {editFormData.state && NIGERIA_LGA_MAP[editFormData.state]
+                        ? NIGERIA_LGA_MAP[editFormData.state].map(l => (
+                            <option key={l} value={l}>{l}</option>
+                          ))
+                        : null}
+                    </Dropdown>
                   </div>
                   <div>
                     <label className="block text-sm font-medium mb-1">Patient ID</label>
@@ -1293,26 +1954,26 @@ const PatientDetailView: React.FC<PatientDetailViewProps> = ({ patientId, onBack
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
                     <label className="block text-sm font-medium mb-1">Blood Group</label>
-                    <select
+                    <Dropdown
                       name="bloodGroup"
                       value={editFormData.bloodGroup}
                       onChange={handleEditInputChange}
                       className="input w-full"
                     >
                       <option value="">Select...</option>
-                      <option value="A+">A+</option>
-                      <option value="A-">A-</option>
-                      <option value="B+">B+</option>
-                      <option value="B-">B-</option>
-                      <option value="AB+">AB+</option>
-                      <option value="AB-">AB-</option>
-                      <option value="O+">O+</option>
-                      <option value="O-">O-</option>
-                    </select>
+                      <option value="A_POSITIVE">A+</option>
+                      <option value="A_NEGATIVE">A-</option>
+                      <option value="B_POSITIVE">B+</option>
+                      <option value="B_NEGATIVE">B-</option>
+                      <option value="AB_POSITIVE">AB+</option>
+                      <option value="AB_NEGATIVE">AB-</option>
+                      <option value="O_POSITIVE">O+</option>
+                      <option value="O_NEGATIVE">O-</option>
+                    </Dropdown>
                   </div>
                   <div>
                     <label className="block text-sm font-medium mb-1">Genotype</label>
-                    <select
+                    <Dropdown
                       name="genotype"
                       value={editFormData.genotype}
                       onChange={handleEditInputChange}
@@ -1324,7 +1985,7 @@ const PatientDetailView: React.FC<PatientDetailViewProps> = ({ patientId, onBack
                       <option value="SS">SS</option>
                       <option value="AC">AC</option>
                       <option value="SC">SC</option>
-                    </select>
+                    </Dropdown>
                   </div>
                   <div className="md:col-span-2">
                     <label className="block text-sm font-medium mb-1">Allergies (comma-separated)</label>
@@ -1395,6 +2056,77 @@ const PatientDetailView: React.FC<PatientDetailViewProps> = ({ patientId, onBack
                       required
                     />
                   </div>
+                </div>
+              </div>
+
+              {/* Insurance & Billing Details */}
+              <div className="mb-6">
+                <h4 className="font-semibold mb-3 text-lg border-b pb-2">Insurance & Billing Details</h4>
+                
+                <div className="mb-4">
+                  <label className="block text-sm font-medium mb-1">Patient Type *</label>
+                  <div className="flex items-center gap-4">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="patientType"
+                        value="PRIVATE"
+                        checked={editFormData.patientType === 'PRIVATE'}
+                        onChange={handleEditInputChange}
+                        className="text-primary focus:ring-primary"
+                      />
+                      Private Patient
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="patientType"
+                        value="HMO"
+                        checked={editFormData.patientType === 'HMO'}
+                        onChange={handleEditInputChange}
+                        className="text-primary focus:ring-primary"
+                      />
+                      HMO / Insurance
+                    </label>
+                  </div>
+                </div>
+
+                {editFormData.patientType === 'HMO' && (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                    <div>
+                      <label className="block text-sm font-medium mb-1">HMO Provider Name *</label>
+                      <input
+                        type="text"
+                        name="hmoProvider"
+                        value={editFormData.hmoProvider}
+                        onChange={handleEditInputChange}
+                        className="input w-full"
+                        required={editFormData.patientType === 'HMO'}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-1">HMO ID / Number *</label>
+                      <input
+                        type="text"
+                        name="hmoNumber"
+                        value={editFormData.hmoNumber}
+                        onChange={handleEditInputChange}
+                        className="input w-full"
+                        required={editFormData.patientType === 'HMO'}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                <div>
+                  <label className="block text-sm font-medium mb-1">NHIS Number (Optional)</label>
+                  <input
+                    type="text"
+                    name="nhisNumber"
+                    value={editFormData.nhisNumber}
+                    onChange={handleEditInputChange}
+                    className="input w-full"
+                  />
                 </div>
               </div>
 

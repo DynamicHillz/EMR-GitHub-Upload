@@ -13,7 +13,7 @@ import { NotFoundError, ValidationError } from '../../../shared/errors/AppError'
 export class UpdateUserUseCase {
   constructor(private prisma: PrismaClient) {}
 
-  async execute(userId: string, dto: UpdateUserDto, updatedBy: string): Promise<UserResponseDto> {
+  async execute(userId: string, dto: UpdateUserDto, updatedBy: string, updaterRole?: string): Promise<UserResponseDto> {
     try {
       // Find user
       const existingUser = await this.prisma.user.findUnique({
@@ -22,6 +22,17 @@ export class UpdateUserUseCase {
 
       if (!existingUser) {
         throw new NotFoundError('User', userId);
+      }
+
+      // Defense-in-depth: role/status are administrative fields. The
+      // controller already strips these for non-admin callers editing their
+      // own record, but this use-case has no other caller-context of its
+      // own, so re-check here rather than trusting the DTO unconditionally —
+      // any future caller that skips the controller's check would otherwise
+      // let a user grant themselves elevated privileges.
+      if (updaterRole !== undefined && updaterRole !== 'ADMIN' && updaterRole !== 'SUPER_ADMIN') {
+        delete dto.role;
+        delete dto.status;
       }
 
       // Validate role if being updated

@@ -19,7 +19,7 @@ export class PatientIdGenerator {
    * @param tenantId - The tenant ID
    * @returns Promise<string> - The generated patient ID (e.g., "PT-2026-0001")
    */
-  async generatePatientId(tenantId: string): Promise<string> {
+  async generatePatientId(tenantId: string, retryCount: number = 0): Promise<string> {
     const year = new Date().getFullYear();
 
     // Count patients registered this year for this tenant
@@ -36,19 +36,20 @@ export class PatientIdGenerator {
       },
     });
 
-    // Next sequential number (1-indexed)
-    const nextNumber = patientCount + 1;
+    // Next sequential number (1-indexed) plus any retry offset
+    const nextNumber = patientCount + 1 + retryCount;
 
     // Format as PT-YYYY-XXXX (4-digit zero-padded)
     const patientId = `PT-${year}-${nextNumber.toString().padStart(4, '0')}`;
 
-    // Verify uniqueness (handles race conditions)
+    // Verify uniqueness (handles race conditions and deleted records)
     const existing = await this.prisma.patient.findFirst({
       where: { tenantId, patientId },
     });
 
     if (existing) {
-      return this.generatePatientId(tenantId);
+      // Pass an incremented retryCount to avoid infinite loops if records were deleted
+      return this.generatePatientId(tenantId, retryCount + 1);
     }
 
     return patientId;

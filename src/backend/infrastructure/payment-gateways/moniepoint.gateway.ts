@@ -175,8 +175,8 @@ export class MoniepointGateway implements IPaymentGateway {
   }
 
   verifyWebhookSignature(payload: string, signature: string): boolean {
-    if (!this.config.webhookSecret) {
-      throw new Error('Webhook secret not configured');
+    if (!this.config.webhookSecret || !signature) {
+      return false;
     }
 
     // Moniepoint uses HMAC SHA512 for webhook verification
@@ -185,7 +185,14 @@ export class MoniepointGateway implements IPaymentGateway {
       .update(payload)
       .digest('hex');
 
-    return hash === signature;
+    const hashBuf = Buffer.from(hash);
+    const signatureBuf = Buffer.from(signature);
+
+    if (hashBuf.length !== signatureBuf.length) {
+      return false;
+    }
+
+    return crypto.timingSafeEqual(hashBuf, signatureBuf);
   }
 
   parseWebhookEvent(payload: any): WebhookEvent {

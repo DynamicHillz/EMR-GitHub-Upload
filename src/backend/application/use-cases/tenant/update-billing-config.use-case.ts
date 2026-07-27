@@ -33,6 +33,13 @@ export class UpdateBillingConfigUseCase {
       throw new ValidationError('Invoice start number must be at least 1');
     }
 
+    // Validate markup percent
+    if (dto.defaultMarkupPercent !== undefined) {
+      if (dto.defaultMarkupPercent < 0 || dto.defaultMarkupPercent > 1000) {
+        throw new ValidationError('Markup percent must be between 0 and 1000');
+      }
+    }
+
     // Prepare update data
     const updateData: Prisma.TenantUpdateInput = {};
 
@@ -45,6 +52,9 @@ export class UpdateBillingConfigUseCase {
     if (dto.defaultTaxRate !== undefined) updateData.defaultTaxRate = dto.defaultTaxRate;
     if (dto.taxName !== undefined) updateData.taxName = dto.taxName;
     if (dto.taxId !== undefined) updateData.taxId = dto.taxId;
+
+    // Pharmacy Pricing
+    if (dto.defaultMarkupPercent !== undefined) updateData.defaultMarkupPercent = dto.defaultMarkupPercent;
 
     // Payment Methods
     if (dto.acceptCash !== undefined) updateData.acceptCash = dto.acceptCash;
@@ -94,6 +104,7 @@ export class UpdateBillingConfigUseCase {
         defaultTaxRate: true,
         taxName: true,
         taxId: true,
+        defaultMarkupPercent: true,
         acceptCash: true,
         acceptCard: true,
         acceptMobileMoney: true,

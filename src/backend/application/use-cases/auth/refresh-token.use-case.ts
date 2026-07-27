@@ -16,7 +16,7 @@ export interface RefreshTokenResponse {
 export class RefreshTokenUseCase {
   constructor(private prisma: PrismaClient) {}
 
-  async execute(refreshToken: string): Promise<RefreshTokenResponse> {
+  async execute(refreshToken: string, requestMeta?: { ipAddress?: string; userAgent?: string }): Promise<RefreshTokenResponse> {
     try {
       // Find refresh token
       const token = await this.prisma.refreshToken.findUnique({
@@ -63,12 +63,16 @@ export class RefreshTokenUseCase {
         data: { revoked: true },
       });
 
-      // Create new refresh token
+      // Create new refresh token — carries the session's device/IP forward
+      // through rotation so "active sessions" stays meaningful across
+      // refreshes rather than resetting to blank every time.
       await this.prisma.refreshToken.create({
         data: {
           userId: token.user.id,
           token: newRefreshToken,
           expiresAt,
+          ipAddress: requestMeta?.ipAddress ?? token.ipAddress,
+          userAgent: requestMeta?.userAgent ?? token.userAgent,
         },
       });
 

@@ -24,7 +24,9 @@ export class GetBrandingUseCase {
         fontFamily: true,
         address: true,
         phone: true,
-        email: true
+        email: true,
+        taxId: true,
+        taxName: true
       }
     });
 

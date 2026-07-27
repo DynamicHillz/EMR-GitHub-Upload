@@ -179,17 +179,21 @@ export class FlutterwaveGateway implements IPaymentGateway {
     }
   }
 
-  verifyWebhookSignature(payload: string, signature: string): boolean {
-    if (!this.config.webhookSecret) {
-      throw new Error('Webhook secret not configured');
+  // Flutterwave does not HMAC the webhook body — it sends the raw secret
+  // back verbatim in the `verif-hash` header for a direct compare.
+  verifyWebhookSignature(_payload: string, signature: string): boolean {
+    if (!this.config.webhookSecret || !signature) {
+      return false;
     }
 
-    const hash = crypto
-      .createHmac('sha256', this.config.webhookSecret)
-      .update(payload)
-      .digest('hex');
+    const secretBuf = Buffer.from(this.config.webhookSecret);
+    const signatureBuf = Buffer.from(signature);
 
-    return hash === signature;
+    if (secretBuf.length !== signatureBuf.length) {
+      return false;
+    }
+
+    return crypto.timingSafeEqual(secretBuf, signatureBuf);
   }
 
   parseWebhookEvent(payload: any): WebhookEvent {

@@ -14,6 +14,9 @@ export interface ListUsersFilters {
   search?: string;
   limit?: number;
   offset?: number;
+  /** Role of the user making the request — a plain ADMIN must never see
+   * SUPER_ADMIN accounts in this list, regardless of any role filter. */
+  viewerRole?: string;
 }
 
 export interface ListUsersResponse {
@@ -46,6 +49,10 @@ export class ListUsersUseCase {
           { lastName: { contains: filters.search, } },
           { email: { contains: filters.search, } },
         ];
+      }
+
+      if (filters.viewerRole !== 'SUPER_ADMIN') {
+        where.NOT = { role: 'SUPER_ADMIN' };
       }
 
       const limit = filters.limit || 50;

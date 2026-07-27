@@ -77,7 +77,7 @@ describe('Payment Processing Integration', () => {
 
       // Assert - Payment created
       expect(result.payment).toBeDefined();
-      expect(result.payment.amount).toBe(10000);
+      expect(Number(result.payment.amount)).toBe(10000);
       expect(result.payment.paymentMethod).toBe('CASH');
       expect(result.payment.status).toBe('COMPLETED');
       expect(result.payment.paymentNumber).toMatch(/^PAY-\d{8}-\d{4}$/);
@@ -95,11 +95,11 @@ describe('Payment Processing Integration', () => {
         include: { payments: true },
       });
 
-      expect(dbInvoice?.paidAmount).toBe(10000);
-      expect(dbInvoice?.balance).toBe(0);
+      expect(Number(dbInvoice?.paidAmount)).toBe(10000);
+      expect(Number(dbInvoice?.balance)).toBe(0);
       expect(dbInvoice?.paymentStatus).toBe('PAID');
       expect(dbInvoice?.payments).toHaveLength(1);
-      expect(dbInvoice?.payments[0].amount).toBe(10000);
+      expect(Number(dbInvoice?.payments[0].amount)).toBe(10000);
     });
   });
 
@@ -140,8 +140,8 @@ describe('Payment Processing Integration', () => {
       const dbInvoice1 = await prisma.invoice.findUnique({
         where: { id: partialInvoiceId },
       });
-      expect(dbInvoice1?.paidAmount).toBe(5000);
-      expect(dbInvoice1?.balance).toBe(10000);
+      expect(Number(dbInvoice1?.paidAmount)).toBe(5000);
+      expect(Number(dbInvoice1?.balance)).toBe(10000);
     });
 
     it('should process second partial payment and update status to PARTIALLY_PAID', async () => {
@@ -169,7 +169,7 @@ describe('Payment Processing Integration', () => {
         include: { payments: true },
       });
       expect(dbInvoice2?.payments).toHaveLength(2);
-      expect(dbInvoice2?.paidAmount).toBe(10000);
+      expect(Number(dbInvoice2?.paidAmount)).toBe(10000);
     });
 
     it('should process final payment and update status to PAID', async () => {
@@ -198,7 +198,7 @@ describe('Payment Processing Integration', () => {
         include: { payments: true },
       });
       expect(dbInvoice3?.payments).toHaveLength(3);
-      expect(dbInvoice3?.balance).toBe(0);
+      expect(Number(dbInvoice3?.balance)).toBe(0);
     });
   });
 
@@ -237,8 +237,8 @@ describe('Payment Processing Integration', () => {
         include: { payments: true },
       });
 
-      expect(dbInvoice?.paidAmount).toBe(0);
-      expect(dbInvoice?.balance).toBe(20000);
+      expect(Number(dbInvoice?.paidAmount)).toBe(0);
+      expect(Number(dbInvoice?.balance)).toBe(20000);
       expect(dbInvoice?.paymentStatus).toBe('UNPAID');
       expect(dbInvoice?.payments).toHaveLength(0);
     });

@@ -39,7 +39,7 @@ const StockAlertsWidget: React.FC<StockAlertsWidgetProps> = ({ onAlertClick }) =
   const fetchAlerts = async () => {
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch('http://localhost:3000/api/pharmacy/alerts?status=ACTIVE', {
+      const response = await fetch(`${window.location.protocol}//${window.location.hostname}:3000/api/pharmacy/alerts?status=ACTIVE`, {
         headers: {
           Authorization: `Bearer ${token}`,
         },
@@ -59,7 +59,7 @@ const StockAlertsWidget: React.FC<StockAlertsWidgetProps> = ({ onAlertClick }) =
   const generateAlerts = async () => {
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch('http://localhost:3000/api/pharmacy/alerts/generate', {
+      const response = await fetch(`${window.location.protocol}//${window.location.hostname}:3000/api/pharmacy/alerts/generate`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${token}`,

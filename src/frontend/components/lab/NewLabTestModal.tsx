@@ -8,6 +8,7 @@
 import React, { useState, useEffect } from 'react';
 import { X, Beaker, Search } from 'lucide-react';
 import ErrorAlert from '../common/ErrorAlert';
+import Dropdown from '../common/Dropdown';
 
 interface Patient {
   id: string;
@@ -22,10 +23,13 @@ interface Patient {
 interface NewLabTestModalProps {
   onClose: () => void;
   onSuccess: () => void;
+  initialPatient?: Patient;
+  admissionId?: string;
 }
 
 interface LabTestFormData {
   patientId: string;
+  testId?: string;
   testName: string;
   testCode: string;
   clinicalIndication: string;
@@ -33,9 +37,9 @@ interface LabTestFormData {
   specimenType: string;
 }
 
-const NewLabTestModal: React.FC<NewLabTestModalProps> = ({ onClose, onSuccess }) => {
+const NewLabTestModal: React.FC<NewLabTestModalProps> = ({ onClose, onSuccess, initialPatient, admissionId }) => {
   const [formData, setFormData] = useState<LabTestFormData>({
-    patientId: '',
+    patientId: initialPatient?.id || '',
     testName: '',
     testCode: '',
     clinicalIndication: '',
@@ -44,31 +48,50 @@ const NewLabTestModal: React.FC<NewLabTestModalProps> = ({ onClose, onSuccess })
   });
 
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [patientSearch, setPatientSearch] = useState('');
+  const [patientSearch, setPatientSearch] = useState(initialPatient?.fullName || '');
   const [patients, setPatients] = useState<Patient[]>([]);
-  const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
+  const [selectedPatient, setSelectedPatient] = useState<Patient | null>(initialPatient || null);
   const [showPatientDropdown, setShowPatientDropdown] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
   const [error, setError] = useState<string>('');
   const [successMessage, setSuccessMessage] = useState<string>('');
+  const [commonTests, setCommonTests] = useState<any[]>([]);
 
-  // Common lab tests
-  const commonTests = [
-    { name: 'Complete Blood Count', code: 'CBC', specimen: 'Blood' },
-    { name: 'Basic Metabolic Panel', code: 'BMP', specimen: 'Blood' },
-    { name: 'Comprehensive Metabolic Panel', code: 'CMP', specimen: 'Blood' },
-    { name: 'Lipid Panel', code: 'LIPID', specimen: 'Blood' },
-    { name: 'Hemoglobin A1C', code: 'HBA1C', specimen: 'Blood' },
-    { name: 'Thyroid Stimulating Hormone', code: 'TSH', specimen: 'Blood' },
-    { name: 'Urinalysis', code: 'UA', specimen: 'Urine' },
-    { name: 'Liver Function Tests', code: 'LFT', specimen: 'Blood' },
-    { name: 'Renal Function Tests', code: 'RFT', specimen: 'Blood' },
-    { name: 'Prothrombin Time', code: 'PT', specimen: 'Blood' },
-    { name: 'International Normalized Ratio', code: 'INR', specimen: 'Blood' },
-    { name: 'Blood Culture', code: 'BC', specimen: 'Blood' },
-    { name: 'Urine Culture', code: 'UC', specimen: 'Urine' },
-    { name: 'Chest X-Ray', code: 'CXR', specimen: 'N/A' },
-  ];
+  useEffect(() => {
+    fetchDictionary();
+  }, []);
+
+  const fetchDictionary = async () => {
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch(`${window.location.protocol}//${window.location.hostname}:3000/api/lab/dictionary`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (response.ok) {
+        const result = await response.json();
+        // The dictionary can list the same test name more than once (e.g.
+        // one row per parameter) — dedupe by name so the quick-select
+        // list doesn't show the same test repeated.
+        const seenNames = new Set<string>();
+        const dedupedTests = result.data
+          .map((t: any) => ({
+            id: t.id,
+            name: t.name,
+            code: t.loincCode || t.name,
+            specimen: 'Blood', // default or map if available
+            parameterCount: Array.isArray(t.parameters) ? t.parameters.length : 0,
+          }))
+          .filter((t: any) => {
+            if (seenNames.has(t.name)) return false;
+            seenNames.add(t.name);
+            return true;
+          });
+        setCommonTests(dedupedTests);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
 
   // Debounce patient search
   useEffect(() => {
@@ -90,7 +113,7 @@ const NewLabTestModal: React.FC<NewLabTestModalProps> = ({ onClose, onSuccess })
     try {
       const token = localStorage.getItem('token');
       const response = await fetch(
-        `http://localhost:3000/api/patients/search?query=${encodeURIComponent(query)}`,
+        `${window.location.protocol}//${window.location.hostname}:3000/api/patients/search?query=${encodeURIComponent(query)}&lite=true`,
         {
           headers: {
             Authorization: `Bearer ${token}`,
@@ -133,6 +156,11 @@ const NewLabTestModal: React.FC<NewLabTestModalProps> = ({ onClose, onSuccess })
     setFormData((prev) => ({
       ...prev,
       [name]: value,
+      // Editing the test name by hand after picking from the dropdown means
+      // it may no longer be that catalog entry — drop the stale id so the
+      // backend falls back to a name match/custom entry instead of silently
+      // reusing the wrong panel's parameters.
+      ...(name === 'testName' ? { testId: undefined } : {}),
     }));
   };
 
@@ -141,6 +169,7 @@ const NewLabTestModal: React.FC<NewLabTestModalProps> = ({ onClose, onSuccess })
     if (selectedTest) {
       setFormData((prev) => ({
         ...prev,
+        testId: selectedTest.id,
         testName: selectedTest.name,
         testCode: selectedTest.code,
         specimenType: selectedTest.specimen,
@@ -167,7 +196,7 @@ const NewLabTestModal: React.FC<NewLabTestModalProps> = ({ onClose, onSuccess })
 
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch('http://localhost:3000/api/lab/tests', {
+      const response = await fetch(`${window.location.protocol}//${window.location.hostname}:3000/api/lab/tests`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -175,11 +204,13 @@ const NewLabTestModal: React.FC<NewLabTestModalProps> = ({ onClose, onSuccess })
         },
         body: JSON.stringify({
           patientId: formData.patientId,
+          testId: formData.testId || undefined,
           testName: formData.testName,
           testCode: formData.testCode || undefined,
           clinicalIndication: formData.clinicalIndication || undefined,
           urgency: formData.urgency,
           specimenType: formData.specimenType || undefined,
+          admissionId: admissionId || undefined,
         }),
       });
 
@@ -312,14 +343,15 @@ const NewLabTestModal: React.FC<NewLabTestModalProps> = ({ onClose, onSuccess })
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Quick Select Common Test
               </label>
-              <select onChange={handleTestSelect} className="input w-full">
+              <Dropdown onChange={handleTestSelect} className="input w-full">
                 <option value="">-- Select a common test --</option>
                 {commonTests.map((test) => (
-                  <option key={test.code} value={test.name}>
-                    {test.name} ({test.code})
+                  <option key={test.name} value={test.name}>
+                    {test.name}{test.code && test.code !== test.name ? ` (${test.code})` : ''}
+                    {test.parameterCount > 0 ? ` — ${test.parameterCount} parameter${test.parameterCount === 1 ? '' : 's'} auto-filled` : ''}
                   </option>
                 ))}
-              </select>
+              </Dropdown>
               <p className="text-xs text-gray-500 mt-1">
                 Or enter custom test details below
               </p>
@@ -361,7 +393,7 @@ const NewLabTestModal: React.FC<NewLabTestModalProps> = ({ onClose, onSuccess })
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Specimen Type
                 </label>
-                <select
+                <Dropdown
                   name="specimenType"
                   value={formData.specimenType}
                   onChange={handleChange}
@@ -375,7 +407,7 @@ const NewLabTestModal: React.FC<NewLabTestModalProps> = ({ onClose, onSuccess })
                   <option value="Swab">Swab</option>
                   <option value="Tissue">Tissue</option>
                   <option value="Other">Other</option>
-                </select>
+                </Dropdown>
               </div>
             </div>
 

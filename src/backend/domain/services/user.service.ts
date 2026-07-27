@@ -3,10 +3,14 @@
  * Contains business rules and validation logic for users
  */
 
+import crypto from 'crypto';
+
 export class UserService {
   private static readonly PASSWORD_MIN_LENGTH = 8;
   private static readonly MAX_LOGIN_ATTEMPTS = 5;
   private static readonly LOCKOUT_DURATION_MINUTES = 15;
+  private static readonly PASSWORD_EXPIRY_DAYS = 90;
+  private static readonly PASSWORD_HISTORY_COUNT = 5;
 
   /**
    * Validate password strength
@@ -26,27 +30,16 @@ export class UserService {
       errors.push('Password must contain at least one uppercase letter');
     }
 
-    if (!/\d/.test(password)) {
+    if (/\d/.test(password) === false) {
       errors.push('Password must contain at least one number');
     }
 
-    if (!/[@$!%*?&]/.test(password)) {
-      errors.push('Password must contain at least one special character (@$!%*?&)');
+    if (!/[^A-Za-z0-9]/.test(password)) {
+      errors.push('Password must contain at least one special character');
     }
 
     // Check for common passwords
-    const commonPasswords = [
-      'password',
-      'password123',
-      '12345678',
-      'qwerty',
-      'abc123',
-      'password1',
-      '12345678',
-      '123456789',
-    ];
-
-    if (commonPasswords.includes(password.toLowerCase())) {
+    if (this.isCommonPassword(password)) {
       errors.push('Password is too common. Please choose a stronger password');
     }
 
@@ -54,6 +47,33 @@ export class UserService {
       valid: errors.length === 0,
       errors,
     };
+  }
+
+  /**
+   * Check if a password is in the common passwords list
+   */
+  private static isCommonPassword(password: string): boolean {
+    const commonPasswords = [
+      'password', 'password1', 'password123', 'password!',
+      '12345678', '123456789', '1234567890',
+      'qwerty', 'qwerty123', 'qwertyui',
+      'abc123', 'abc12345',
+      'letmein', 'welcome', 'welcome1',
+      'admin', 'admin123', 'administrator',
+      'login', 'master', 'dragon',
+      'monkey', 'shadow', 'sunshine',
+      'trustno1', 'iloveyou', 'princess',
+      'football', 'baseball', 'soccer',
+      'charlie', 'michael', 'jennifer',
+      'access', 'passw0rd', 'p@ssword',
+      'p@ssw0rd', 'pass1234', 'changeme',
+      'hospital', 'medical', 'doctor',
+      'nurse', 'patient', 'health',
+      'stephen', 'ststephen', 'ssmc',
+      'emr12345', 'test1234', 'default',
+      'secret', 'Pa$$w0rd', 'P@ssword1',
+    ];
+    return commonPasswords.includes(password.toLowerCase());
   }
 
   /**
@@ -97,6 +117,35 @@ export class UserService {
   }
 
   /**
+   * Check if password has expired (older than PASSWORD_EXPIRY_DAYS)
+   */
+  static isPasswordExpired(passwordChangedAt: Date | null): boolean {
+    if (!passwordChangedAt) {
+      // If never set, consider it expired to force a password change
+      return true;
+    }
+    const expiryMs = this.PASSWORD_EXPIRY_DAYS * 24 * 60 * 60 * 1000;
+    return (Date.now() - passwordChangedAt.getTime()) > expiryMs;
+  }
+
+  /**
+   * Get number of days until password expires
+   */
+  static getDaysUntilPasswordExpiry(passwordChangedAt: Date | null): number {
+    if (!passwordChangedAt) return 0;
+    const expiryMs = this.PASSWORD_EXPIRY_DAYS * 24 * 60 * 60 * 1000;
+    const remainingMs = (passwordChangedAt.getTime() + expiryMs) - Date.now();
+    return Math.max(0, Math.ceil(remainingMs / (24 * 60 * 60 * 1000)));
+  }
+
+  /**
+   * Get the max number of passwords to keep in history
+   */
+  static getPasswordHistoryCount(): number {
+    return this.PASSWORD_HISTORY_COUNT;
+  }
+
+  /**
    * Validate email format
    */
   static validateEmail(email: string): boolean {
@@ -136,7 +185,7 @@ export class UserService {
   }
 
   /**
-   * Generate random password
+   * Generate cryptographically secure random password
    */
   static generateRandomPassword(length: number = 12): string {
     const lowercase = 'abcdefghijklmnopqrstuvwxyz';
@@ -145,24 +194,28 @@ export class UserService {
     const special = '@$!%*?&';
     const allChars = lowercase + uppercase + numbers + special;
 
-    let password = '';
+    // Use crypto.randomBytes for cryptographic security
+    const randomBytes = crypto.randomBytes(length);
+    const chars: string[] = [];
 
     // Ensure at least one of each required character type
-    password += lowercase[Math.floor(Math.random() * lowercase.length)];
-    password += uppercase[Math.floor(Math.random() * uppercase.length)];
-    password += numbers[Math.floor(Math.random() * numbers.length)];
-    password += special[Math.floor(Math.random() * special.length)];
+    chars.push(lowercase[crypto.randomInt(lowercase.length)]);
+    chars.push(uppercase[crypto.randomInt(uppercase.length)]);
+    chars.push(numbers[crypto.randomInt(numbers.length)]);
+    chars.push(special[crypto.randomInt(special.length)]);
 
-    // Fill the rest randomly
-    for (let i = password.length; i < length; i++) {
-      password += allChars[Math.floor(Math.random() * allChars.length)];
+    // Fill the rest with cryptographically random characters
+    for (let i = chars.length; i < length; i++) {
+      chars.push(allChars[randomBytes[i] % allChars.length]);
     }
 
-    // Shuffle password
-    return password
-      .split('')
-      .sort(() => Math.random() - 0.5)
-      .join('');
+    // Fisher-Yates shuffle using crypto.randomInt
+    for (let i = chars.length - 1; i > 0; i--) {
+      const j = crypto.randomInt(i + 1);
+      [chars[i], chars[j]] = [chars[j], chars[i]];
+    }
+
+    return chars.join('');
   }
 
   /**

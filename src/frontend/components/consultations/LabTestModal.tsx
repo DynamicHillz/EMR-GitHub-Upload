@@ -5,9 +5,10 @@
  * REQ-CLIN-4: Lab test ordering with clinical indication
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { X, Beaker } from 'lucide-react';
 import { useToast } from '../ToastContainer';
+import Dropdown from '../common/Dropdown';
 
 interface Patient {
   id: string;
@@ -21,9 +22,14 @@ interface LabTestModalProps {
   patient: Patient;
   onClose: () => void;
   onSuccess: () => void;
+  /** 'modal' (default) is a full-screen overlay; 'inline' renders as an
+   * expandable card in place, matching the Add Medication pattern used in
+   * WardRoundModal/DischargeModal — no backdrop, no fixed positioning. */
+  variant?: 'modal' | 'inline';
 }
 
 interface LabTestFormData {
+  testId?: string;
   testName: string;
   testCode: string;
   clinicalIndication: string;
@@ -36,7 +42,9 @@ const LabTestModal: React.FC<LabTestModalProps> = ({
   patient,
   onClose,
   onSuccess,
+  variant = 'modal',
 }) => {
+  const isInline = variant === 'inline';
   const toast = useToast();
 
   const [formData, setFormData] = useState<LabTestFormData>({
@@ -49,23 +57,44 @@ const LabTestModal: React.FC<LabTestModalProps> = ({
 
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Common lab tests with codes
-  const commonTests = [
-    { name: 'Complete Blood Count (CBC)', code: 'CBC', specimen: 'Blood' },
-    { name: 'Basic Metabolic Panel', code: 'BMP', specimen: 'Blood' },
-    { name: 'Comprehensive Metabolic Panel', code: 'CMP', specimen: 'Blood' },
-    { name: 'Lipid Panel', code: 'LIPID', specimen: 'Blood' },
-    { name: 'Hemoglobin A1C', code: 'HBA1C', specimen: 'Blood' },
-    { name: 'Thyroid Stimulating Hormone', code: 'TSH', specimen: 'Blood' },
-    { name: 'Urinalysis', code: 'UA', specimen: 'Urine' },
-    { name: 'Liver Function Tests', code: 'LFT', specimen: 'Blood' },
-    { name: 'Renal Function Tests', code: 'RFT', specimen: 'Blood' },
-    { name: 'Prothrombin Time', code: 'PT', specimen: 'Blood' },
-    { name: 'International Normalized Ratio', code: 'INR', specimen: 'Blood' },
-    { name: 'Blood Culture', code: 'BC', specimen: 'Blood' },
-    { name: 'Urine Culture', code: 'UC', specimen: 'Urine' },
-    { name: 'Chest X-Ray', code: 'CXR', specimen: 'N/A' },
-  ];
+  // Dynamic lab dictionary state
+  const [commonTests, setCommonTests] = useState<any[]>([]);
+
+  useEffect(() => {
+    fetchDictionary();
+  }, []);
+
+  const fetchDictionary = async () => {
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch(`${window.location.protocol}//${window.location.hostname}:3000/api/lab/dictionary`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (response.ok) {
+        const result = await response.json();
+        // The dictionary can list the same test name more than once (e.g.
+        // one row per parameter) — dedupe by name so the quick-select
+        // list doesn't show the same test repeated.
+        const seenNames = new Set<string>();
+        const dedupedTests = result.data
+          .map((t: any) => ({
+            id: t.id,
+            name: t.name,
+            code: t.loincCode || t.name,
+            specimen: 'Blood', // default or map if available
+            parameterCount: Array.isArray(t.parameters) ? t.parameters.length : 0,
+          }))
+          .filter((t: any) => {
+            if (seenNames.has(t.name)) return false;
+            seenNames.add(t.name);
+            return true;
+          });
+        setCommonTests(dedupedTests);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
 
   const handleChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>
@@ -74,6 +103,11 @@ const LabTestModal: React.FC<LabTestModalProps> = ({
     setFormData((prev) => ({
       ...prev,
       [name]: value,
+      // Editing the test name by hand after picking from the dropdown means
+      // it may no longer be that catalog entry — drop the stale id so the
+      // backend falls back to a name match/custom entry instead of silently
+      // reusing the wrong panel's parameters.
+      ...(name === 'testName' ? { testId: undefined } : {}),
     }));
   };
 
@@ -82,6 +116,7 @@ const LabTestModal: React.FC<LabTestModalProps> = ({
     if (selectedTest) {
       setFormData((prev) => ({
         ...prev,
+        testId: selectedTest.id,
         testName: selectedTest.name,
         testCode: selectedTest.code,
         specimenType: selectedTest.specimen,
@@ -102,7 +137,7 @@ const LabTestModal: React.FC<LabTestModalProps> = ({
     try {
       const token = localStorage.getItem('token');
       const response = await fetch(
-        `http://localhost:3000/api/consultations/${consultationId}/lab-tests`,
+        `${window.location.protocol}//${window.location.hostname}:3000/api/consultations/${consultationId}/lab-tests`,
         {
           method: 'POST',
           headers: {
@@ -111,6 +146,7 @@ const LabTestModal: React.FC<LabTestModalProps> = ({
           },
           body: JSON.stringify({
             patientId: patient.id,
+            testId: formData.testId || undefined,
             testName: formData.testName,
             testCode: formData.testCode || undefined,
             clinicalIndication: formData.clinicalIndication,
@@ -136,47 +172,71 @@ const LabTestModal: React.FC<LabTestModalProps> = ({
     }
   };
 
+  const outerClass = isInline
+    ? 'mt-4 p-4 border border-purple-200 bg-purple-50 rounded-lg'
+    : 'fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200';
+  const cardClass = isInline
+    ? ''
+    : 'bg-white rounded-xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh] border border-gray-100';
+
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+    <div className={outerClass}>
+      <div className={cardClass}>
         {/* Header */}
-        <div className="sticky top-0 bg-white border-b border-gray-200 px-6 py-4 flex justify-between items-center">
-          <div>
-            <h2 className="text-2xl font-bold flex items-center gap-2">
-              <Beaker className="w-6 h-6 text-purple-600" />
+        {isInline ? (
+          <div className="flex items-center justify-between mb-4">
+            <h5 className="font-medium text-purple-900 text-sm flex items-center gap-2">
+              <Beaker className="w-4 h-4" />
               Order Lab Test
-            </h2>
-            <p className="text-sm text-gray-600 mt-1">
-              Patient: {patient.fullName}
-            </p>
+            </h5>
+            <button
+              type="button"
+              onClick={onClose}
+              className="text-gray-400 hover:text-gray-600"
+            >
+              <X className="w-4 h-4" />
+            </button>
           </div>
-          <button
-            onClick={onClose}
-            className="text-gray-400 hover:text-gray-600 transition-colors"
-          >
-            <X className="w-6 h-6" />
-          </button>
-        </div>
+        ) : (
+          <div className="bg-gradient-to-r from-purple-600 to-indigo-700 px-6 py-4 flex items-center justify-between text-white flex-shrink-0 shadow-md">
+            <div className="flex items-center gap-3">
+              <div className="bg-white/20 p-2 rounded-lg shadow-inner">
+                <Beaker className="w-6 h-6 text-white" />
+              </div>
+              <div>
+                <h2 className="text-xl font-bold tracking-wide">Order Lab Test</h2>
+                <p className="text-purple-100 text-sm opacity-90 mt-0.5">
+                  Patient: <span className="font-semibold">{patient.fullName}</span>
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={onClose}
+              className="text-white/70 hover:text-white hover:bg-white/10 p-2 rounded-full transition-all duration-200"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+        )}
 
         {/* Form */}
-        <form onSubmit={handleSubmit} className="p-6">
-          <div className="space-y-4">
+        <div className={isInline ? '' : 'overflow-y-auto p-6 bg-gray-50 flex-grow'}>
+          <form onSubmit={handleSubmit} className={isInline ? 'space-y-5' : 'space-y-6 bg-white p-6 rounded-xl shadow-sm border border-gray-100'}>
+            <div className="space-y-5">
             {/* Common Tests Quick Select */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Quick Select Common Test
               </label>
-              <select
-                onChange={handleTestSelect}
-                className="input w-full"
-              >
+              <Dropdown onChange={handleTestSelect} className="input w-full">
                 <option value="">-- Select a common test --</option>
                 {commonTests.map((test) => (
-                  <option key={test.code} value={test.name}>
-                    {test.name} ({test.code})
+                  <option key={test.name} value={test.name}>
+                    {test.name}{test.code && test.code !== test.name ? ` (${test.code})` : ''}
+                    {test.parameterCount > 0 ? ` — ${test.parameterCount} parameter${test.parameterCount === 1 ? '' : 's'} auto-filled` : ''}
                   </option>
                 ))}
-              </select>
+              </Dropdown>
               <p className="text-xs text-gray-500 mt-1">
                 Or enter custom test details below
               </p>
@@ -218,7 +278,7 @@ const LabTestModal: React.FC<LabTestModalProps> = ({
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Specimen Type
                 </label>
-                <select
+                <Dropdown
                   name="specimenType"
                   value={formData.specimenType}
                   onChange={handleChange}
@@ -232,7 +292,7 @@ const LabTestModal: React.FC<LabTestModalProps> = ({
                   <option value="Swab">Swab</option>
                   <option value="Tissue">Tissue</option>
                   <option value="Other">Other</option>
-                </select>
+                </Dropdown>
               </div>
             </div>
 
@@ -309,25 +369,35 @@ const LabTestModal: React.FC<LabTestModalProps> = ({
             </div>
           </div>
 
-          {/* Action Buttons */}
-          <div className="mt-6 flex justify-end gap-3">
-            <button
-              type="button"
-              onClick={onClose}
-              className="btn btn-secondary"
-              disabled={isSubmitting}
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              className="btn btn-primary"
-              disabled={isSubmitting}
-            >
-              {isSubmitting ? 'Ordering...' : 'Order Lab Test'}
-            </button>
-          </div>
-        </form>
+            {/* Action Buttons */}
+            <div className={isInline ? 'pt-4 mt-4 flex justify-end gap-3' : 'pt-4 mt-6 flex justify-end gap-3 border-t border-gray-100'}>
+              <button
+                type="button"
+                onClick={onClose}
+                className={isInline
+                  ? 'text-sm font-medium text-gray-600 hover:text-gray-900 px-3 py-1.5'
+                  : 'px-5 py-2.5 text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg font-medium transition-colors duration-200'}
+                disabled={isSubmitting}
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className={isInline
+                  ? 'bg-purple-600 hover:bg-purple-700 text-white text-sm font-medium py-1.5 px-4 rounded-md disabled:opacity-50 flex items-center gap-2'
+                  : 'px-5 py-2.5 text-white bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 rounded-lg font-medium shadow-md hover:shadow-lg transition-all duration-200 flex items-center gap-2'}
+                disabled={isSubmitting}
+              >
+                {isSubmitting ? (
+                  <>
+                    <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent" />
+                    Ordering...
+                  </>
+                ) : 'Submit Order'}
+              </button>
+            </div>
+          </form>
+        </div>
       </div>
     </div>
   );

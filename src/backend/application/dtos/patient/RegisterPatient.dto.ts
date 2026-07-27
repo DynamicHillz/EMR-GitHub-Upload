@@ -2,6 +2,7 @@ import type { Gender } from '../../../shared/types/prisma-enums.ts';;
 import { EmergencyContact } from '../../../domain/entities/Patient.entity';
 
 export interface RegisterPatientDto {
+  id?: string; // honored if pre-assigned client-side (offline registration) — see register-patient.use-case.ts
   firstName: string;
   lastName: string;
   dateOfBirth: string; // ISO date string
@@ -11,6 +12,7 @@ export interface RegisterPatientDto {
   address?: string;
   city?: string;
   state?: string;
+  lga?: string;
   country?: string;
   nationality?: string;
   occupation?: string;
@@ -22,12 +24,16 @@ export interface RegisterPatientDto {
   pastSurgicalHistory?: string;
   emergencyContact?: EmergencyContact;
   nhisNumber?: string;
+  patientType?: 'PRIVATE' | 'HMO';
+  hmoProvider?: string;
+  hmoNumber?: string;
   photoUrl?: string;
   consentGiven?: boolean; // US-PAT-006: Data processing consent
 }
 
 export interface PatientResponseDto {
   id: string;
+  version: number; // for optimistic-concurrency round-tripping (offline sync)
   patientId: string;
   firstName: string;
   lastName: string;
@@ -40,6 +46,7 @@ export interface PatientResponseDto {
   address: string | null;
   city: string | null;
   state: string | null;
+  lga: string | null;
   country: string;
   nationality: string | null;
   occupation: string | null;
@@ -51,6 +58,9 @@ export interface PatientResponseDto {
   pastSurgicalHistory: string | null;
   emergencyContact: EmergencyContact | null;
   nhisNumber: string | null;
+  patientType: 'PRIVATE' | 'HMO';
+  hmoProvider: string | null;
+  hmoNumber: string | null;
   photoUrl: string | null;
   status: string;
   hasAllergies: boolean;
@@ -62,6 +72,7 @@ export interface PatientResponseDto {
 }
 
 export interface UpdatePatientDto {
+  version?: number; // expected version, for optimistic-concurrency conflict detection
   firstName?: string;
   lastName?: string;
   dateOfBirth?: string;
@@ -71,6 +82,7 @@ export interface UpdatePatientDto {
   address?: string;
   city?: string;
   state?: string;
+  lga?: string;
   country?: string;
   nationality?: string;
   occupation?: string;
@@ -82,6 +94,9 @@ export interface UpdatePatientDto {
   pastSurgicalHistory?: string;
   emergencyContact?: EmergencyContact;
   nhisNumber?: string;
+  patientType?: 'PRIVATE' | 'HMO';
+  hmoProvider?: string;
+  hmoNumber?: string;
   photoUrl?: string;
   status?: string;
 }
@@ -94,4 +109,5 @@ export interface SearchPatientDto {
   ageMax?: number;
   page?: number;
   limit?: number;
+  lite?: boolean;
 }

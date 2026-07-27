@@ -17,20 +17,23 @@ import { SearchPatientsUseCase } from '../../application/use-cases/patient/searc
 import { GetPatientUseCase } from '../../application/use-cases/patient/get-patient.use-case';
 import { UpdatePatientUseCase } from '../../application/use-cases/patient/update-patient.use-case';
 import { DeletePatientUseCase } from '../../application/use-cases/patient/delete-patient.use-case';
+import { GetPatientClinicalSummaryUseCase } from '../../application/use-cases/patient/get-patient-clinical-summary.use-case';
 import { PatientRepository } from '../../infrastructure/database/repositories/patient.repository';
 import { PatientIdGenerator } from '../../infrastructure/generators/patient-id.generator';
 import { prisma } from '../../infrastructure/database/prisma.client';
+import { verificationService } from '../../application/services/verification.service';
 
 // Initialize dependencies
 const patientRepository = new PatientRepository(prisma);
 const patientIdGenerator = new PatientIdGenerator(prisma);
 
 // Initialize use cases
-const registerPatientUseCase = new RegisterPatientUseCase(patientRepository, patientIdGenerator);
+const registerPatientUseCase = new RegisterPatientUseCase(patientRepository, patientIdGenerator, prisma);
 const searchPatientsUseCase = new SearchPatientsUseCase(patientRepository);
 const getPatientUseCase = new GetPatientUseCase(patientRepository);
 const updatePatientUseCase = new UpdatePatientUseCase(patientRepository);
 const deletePatientUseCase = new DeletePatientUseCase(patientRepository);
+const getPatientClinicalSummaryUseCase = new GetPatientClinicalSummaryUseCase(prisma);
 
 /**
  * POST /api/patients
@@ -67,10 +70,20 @@ export const registerPatient = async (req: Request, res: Response) => {
       });
     }
 
+    // Two concurrent registrations for the same phone/patientId can both
+    // pass the pre-check and race to the DB's own unique constraint — the
+    // loser lands here with a raw Prisma error, not the friendly message
+    // above, so it needs its own clean-409 handling.
+    if (error.code === 'P2002') {
+      return res.status(409).json({
+        success: false,
+        message: 'A patient with this phone number or ID already exists',
+      });
+    }
+
     return res.status(500).json({
       success: false,
       message: 'Failed to register patient',
-      error: error.message,
     });
   }
 };
@@ -99,6 +112,9 @@ export const searchPatients = async (req: Request, res: Response) => {
       ageMax: req.query.ageMax ? parseInt(req.query.ageMax as string) : undefined,
       page: req.query.page ? parseInt(req.query.page as string) : 1,
       limit: req.query.limit ? parseInt(req.query.limit as string) : 20,
+      // Already coerced to a real boolean by Joi (validateRequest runs
+      // before this handler and replaces req.query with the validated value).
+      lite: req.query.lite as unknown as boolean,
     };
 
     const result = await searchPatientsUseCase.execute(searchDto, tenantId);
@@ -119,7 +135,6 @@ export const searchPatients = async (req: Request, res: Response) => {
     return res.status(500).json({
       success: false,
       message: 'Failed to search patients',
-      error: error.message,
     });
   }
 };
@@ -143,9 +158,18 @@ export const getPatientById = async (req: Request, res: Response) => {
 
     const patient = await getPatientUseCase.executeById(id, tenantId);
 
+    // Generate secure verification token for QR code
+    const verificationToken = verificationService.generateVerificationToken({
+      type: 'PATIENT',
+      id: patient.id,
+    });
+
     return res.status(200).json({
       success: true,
-      data: patient,
+      data: {
+        ...patient,
+        verificationToken,
+      },
     });
   } catch (error: any) {
     logger.error('Error getting patient:', error);
@@ -160,7 +184,41 @@ export const getPatientById = async (req: Request, res: Response) => {
     return res.status(500).json({
       success: false,
       message: 'Failed to get patient',
-      error: error.message,
+    });
+  }
+};
+
+/**
+ * GET /api/patients/:id/clinical-summary
+ * Continuity-of-care bundle: the patient's active medications and recent
+ * diagnosis history, for display alongside allergies/chronic conditions
+ * when a clinician opens a consultation.
+ */
+export const getPatientClinicalSummary = async (req: Request, res: Response) => {
+  try {
+    const tenantId = req.user?.tenantId;
+
+    if (!tenantId) {
+      return res.status(401).json({
+        success: false,
+        message: 'Unauthorized: No tenant ID found',
+      });
+    }
+
+    const { id } = req.params;
+
+    const summary = await getPatientClinicalSummaryUseCase.execute(id, tenantId);
+
+    return res.status(200).json({
+      success: true,
+      data: summary,
+    });
+  } catch (error: any) {
+    logger.error('Error getting patient clinical summary:', error);
+
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to get patient clinical summary',
     });
   }
 };
@@ -201,7 +259,6 @@ export const getPatientByPatientNumber = async (req: Request, res: Response) => 
     return res.status(500).json({
       success: false,
       message: 'Failed to get patient',
-      error: error.message,
     });
   }
 };
@@ -247,10 +304,20 @@ export const updatePatient = async (req: Request, res: Response) => {
       });
     }
 
-    return res.status(500).json({
+    // Two concurrent edits to the same/a colliding phone number can both
+    // pass the use-case's pre-check and race to the DB's own unique
+    // constraint — the loser lands here with a raw Prisma error, same as
+    // registerPatient's equivalent branch.
+    if (error.code === 'P2002') {
+      return res.status(409).json({
+        success: false,
+        message: 'A patient with this phone number already exists',
+      });
+    }
+
+    return res.status(error.statusCode || 500).json({
       success: false,
-      message: 'Failed to update patient',
-      error: error.message,
+      message: error.statusCode ? error.message : 'Failed to update patient',
     });
   }
 };
@@ -271,8 +338,9 @@ export const deletePatient = async (req: Request, res: Response) => {
     }
 
     const { id } = req.params;
+    const userId = req.user?.id;
 
-    await deletePatientUseCase.execute(id, tenantId);
+    await deletePatientUseCase.execute(id, tenantId, userId);
 
     return res.status(200).json({
       success: true,
@@ -291,7 +359,6 @@ export const deletePatient = async (req: Request, res: Response) => {
     return res.status(500).json({
       success: false,
       message: 'Failed to delete patient',
-      error: error.message,
     });
   }
 };

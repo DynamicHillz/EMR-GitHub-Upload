@@ -7,8 +7,10 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { Plus, Search, User, FileText, Lock, Calendar, AlertCircle } from 'lucide-react';
+import { Plus, Search, User, FileText, Lock, Calendar, AlertCircle, Clock, Activity } from 'lucide-react';
 import ConsultationModal from '../components/consultations/ConsultationModal';
+import triageService, { TriageRecord } from '../services/triage.service';
+import { formatDate } from '../utils/formatters';
 
 interface Consultation {
   id: string;
@@ -48,6 +50,29 @@ const ConsultationsPage: React.FC = () => {
   const [patients, setPatients] = useState<Patient[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [showPatientDropdown, setShowPatientDropdown] = useState(false);
+  
+  // Triage Queue (Waiting Room)
+  const [waitingRoom, setWaitingRoom] = useState<TriageRecord[]>([]);
+  const [isLoadingQueue, setIsLoadingQueue] = useState(false);
+
+  // Fetch waiting room on mount
+  useEffect(() => {
+    fetchWaitingRoom();
+    const interval = setInterval(fetchWaitingRoom, 30000); // refresh every 30s
+    return () => clearInterval(interval);
+  }, []);
+
+  const fetchWaitingRoom = async () => {
+    setIsLoadingQueue(true);
+    try {
+      const queue = await triageService.getQueue();
+      setWaitingRoom(queue || []);
+    } catch (err) {
+      console.error('Error fetching waiting room:', err);
+    } finally {
+      setIsLoadingQueue(false);
+    }
+  };
 
   // Debounced search for patients
   useEffect(() => {
@@ -77,7 +102,7 @@ const ConsultationsPage: React.FC = () => {
     try {
       const token = localStorage.getItem('token');
       const response = await fetch(
-        `http://localhost:3000/api/patients/search?query=${encodeURIComponent(query)}`,
+        `${window.location.protocol}//${window.location.hostname}:3000/api/patients/search?query=${encodeURIComponent(query)}&lite=true`,
         {
           headers: {
             Authorization: `Bearer ${token}`,
@@ -87,17 +112,20 @@ const ConsultationsPage: React.FC = () => {
 
       if (response.ok) {
         const result = await response.json();
-        const patientList = result.data.map((p: any) => ({
-          id: p.id,
-          patientId: p.patientId,
-          firstName: p.firstName,
-          lastName: p.lastName,
-          fullName: `${p.firstName} ${p.lastName}`,
-          age: p.age,
-          gender: p.gender,
-          allergies: p.allergies || [],
-          chronicConditions: p.chronicConditions || [],
-        }));
+        let patientList = [];
+        if (Array.isArray(result.data)) {
+          patientList = result.data.map((p: any) => ({
+            id: p.id,
+            patientId: p.patientId,
+            firstName: p.firstName,
+            lastName: p.lastName,
+            fullName: `${p.firstName} ${p.lastName}`,
+            age: p.age,
+            gender: p.gender,
+            allergies: p.allergies || [],
+            chronicConditions: p.chronicConditions || [],
+          }));
+        }
         setPatients(patientList);
         setShowPatientDropdown(true);
       }
@@ -113,7 +141,7 @@ const ConsultationsPage: React.FC = () => {
     try {
       const token = localStorage.getItem('token');
       const response = await fetch(
-        `http://localhost:3000/api/consultations/patient/${patientId}`,
+        `${window.location.protocol}//${window.location.hostname}:3000/api/consultations/patient/${patientId}`,
         {
           headers: {
             Authorization: `Bearer ${token}`,
@@ -138,6 +166,29 @@ const ConsultationsPage: React.FC = () => {
     setSelectedPatient(patient);
     setSearchQuery(patient.fullName);
     setShowPatientDropdown(false);
+  };
+
+  const handleSelectFromQueue = (record: TriageRecord) => {
+    if (record.patient) {
+      const p: Patient = {
+        id: record.patient.id,
+        patientId: record.patient.patientId,
+        firstName: record.patient.firstName,
+        lastName: record.patient.lastName,
+        fullName: `${record.patient.firstName} ${record.patient.lastName}`,
+        age: record.patient.age || 0,
+        gender: record.patient.gender,
+        allergies: record.patient.allergies || [],
+        chronicConditions: record.patient.chronicConditions || [],
+      };
+      setSelectedPatient(p);
+      setSearchQuery(p.fullName);
+      
+      // Mark as seen so they are removed from the waiting room queue
+      triageService.markAsSeen(record.id).then(() => {
+        fetchWaitingRoom();
+      }).catch(err => console.error('Failed to mark patient as seen:', err));
+    }
   };
 
   const handleNewConsultation = () => {
@@ -195,7 +246,64 @@ const ConsultationsPage: React.FC = () => {
         </button>
       </div>
 
-      {/* Patient Search */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Waiting Room Panel */}
+        <div className="lg:col-span-1 space-y-4">
+          <div className="card">
+            <h3 className="font-semibold mb-4 flex items-center gap-2">
+              <Activity className="w-5 h-5 text-blue-600" />
+              Waiting Room (Triage Queue)
+            </h3>
+            
+            {isLoadingQueue ? (
+              <div className="flex justify-center py-4">
+                <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600"></div>
+              </div>
+            ) : waitingRoom.length === 0 ? (
+              <p className="text-gray-500 text-sm text-center py-4">No patients waiting</p>
+            ) : (
+              <div className="space-y-3">
+                {waitingRoom.map((record) => (
+                  <div 
+                    key={record.id}
+                    onClick={() => handleSelectFromQueue(record)}
+                    className="p-3 border border-gray-100 rounded-lg bg-gray-50 hover:bg-blue-50 cursor-pointer transition-colors"
+                  >
+                    <div className="font-medium text-gray-900">
+                      {record.patient?.firstName} {record.patient?.lastName}
+                    </div>
+                    <div className="text-xs text-gray-500 mt-1 mb-2">
+                      <span className="inline-flex items-center">
+                        <Clock className="w-3 h-3 mr-1" />
+                        {formatDate(record.triageTime)}
+                      </span>
+                      <span className="mx-2">•</span>
+                      {record.category.replace('_', ' ')}
+                    </div>
+                    
+                    <div className="text-xs bg-white p-2 rounded border border-gray-100">
+                      <div className="flex justify-between">
+                        <span className="text-gray-500">BP:</span>
+                        <span className="font-medium">{record.systolicBP}/{record.diastolicBP}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-500">HR / Temp:</span>
+                        <span className="font-medium">{record.heartRate} bpm / {record.temperature}°C</span>
+                      </div>
+                      <div className="mt-1 text-gray-700 font-medium truncate" title={record.chiefComplaint}>
+                        "{record.chiefComplaint}"
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Main Consultation Area */}
+        <div className="lg:col-span-2 space-y-6">
+          {/* Patient Search */}
       <div className="card mb-6">
         <h3 className="font-semibold mb-3 flex items-center gap-2">
           <User className="w-5 h-5" />
@@ -235,7 +343,7 @@ const ConsultationsPage: React.FC = () => {
                   <div className="text-sm text-gray-600">
                     {patient.patientId} • {patient.age} years • {patient.gender}
                   </div>
-                  {patient.allergies.length > 0 && (
+                  {Array.isArray(patient.allergies) && patient.allergies.length > 0 && (
                     <div className="text-xs text-red-600 mt-1 flex items-center gap-1">
                       <AlertCircle className="w-3 h-3" />
                       Allergies: {patient.allergies.join(', ')}
@@ -264,7 +372,7 @@ const ConsultationsPage: React.FC = () => {
               <div>
                 <span className="font-medium">Gender:</span> {selectedPatient.gender}
               </div>
-              {selectedPatient.allergies.length > 0 && (
+              {Array.isArray(selectedPatient.allergies) && selectedPatient.allergies.length > 0 && (
                 <div className="col-span-2 flex items-start gap-2">
                   <AlertCircle className="w-4 h-4 text-red-500 mt-0.5 flex-shrink-0" />
                   <div>
@@ -273,7 +381,7 @@ const ConsultationsPage: React.FC = () => {
                   </div>
                 </div>
               )}
-              {selectedPatient.chronicConditions.length > 0 && (
+              {Array.isArray(selectedPatient.chronicConditions) && selectedPatient.chronicConditions.length > 0 && (
                 <div className="col-span-2">
                   <span className="font-medium">Chronic Conditions:</span>
                   <span className="ml-2">{selectedPatient.chronicConditions.join(', ')}</span>
@@ -308,13 +416,9 @@ const ConsultationsPage: React.FC = () => {
                   <div className="flex items-start justify-between">
                     <div className="flex-1">
                       <div className="flex items-center gap-3 mb-2">
-                        <Calendar className="w-4 h-4 text-gray-400" />
-                        <span className="font-semibold">
-                          {new Date(consultation.consultationDate).toLocaleDateString('en-US', {
-                            year: 'numeric',
-                            month: 'long',
-                            day: 'numeric',
-                          })}
+                        <span className="font-semibold text-gray-700 flex items-center">
+                          <Calendar className="w-4 h-4 mr-1 text-gray-400" />
+                          {formatDate(consultation.consultationDate)}
                         </span>
                         {getStatusBadge(consultation.status)}
                       </div>
@@ -384,6 +488,7 @@ const ConsultationsPage: React.FC = () => {
           </div>
         </div>
       )}
+      </div></div>
 
       {/* Consultation Modal */}
       {showModal && selectedPatient && (
@@ -399,6 +504,7 @@ const ConsultationsPage: React.FC = () => {
             setShowModal(false);
             setSelectedConsultation(null);
             fetchConsultations(selectedPatient.id);
+            fetchWaitingRoom(); // Refresh queue
           }}
         />
       )}

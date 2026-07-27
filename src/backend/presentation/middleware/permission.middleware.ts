@@ -9,16 +9,22 @@ import { logger } from '../../config/logger';
 /**
  * Role hierarchy for permission checking
  * Higher values have more privileges
+ *
+ * Must mirror the Prisma `UserRole` enum exactly — this previously included
+ * `MANAGER`/`PATIENT` (not real roles; no account can ever hold them, so
+ * checks involving them were silent no-ops) and was missing `LAB_TECH`/
+ * `CASHIER` (real roles that fell through to level 0 via requireMinRole's
+ * `|| 0` fallback, i.e. treated as the lowest possible privilege).
  */
 const ROLE_HIERARCHY = {
   SUPER_ADMIN: 100,
   ADMIN: 90,
-  MANAGER: 70,
   DOCTOR: 50,
   NURSE: 40,
   PHARMACIST: 30,
+  LAB_TECH: 30,
+  CASHIER: 20,
   RECEPTIONIST: 20,
-  PATIENT: 10,
 };
 
 /**
@@ -129,51 +135,29 @@ export const requireOwnershipOrAdmin = (userIdParam: string = 'id') => {
 };
 
 /**
- * Check if user belongs to the same tenant as the resource
- */
-export const requireSameTenant = async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const user = req.user;
-
-    if (!user) {
-      return res.status(401).json({
-        message: 'Authentication required',
-      });
-    }
-
-    // For now, this is a placeholder
-    // In a real implementation, you would check if the resource belongs to the user's tenant
-    // This requires fetching the resource from the database
-
-    next();
-  } catch (error: any) {
-    logger.error('Tenant check error:', error);
-    res.status(403).json({
-      message: 'Tenant check failed',
-    });
-  }
-};
-
-/**
  * Predefined permission sets for common use cases
  */
 
 // Admin only
 export const adminOnly = requireRole('SUPER_ADMIN', 'ADMIN');
 
-// Admin or Manager
-export const adminOrManager = requireRole('SUPER_ADMIN', 'ADMIN', 'MANAGER');
+// Admin or Manager (kept as a distinct export even though it's currently
+// identical to adminOnly now that the non-existent MANAGER role is gone —
+// route files import it by name and a MANAGER role may legitimately be
+// added to the schema in the future)
+export const adminOrManager = requireRole('SUPER_ADMIN', 'ADMIN');
 
 // Medical staff (Doctors and Nurses)
-export const medicalStaff = requireRole('SUPER_ADMIN', 'ADMIN', 'MANAGER', 'DOCTOR', 'NURSE');
+export const medicalStaff = requireRole('SUPER_ADMIN', 'ADMIN', 'DOCTOR', 'NURSE');
 
 // All staff (excluding patients)
 export const staffOnly = requireRole(
   'SUPER_ADMIN',
   'ADMIN',
-  'MANAGER',
   'DOCTOR',
   'NURSE',
   'PHARMACIST',
-  'RECEPTIONIST'
+  'RECEPTIONIST',
+  'LAB_TECH',
+  'CASHIER'
 );
