@@ -92,8 +92,8 @@ src/
 ## Getting started (local development)
 
 ```bash
-git clone <repository-url>
-cd St.stephen_EMR
+git clone https://github.com/DynamicHillz/st-stephen-emr.git
+cd st-stephen-emr
 npm install
 
 cp .env.example .env
