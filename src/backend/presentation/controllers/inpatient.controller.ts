@@ -280,10 +280,25 @@ export class InpatientController {
         limit: req.query.limit ? parseInt(req.query.limit as string, 10) : undefined,
         from: req.query.from as string | undefined,
         to: req.query.to as string | undefined,
+        sortBy: req.query.sortBy as 'operationDate' | 'surgicalProcedure' | undefined,
+        sortDir: req.query.sortDir as 'asc' | 'desc' | undefined,
       });
       res.json(result);
     } catch (error: any) {
       res.status(500).json({ message: getSafeErrorMessage(error, 'Error fetching operation notes') });
+    }
+  }
+
+  async getSurgicalProcedureBreakdown(req: Request, res: Response) {
+    try {
+      const result = await inpatientService.getSurgicalProcedureBreakdown(req.user!.tenantId, {
+        from: req.query.from as string | undefined,
+        to: req.query.to as string | undefined,
+        limit: req.query.limit ? parseInt(req.query.limit as string, 10) : undefined,
+      });
+      res.json(result);
+    } catch (error: any) {
+      res.status(500).json({ message: getSafeErrorMessage(error, 'Error fetching surgical procedure breakdown') });
     }
   }
 

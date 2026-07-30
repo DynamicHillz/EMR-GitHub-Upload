@@ -28,6 +28,7 @@ Where a step just says "see CLAUDE.md," the detailed explanation of *why* lives 
 
 - [ ] `npx prisma migrate deploy` — applies the full tracked migration history in one shot. **Do not use `migrate dev` or `db push` here** — this is a fresh database being brought up to the current schema, not active schema development.
 - [ ] `node scripts/final-create-admin.js` — creates the initial tenant and an admin login (`admin@hospital.com` / `Admin@123`). **Log in once and change that password immediately.**
+- [ ] `npx ts-node src/backend/scripts/seed-hmo-providers.ts` — populates the HMO Provider dropdown on patient registration with the official NHIA-accredited HMO list (94 entries as of 2026-07-29; pulled from nhia.gov.ng). Without this the dropdown is empty except "Other." Safe to re-run later (skips anything already present) — worth doing periodically since NHIA accreditation isn't permanent. Note: like `seed-lab-tests.ts`, this script targets a hardcoded tenant slug (`st-stephen-hospital`) matching what `final-create-admin.js` currently creates — if that script is ever changed to create a differently-named tenant per clinic, this one (and the other `seed-*.ts` scripts) will need the slug updated too.
 
 ## 4. TLS (HTTPS)
 

@@ -145,8 +145,25 @@ class InpatientService {
   // Every operation note recorded at this clinic, across all patients/
   // admissions and regardless of which doctor recorded it — powers
   // SurgeryLogPage.tsx.
-  async getAllOperationNotes(params: { page?: number; limit?: number; from?: string; to?: string }): Promise<OperationNotesLogResponse> {
+  async getAllOperationNotes(params: {
+    page?: number;
+    limit?: number;
+    from?: string;
+    to?: string;
+    sortBy?: 'operationDate' | 'surgicalProcedure';
+    sortDir?: 'asc' | 'desc';
+  }): Promise<OperationNotesLogResponse> {
     const response = await this.api.get('/operation-notes', { params });
+    return response.data;
+  }
+
+  // Count of operations per surgicalProcedure in a date range — powers the
+  // Analytics tab on SurgeryLogPage.tsx.
+  async getSurgicalProcedureBreakdown(params: { from?: string; to?: string; limit?: number }): Promise<{
+    topProcedures: { name: string; count: number }[];
+    summary: { totalOperationsRecorded: number; startDate: string | null; endDate: string | null };
+  }> {
+    const response = await this.api.get('/operation-notes/analytics', { params });
     return response.data;
   }
 

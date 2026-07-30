@@ -88,6 +88,9 @@ const ConsultationModal: React.FC<ConsultationModalProps> = ({
   const [showPrescriptionModal, setShowPrescriptionModal] = useState(false);
   const [showLabTestModal, setShowLabTestModal] = useState(false);
   const [showOxygenModal, setShowOxygenModal] = useState(false);
+  // Hidden by default — most consultations don't need it; a checkbox reveals
+  // the "Record Oxygen" action in its place for the ones that do.
+  const [oxygenEnabled, setOxygenEnabled] = useState(false);
   const [diagnoses, setDiagnoses] = useState<any[]>([]);
   const [orderedItems, setOrderedItems] = useState<OrderItem[]>([]);
   const [latestTriage, setLatestTriage] = useState<any>(null);
@@ -911,24 +914,37 @@ const ConsultationModal: React.FC<ConsultationModalProps> = ({
               )}
 
               <div className="grid grid-cols-3 gap-3">
-                <button type="button" onClick={() => { setShowPrescriptionModal(v => !v); setShowLabTestModal(false); }}
+                <button type="button" onClick={() => { setShowPrescriptionModal(v => !v); setShowLabTestModal(false); setShowOxygenModal(false); }}
                   className="btn bg-blue-600 hover:bg-blue-700 text-white flex items-center justify-center gap-2 py-3"
                   disabled={!canEdit}>
                   <Pill className="w-5 h-5" />
                   {showPrescriptionModal ? 'Cancel New Prescription' : 'New Prescription'}
                 </button>
-                <button type="button" onClick={() => { setShowLabTestModal(v => !v); setShowPrescriptionModal(false); }}
+                <button type="button" onClick={() => { setShowLabTestModal(v => !v); setShowPrescriptionModal(false); setShowOxygenModal(false); }}
                   className="btn bg-purple-600 hover:bg-purple-700 text-white flex items-center justify-center gap-2 py-3"
                   disabled={!canEdit}>
                   <Beaker className="w-5 h-5" />
                   {showLabTestModal ? 'Cancel Lab Order' : 'Order Lab Test'}
                 </button>
-                <button type="button" onClick={() => setShowOxygenModal(true)}
-                  className="btn bg-sky-600 hover:bg-sky-700 text-white flex items-center justify-center gap-2 py-3"
-                  disabled={!canEdit}>
-                  <Wind className="w-5 h-5" />
-                  Record Oxygen
-                </button>
+                {oxygenEnabled ? (
+                  <button type="button" onClick={() => { setShowOxygenModal(v => !v); setShowPrescriptionModal(false); setShowLabTestModal(false); }}
+                    className="btn bg-sky-600 hover:bg-sky-700 text-white flex items-center justify-center gap-2 py-3"
+                    disabled={!canEdit}>
+                    <Wind className="w-5 h-5" />
+                    {showOxygenModal ? 'Cancel Oxygen Record' : 'Record Oxygen'}
+                  </button>
+                ) : (
+                  <label className="flex flex-col items-center justify-center gap-1 py-3 px-2 border border-dashed border-sky-300 rounded-md text-sky-700 text-xs text-center cursor-pointer hover:bg-sky-50">
+                    <input
+                      type="checkbox"
+                      checked={oxygenEnabled}
+                      onChange={(e) => setOxygenEnabled(e.target.checked)}
+                      disabled={!canEdit}
+                      className="text-sky-600 focus:ring-sky-500"
+                    />
+                    <span className="flex items-center gap-1"><Wind className="w-3.5 h-3.5" /> Patient needs oxygen</span>
+                  </label>
+                )}
               </div>
               <p className="text-xs text-gray-500 mt-3">
                 {!canEdit
@@ -961,6 +977,22 @@ const ConsultationModal: React.FC<ConsultationModalProps> = ({
                     setShowLabTestModal(false);
                     setSuccessMessage('Lab test ordered successfully!');
                   }}
+                />
+              )}
+
+              {/* Inline Oxygen Administration */}
+              {showOxygenModal && (
+                <RecordConsumableUsageModal
+                  variant="inline"
+                  onClose={() => setShowOxygenModal(false)}
+                  onSuccess={() => {
+                    setShowOxygenModal(false);
+                    setSuccessMessage('Oxygen usage recorded and queued for billing.');
+                  }}
+                  patientId={patientId}
+                  patientLabel={patient.fullName}
+                  consultationId={localConsultationId || undefined}
+                  lockToCategory="Oxygen"
                 />
               )}
             </div>
@@ -1004,15 +1036,6 @@ const ConsultationModal: React.FC<ConsultationModalProps> = ({
         cancelText={options.cancelText}
         variant={options.variant}
         loading={confirmLoading}
-      />
-      <RecordConsumableUsageModal
-        isOpen={showOxygenModal}
-        onClose={() => setShowOxygenModal(false)}
-        onSuccess={() => setSuccessMessage('Oxygen usage recorded and queued for billing.')}
-        patientId={patientId}
-        patientLabel={patient.fullName}
-        consultationId={localConsultationId || undefined}
-        lockToCategory="Oxygen"
       />
     </div>
   );

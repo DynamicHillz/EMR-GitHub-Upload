@@ -1,10 +1,14 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Scissors, User } from 'lucide-react';
+import { Scissors, User, BarChart3, List } from 'lucide-react';
 import InpatientService from '../services/InpatientService';
 import { OperationNote } from '../types/inpatient';
+import SurgicalProcedureBreakdownChart from '../components/inpatient/SurgicalProcedureBreakdownChart';
 
 const PAGE_SIZE = 20;
+
+type SortBy = 'operationDate' | 'surgicalProcedure';
+type SortDir = 'asc' | 'desc';
 
 const SurgeryLogPage: React.FC = () => {
   const navigate = useNavigate();
@@ -14,6 +18,9 @@ const SurgeryLogPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
+  const [sortBy, setSortBy] = useState<SortBy>('operationDate');
+  const [sortDir, setSortDir] = useState<SortDir>('desc');
+  const [view, setView] = useState<'list' | 'analytics'>('list');
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
@@ -25,6 +32,8 @@ const SurgeryLogPage: React.FC = () => {
         limit: PAGE_SIZE,
         from: from || undefined,
         to: to || undefined,
+        sortBy,
+        sortDir,
       });
       setNotes(result.notes);
       setTotal(result.total);
@@ -39,7 +48,7 @@ const SurgeryLogPage: React.FC = () => {
   useEffect(() => {
     load(1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [sortBy, sortDir]);
 
   const applyFilter = (e: React.FormEvent) => {
     e.preventDefault();
@@ -48,12 +57,31 @@ const SurgeryLogPage: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
-          <Scissors className="w-6 h-6 text-primary-600" />
-          Surgery Log
-        </h1>
-        <p className="text-gray-600 mt-1">Every operation note recorded at this clinic, across all patients.</p>
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
+            <Scissors className="w-6 h-6 text-primary-600" />
+            Surgery Log
+          </h1>
+          <p className="text-gray-600 mt-1">Every operation note recorded at this clinic, across all patients.</p>
+        </div>
+
+        <div className="inline-flex rounded-lg border border-gray-300 bg-white p-1">
+          <button
+            type="button"
+            onClick={() => setView('list')}
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium ${view === 'list' ? 'bg-primary-600 text-white' : 'text-gray-600 hover:bg-gray-100'}`}
+          >
+            <List className="w-4 h-4" /> List
+          </button>
+          <button
+            type="button"
+            onClick={() => setView('analytics')}
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium ${view === 'analytics' ? 'bg-primary-600 text-white' : 'text-gray-600 hover:bg-gray-100'}`}
+          >
+            <BarChart3 className="w-4 h-4" /> Analytics
+          </button>
+        </div>
       </div>
 
       <form onSubmit={applyFilter} className="bg-white rounded-xl shadow-sm border p-4 flex flex-wrap items-end gap-4">
@@ -75,10 +103,38 @@ const SurgeryLogPage: React.FC = () => {
             Clear
           </button>
         )}
+        {view === 'list' && (
+          <>
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1">Sort by</label>
+              <select
+                className="input text-sm py-1.5"
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value as SortBy)}
+              >
+                <option value="operationDate">Date</option>
+                <option value="surgicalProcedure">Surgical Procedure</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1">Direction</label>
+              <select
+                className="input text-sm py-1.5"
+                value={sortDir}
+                onChange={(e) => setSortDir(e.target.value as SortDir)}
+              >
+                <option value="desc">{sortBy === 'operationDate' ? 'Newest first' : 'Z to A'}</option>
+                <option value="asc">{sortBy === 'operationDate' ? 'Oldest first' : 'A to Z'}</option>
+              </select>
+            </div>
+          </>
+        )}
         <span className="ml-auto text-sm text-gray-500">{total} surgery record{total === 1 ? '' : 's'}</span>
       </form>
 
-      {loading ? (
+      {view === 'analytics' ? (
+        <SurgicalProcedureBreakdownChart from={from} to={to} />
+      ) : loading ? (
         <div className="bg-white rounded-xl shadow-sm border p-8 text-center text-gray-500">Loading...</div>
       ) : notes.length === 0 ? (
         <div className="bg-white rounded-xl shadow-sm border p-8 text-center text-gray-500">
@@ -130,7 +186,7 @@ const SurgeryLogPage: React.FC = () => {
         </div>
       )}
 
-      {!loading && totalPages > 1 && (
+      {view === 'list' && !loading && totalPages > 1 && (
         <div className="flex items-center justify-between">
           <button
             className="btn btn-secondary"

@@ -186,8 +186,11 @@ const PatientsPage: React.FC = () => {
         if (res.ok) {
           const data = await res.json();
           setHmoProviders(Array.isArray(data) ? data : (data.data || []));
+        } else {
+          console.error(`Failed to load HMO providers: ${res.status} ${res.statusText}`);
         }
-      } catch {
+      } catch (err) {
+        console.error('Failed to load HMO providers:', err);
         setHmoProviders([]);
       }
     };

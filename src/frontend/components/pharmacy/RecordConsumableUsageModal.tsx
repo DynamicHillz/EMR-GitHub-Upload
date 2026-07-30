@@ -33,7 +33,10 @@ interface PatientResult {
 const DELIVERY_METHODS = ['Nasal Cannula', 'Face Mask', 'Non-Rebreather Mask', 'CPAP/BiPAP'];
 
 interface RecordConsumableUsageModalProps {
-  isOpen: boolean;
+  /** Only meaningful for the default 'modal' variant — 'inline' callers
+   * control mounting themselves (see ConsultationModal.tsx's Prescription/
+   * LabTest quick actions for the same pattern) and can omit this. */
+  isOpen?: boolean;
   onClose: () => void;
   onSuccess: () => void;
   /** Pre-fill the patient (skips the search step) — id + display label. */
@@ -43,6 +46,12 @@ interface RecordConsumableUsageModalProps {
   consultationId?: string;
   /** e.g. "Oxygen" — pre-filters the consumable picker to that category. */
   lockToCategory?: string;
+  /** 'modal' (default): fixed full-screen overlay. 'inline': an embedded
+   * panel rendered in normal page flow — matches PrescriptionModal/
+   * LabTestModal's inline variant, used when this is a quick action inside
+   * another already-open modal (e.g. Consultation) rather than its own
+   * popup stacked on top. */
+  variant?: 'modal' | 'inline';
 }
 
 function isBatchExpired(expiryDate: string | null): boolean {
@@ -58,7 +67,13 @@ const RecordConsumableUsageModal: React.FC<RecordConsumableUsageModalProps> = ({
   admissionId,
   consultationId,
   lockToCategory,
+  variant = 'modal',
 }) => {
+  const isInline = variant === 'inline';
+  // Inline callers control mounting themselves (rendered via `{show && <.../>}`,
+  // same as PrescriptionModal/LabTestModal), so there's no separate "closed"
+  // state to gate on the way the modal variant's `isOpen` prop does.
+  const active = isInline || !!isOpen;
   const [consumables, setConsumables] = useState<Consumable[]>([]);
   const [inventory, setInventory] = useState<ConsumableInventoryItem[]>([]);
 
@@ -86,7 +101,7 @@ const RecordConsumableUsageModal: React.FC<RecordConsumableUsageModalProps> = ({
   const filteredConsumables = lockToCategory ? consumables.filter((c) => c.category === lockToCategory) : consumables;
 
   useEffect(() => {
-    if (isOpen) {
+    if (active) {
       fetchConsumables();
       fetchInventory();
       setPatientId(initialPatientId || '');
@@ -107,7 +122,7 @@ const RecordConsumableUsageModal: React.FC<RecordConsumableUsageModalProps> = ({
       setError('');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen]);
+  }, [active]);
 
   const fetchConsumables = async () => {
     try {
@@ -257,22 +272,39 @@ const RecordConsumableUsageModal: React.FC<RecordConsumableUsageModalProps> = ({
     }
   };
 
-  if (!isOpen) return null;
+  if (!active) return null;
+
+  const outerClass = isInline
+    ? 'mt-4 p-4 border border-sky-200 bg-sky-50 rounded-lg'
+    : 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4';
+  const cardClass = isInline ? '' : 'bg-white rounded-lg shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto';
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
-        <div className="px-6 py-4 border-b border-gray-200 flex justify-between items-center sticky top-0 bg-white">
-          <h2 className="text-xl font-semibold flex items-center gap-2">
-            <Package className="w-6 h-6 text-purple-600" />
-            {lockToCategory ? `Record ${lockToCategory} Administration` : 'Record Consumable Usage'}
-          </h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
-            <X className="w-6 h-6" />
-          </button>
-        </div>
+    <div className={outerClass}>
+      <div className={cardClass}>
+        {isInline ? (
+          <div className="flex items-center justify-between mb-4">
+            <h5 className="font-medium text-sky-900 text-sm flex items-center gap-2">
+              <Package className="w-4 h-4" />
+              {lockToCategory ? `Record ${lockToCategory} Administration` : 'Record Consumable Usage'}
+            </h5>
+            <button type="button" onClick={onClose} className="text-gray-400 hover:text-gray-600">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        ) : (
+          <div className="px-6 py-4 border-b border-gray-200 flex justify-between items-center sticky top-0 bg-white">
+            <h2 className="text-xl font-semibold flex items-center gap-2">
+              <Package className="w-6 h-6 text-purple-600" />
+              {lockToCategory ? `Record ${lockToCategory} Administration` : 'Record Consumable Usage'}
+            </h2>
+            <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+              <X className="w-6 h-6" />
+            </button>
+          </div>
+        )}
 
-        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+        <form onSubmit={handleSubmit} className={isInline ? 'space-y-4' : 'p-6 space-y-4'}>
           {error && (
             <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">{error}</div>
           )}
@@ -484,7 +516,7 @@ const RecordConsumableUsageModal: React.FC<RecordConsumableUsageModalProps> = ({
             />
           </div>
 
-          <div className="flex justify-end gap-3 pt-4 border-t">
+          <div className={isInline ? 'flex justify-end gap-3 pt-2' : 'flex justify-end gap-3 pt-4 border-t'}>
             <button type="button" onClick={onClose} className="btn btn-secondary" disabled={isSubmitting}>
               Cancel
             </button>

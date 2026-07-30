@@ -51,6 +51,15 @@ function parseOptions(children: React.ReactNode): DropdownOption[] {
   return options;
 }
 
+// Only handles the common case (a plain string/number label, which is what
+// every option in this codebase actually uses) — a non-text label (rare)
+// just won't participate in type-ahead matching, same as before this existed.
+function optionText(label: React.ReactNode): string {
+  if (typeof label === 'string') return label;
+  if (typeof label === 'number') return String(label);
+  return '';
+}
+
 const Dropdown: React.FC<DropdownProps> = ({
   name,
   id,
@@ -89,6 +98,54 @@ const Dropdown: React.FC<DropdownProps> = ({
   const normalizedValue = value !== undefined ? String(value) : '';
   const selectedIndex = options.findIndex((o) => o.value === normalizedValue);
   const selectedOption = selectedIndex >= 0 ? options[selectedIndex] : options[0];
+
+  // Type-ahead ("jump to the letter you type" instead of scrolling/arrowing
+  // through, e.g. a 94-item HMO provider list) — native <select> does this
+  // for free, but this is a fully custom-rendered list, so it doesn't come
+  // for free here.
+  //
+  // Two native <select> behaviors, both reproduced here:
+  // - Typing multiple different letters within the pause window accumulates
+  //   into one search string ("cl" jumps straight to "Clearline...").
+  // - Repeating the SAME letter within that window cycles forward through
+  //   every option starting with that letter, rather than the buffer
+  //   growing into "ccc" and failing to match anything.
+  const TYPE_AHEAD_TIMEOUT_MS = 600;
+  const searchRef = useRef({ query: '', lastKeyAt: 0 });
+
+  const findTypeAheadMatch = (key: string, currentIndex: number): number => {
+    const search = searchRef.current;
+    const now = Date.now();
+    const withinWindow = now - search.lastKeyAt < TYPE_AHEAD_TIMEOUT_MS;
+    const isRepeatSameLetter = withinWindow && search.query.length > 0 && search.query.split('').every((c) => c === key);
+
+    let query: string;
+    let startAt: number;
+    if (isRepeatSameLetter) {
+      query = key; // still a single-letter search, just cycling forward
+      startAt = currentIndex + 1;
+    } else if (withinWindow) {
+      query = search.query + key;
+      startAt = 0;
+    } else {
+      query = key;
+      startAt = 0;
+    }
+
+    search.query = isRepeatSameLetter ? search.query + key : query;
+    search.lastKeyAt = now;
+
+    const lower = query.toLowerCase();
+    const n = options.length;
+    for (let i = 0; i < n; i++) {
+      const idx = (startAt + i) % n;
+      const opt = options[idx];
+      if (!opt.disabled && optionText(opt.label).toLowerCase().startsWith(lower)) {
+        return idx;
+      }
+    }
+    return -1;
+  };
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -158,11 +215,26 @@ const Dropdown: React.FC<DropdownProps> = ({
     setIsOpen(true);
   };
 
+  // Space is excluded — it's already bound to open/select below, matching
+  // native <select> (which also doesn't type-ahead on space). Modifier
+  // combos (Ctrl+C etc.) are excluded too, so they still reach the browser
+  // instead of being swallowed as a one-letter search.
+  const isTypeAheadKey = (e: React.KeyboardEvent) =>
+    e.key.length === 1 && e.key !== ' ' && !e.ctrlKey && !e.metaKey && !e.altKey;
+
   const handleTriggerKeyDown = (e: React.KeyboardEvent<HTMLButtonElement>) => {
     if (!isOpen) {
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Enter' || e.key === ' ') {
         e.preventDefault();
         open();
+        return;
+      }
+      if (isTypeAheadKey(e)) {
+        // Native <select> jumps the selected value immediately while
+        // closed, without opening the list — matched here.
+        e.preventDefault();
+        const matchIndex = findTypeAheadMatch(e.key, selectedIndex >= 0 ? selectedIndex : -1);
+        if (matchIndex >= 0) commitSelection(options[matchIndex]);
       }
       return;
     }
@@ -181,6 +253,13 @@ const Dropdown: React.FC<DropdownProps> = ({
       setIsOpen(false);
     } else if (e.key === 'Tab') {
       setIsOpen(false);
+    } else if (isTypeAheadKey(e)) {
+      e.preventDefault();
+      const matchIndex = findTypeAheadMatch(e.key, highlightedIndex);
+      if (matchIndex >= 0) {
+        setHighlightedIndex(matchIndex);
+        listRef.current?.children[matchIndex]?.scrollIntoView({ block: 'nearest' });
+      }
     }
   };
 

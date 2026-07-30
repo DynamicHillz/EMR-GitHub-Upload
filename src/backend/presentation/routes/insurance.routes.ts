@@ -8,7 +8,10 @@ const insuranceController = new InsuranceController();
 // Insurance Providers
 router.get(
   '/providers',
-  requireRole(['SUPER_ADMIN', 'ADMIN', 'DOCTOR', 'CASHIER', 'NURSE']),
+  // RECEPTIONIST included: they're the ones who actually register most
+  // patients (see CAN_REGISTER_PATIENTS in patient.routes.ts) and need this
+  // list for the HMO Provider dropdown on the registration form.
+  requireRole(['SUPER_ADMIN', 'ADMIN', 'DOCTOR', 'CASHIER', 'NURSE', 'RECEPTIONIST']),
   insuranceController.getProviders.bind(insuranceController)
 );
 

@@ -993,10 +993,19 @@ export class InpatientService {
   // either. So this returns the full log rather than a per-doctor slice.
   async getAllOperationNotes(
     tenantId: string,
-    filters: { page?: number; limit?: number; from?: string; to?: string }
+    filters: {
+      page?: number;
+      limit?: number;
+      from?: string;
+      to?: string;
+      sortBy?: 'operationDate' | 'surgicalProcedure';
+      sortDir?: 'asc' | 'desc';
+    }
   ) {
     const page = filters.page || 1;
     const limit = filters.limit || 20;
+    const sortBy = filters.sortBy || 'operationDate';
+    const sortDir = filters.sortDir || 'desc';
 
     // @ts-ignore - Temporary fix for schema alignment
     const where = {
@@ -1016,7 +1025,7 @@ export class InpatientService {
       // @ts-ignore - Temporary fix for schema alignment
       prisma.operationNote.findMany({
         where,
-        orderBy: { operationDate: 'desc' },
+        orderBy: { [sortBy]: sortDir },
         skip: (page - 1) * limit,
         take: limit,
         include: {
@@ -1033,6 +1042,55 @@ export class InpatientService {
     ]);
 
     return { notes, total, page, limit };
+  }
+
+  // Ranking report (count per surgicalProcedure in a date range) — mirrors
+  // GetDiagnosisTrendsReportUseCase's approach (in-memory Map aggregation
+  // over a findMany, rather than a Prisma groupBy) so it stays consistent
+  // with the rest of this codebase's reporting pattern. Lives here rather
+  // than in application/use-cases/reports/ since Reports is ADMIN_ONLY and
+  // this needs to be visible to the same DOCTOR/NURSE audience as the rest
+  // of the Surgery Log.
+  async getSurgicalProcedureBreakdown(
+    tenantId: string,
+    filters: { from?: string; to?: string; limit?: number }
+  ) {
+    const limit = filters.limit || 10;
+
+    // @ts-ignore - Temporary fix for schema alignment
+    const notes = await prisma.operationNote.findMany({
+      where: {
+        tenantId,
+        isDeleted: false,
+        ...(filters.from || filters.to
+          ? {
+              operationDate: {
+                ...(filters.from ? { gte: new Date(filters.from) } : {}),
+                ...(filters.to ? { lte: new Date(filters.to) } : {}),
+              },
+            }
+          : {}),
+      },
+      select: { surgicalProcedure: true },
+    });
+
+    const counts = new Map<string, number>();
+    // @ts-ignore - Temporary fix for schema alignment
+    notes.forEach((n) => counts.set(n.surgicalProcedure, (counts.get(n.surgicalProcedure) || 0) + 1));
+
+    const topProcedures = Array.from(counts.entries())
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, limit);
+
+    return {
+      topProcedures,
+      summary: {
+        totalOperationsRecorded: notes.length,
+        startDate: filters.from || null,
+        endDate: filters.to || null,
+      },
+    };
   }
 
   // ==================== VOID / CORRECTIONS ====================

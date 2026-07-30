@@ -14,6 +14,7 @@ router.get('/admissions', requireRole(['SUPER_ADMIN', 'ADMIN', 'DOCTOR', 'NURSE'
 router.get('/admissions/billable', requireRole(['SUPER_ADMIN', 'ADMIN', 'CASHIER']), inpatientController.getBillableAdmissions.bind(inpatientController));
 router.get('/transfusions/billable', requireRole(['SUPER_ADMIN', 'ADMIN', 'CASHIER']), inpatientController.getBillableTransfusions.bind(inpatientController));
 router.get('/operation-notes/billable', requireRole(['SUPER_ADMIN', 'ADMIN', 'CASHIER']), inpatientController.getBillableOperationNotes.bind(inpatientController));
+router.get('/operation-notes/analytics', requireRole(['SUPER_ADMIN', 'ADMIN', 'DOCTOR', 'NURSE']), inpatientController.getSurgicalProcedureBreakdown.bind(inpatientController));
 router.get('/admissions/patient/:patientId', requireRole(['SUPER_ADMIN', 'ADMIN', 'DOCTOR', 'NURSE', 'CASHIER']), inpatientController.getAdmissionsByPatientId.bind(inpatientController));
 router.get('/admissions/:id', requireRole(['SUPER_ADMIN', 'ADMIN', 'DOCTOR', 'NURSE', 'CASHIER']), inpatientController.getAdmissionById.bind(inpatientController));
 

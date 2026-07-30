@@ -1,425 +1,123 @@
-# SSMC EMR - Electronic Medical Records System
+# SSMC EMR — Electronic Medical Records System
 
-> Offline-first, cloud-synced Electronic Medical Records system for private clinics in emerging markets
+> A multi-tenant Electronic Medical Records system built for private clinics in emerging markets — designed to run reliably on a single on-prem PC over unreliable local infrastructure, not just a cloud data center.
 
 ![Version](https://img.shields.io/badge/version-1.0.0-blue)
 ![License](https://img.shields.io/badge/license-PROPRIETARY-red)
+![Tests](https://img.shields.io/badge/tests-474%20passing-brightgreen)
 ![Node](https://img.shields.io/badge/node-%3E%3D18.0.0-green)
 
 ---
 
-## 🎯 Project Overview
+## About this project
 
-**SSMC EMR** is a comprehensive, offline-capable Electronic Medical Records system designed specifically for private clinics in emerging markets. The system operates seamlessly offline on desktop applications with automatic cloud synchronization, supporting complete clinical workflows from patient registration through billing.
+Built for **St. Stephen Medical Centre**, a private clinic, to replace paper-based patient records with a full digital workflow — registration, consultations, lab, pharmacy, billing, and inpatient care — running on a single Windows PC at the clinic, with no dependency on cloud infrastructure or reliable internet.
 
-### Key Features
-
-- ✅ **Offline-First Architecture** - Works completely without internet
-- ✅ **Cloud Synchronization** - Automatic bi-directional sync when online
-- ✅ **Multi-Tenant SaaS** - Supports 100+ independent clinics
-- ✅ **Complete Clinical Workflow** - Patient → Consultation → Lab → Pharmacy → Billing
-- ✅ **GDPR/NDPR Compliant** - Built-in consent tracking and data protection
-- ✅ **Role-Based Access Control** - 7 user roles with granular permissions
-- ✅ **Desktop Applications** - Electron apps for Windows, macOS, Linux
+This was built AI-assisted, directed end-to-end through Claude Code: every product decision, architectural tradeoff, feature scope, and deployment step below was specified, reviewed, and tested by hand — including catching and fixing real production bugs (a mixed-content HTTPS regression that broke login) and building an offline-deployment procedure for regions where a stable internet connection during setup isn't a safe assumption.
 
 ---
 
-## 🏗️ Architecture
+## What it actually does
 
-### Technology Stack
+- **Patient management** — registration, search, allergy/chronic-condition tracking, full demographic history
+- **Appointments** — calendar scheduling, check-in, waiting queue
+- **Consultations** — SOAP notes, vitals, ICD-11 diagnosis coding (via a local WHO ICD-11 terminology service)
+- **E-prescribing** — with automated drug-interaction and allergy checking at dispense time
+- **Pharmacy** — medication & consumable inventory, batch/expiry tracking, dispensing, stock alerts, oxygen-therapy administration tracking
+- **Lab** — order → queue → result entry, with automatic critical-value flagging and delta-change alerts
+- **Billing** — itemized invoicing, insurance & exemption-policy handling, refund workflow, fraud-prevention checks, and multi-gateway payments (Flutterwave, Moniepoint, Paystack) — including billing for blood transfusions, surgical procedures, and labour & delivery, each linked back to its clinical record so nothing is billed twice
+- **Inpatient/ward management** — admissions, bed transfers, discharge summaries, vital/fluid/transfusion/blood-sugar charts, operation notes with a procedure-analytics dashboard
+- **Triage, MCH** — antenatal care, immunization schedules, labour & delivery with partograph tracking
+- **Interoperability** — FHIR patient export, DHIS2 aggregate reporting
+- **Audit logging** — 7-year retention for regulatory compliance (NDPR)
+- **Offline-first** — an IndexedDB write queue and encrypted read cache keep the app usable through connectivity drops, with a PWA service worker precaching the app shell
 
-#### Frontend
-- **React 18** with TypeScript
-- **Tailwind CSS** for styling
-- **React Router** for navigation
-- **React Query** for data fetching
-- **Zustand** for state management
+## Why this isn't "just another CRUD app"
 
-#### Backend
-- **Node.js** with Express
-- **TypeScript** for type safety
-- **Prisma ORM** for database abstraction
-- **JWT** for authentication
-- **Winston** for logging
+The interesting engineering here isn't the feature list — it's what it takes to run real clinical software reliably in the actual conditions of a Nigerian clinic:
 
-#### Database
-- **PostgreSQL** - Local-first database serving as the single source of truth
+- **HTTPS on a LAN, not just localhost** — browsers only allow service workers to register under a secure context, so every workstation reaching the clinic server over the LAN needed real TLS, not a self-signed shortcut, via a locally-trusted CA (`mkcert`).
+- **Automated, verified backups** — a scheduled `pg_dump` job with an actual restore drill into a scratch database, not just "a backup script exists."
+- **Boot-time recovery** — the app survives a Windows reboot or power cycle unattended, since there's no IT staff on-site to restart it manually.
+- **Offline deployment packaging** — when the internet is too unreliable to trust for `npm install` or `git clone`, the entire dependency tree and required installers can be packaged onto a USB drive instead.
+- **474 automated tests** across 70 suites — unit coverage for every backend domain (pharmacy, lab, billing, user management, appointments, auth, interoperability) plus integration tests for the highest-risk flows (payments, refunds, drug interactions, lab results).
 
-#### Desktop
-- **Electron** - Cross-platform desktop application
+See [`CLINIC_DEPLOYMENT_CHECKLIST.md`](CLINIC_DEPLOYMENT_CHECKLIST.md) for the actual step-by-step procedure used to stand up a new clinic server from a bare Windows PC.
 
-#### DevOps
-- **Prisma Migrations** for database versioning
-- **ESLint & Prettier** for code quality
-- **Jest** for testing
+---
 
-### System Architecture
+## Architecture
+
+**Backend**: Clean Architecture — domain / application / infrastructure / presentation layers, with dependencies pointing inward. The four most business-logic-heavy domains (patient, appointment, consultation, user) have full domain entities and repository interfaces; the rest use direct Prisma injection into use-cases, which is the deliberate, consistent pattern for the remaining domains rather than a shortcut.
+
+**Frontend**: React 18 + TypeScript, Vite, Tailwind CSS, React Router, React Hook Form. Global state is plain React Context — no Redux/Zustand overhead for an app this size.
+
+**Database**: PostgreSQL via Prisma ORM — 60 models / 40 enums, with a real tracked migration history (`prisma migrate`), not ad-hoc schema pushes.
+
+**Process management**: PM2 in production, with Windows boot-recovery configured so the app comes back online automatically after a reboot with no manual intervention.
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                    Cloud Layer                          │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐ │
-│  │   Frontend   │  │   Backend    │  │  PostgreSQL  │ │
-│  │   (Vercel)   │  │  (Render)    │  │   Database   │ │
-│  └──────────────┘  └──────────────┘  └──────────────┘ │
-└─────────────────────────────────────────────────────────┘
-                          ▲ ▼
-                   Sync API (HTTPS)
-                          ▲ ▼
-┌─────────────────────────────────────────────────────────┐
-│              Clinic Laptops (Offline-First)             │
-│  ┌──────────────────────────────────────────────────┐  │
-│  │           Electron Desktop App                   │  │
-│  │  ┌────────────┐  ┌────────────┐  ┌────────────┐ │  │
-│  │  │   React    │  │  Node.js   │  │ PostgreSQL │ │  │
-│  │  │  Frontend  │  │  Backend   │  │ (Local DB) │ │  │
-│  │  └────────────┘  └────────────┘  └────────────┘ │  │
-│  └──────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────┘
+src/
+├── backend/
+│   ├── domain/            # Entities, repository interfaces, domain services
+│   ├── application/       # Use cases, DTOs, validators
+│   ├── infrastructure/    # Prisma repositories, payment gateways, external services
+│   ├── presentation/      # Controllers, routes, middleware
+│   └── shared/            # Cross-cutting utilities, error types
+└── frontend/
+    ├── components/        # Domain-organized UI components
+    ├── pages/              # Route-level pages
+    └── services/           # API client layer
 ```
 
 ---
 
-## 📁 Project Structure
+## Tech stack
 
-```
-St.stephen EMR/
-├── doc/                          # Documentation
-│   ├── project-idea.md
-│   ├── Core_Requirements.md
-│   └── Patient_SSMC_EMR_User_Stories.md
-├── prisma/
-│   └── schema.prisma            # Database schema (110 models)
-├── src/
-│   ├── backend/                 # Node.js API server
-│   │   ├── server.ts           # Express server setup
-│   │   ├── controllers/        # Route controllers
-│   │   ├── middleware/         # Auth, error handling
-│   │   ├── routes/             # API routes
-│   │   └── utils/              # Utilities (logger, etc.)
-│   ├── frontend/               # React application
-│   │   ├── App.tsx
-│   │   ├── main.tsx
-│   │   ├── components/         # Reusable components
-│   │   └── pages/              # Page components
-│   ├── electron/               # Electron main process (TODO)
-│   └── shared/                 # Shared types & utilities
-├── .env.example                # Environment variables template
-├── package.json
-├── tsconfig.json
-├── tailwind.config.js
-└── vite.config.ts
-```
+| Layer | Technology |
+|---|---|
+| Frontend | React 18, TypeScript, Vite, Tailwind CSS, React Router v6, React Hook Form |
+| Backend | Node.js, Express, TypeScript |
+| Database | PostgreSQL, Prisma ORM |
+| Auth | JWT (8h expiry), bcrypt (cost factor 12), role-based access control (8 roles) |
+| Payments | Flutterwave, Moniepoint, Paystack |
+| Process management | PM2 |
+| Testing | Jest, ts-jest — 474 tests |
+| Offline | Service Worker (Workbox), IndexedDB |
 
 ---
 
-## 🚀 Getting Started
-
-### Prerequisites
-
-- **Node.js** >= 18.0.0 ✅ (Already installed!)
-- **npm** >= 11.0.0 ✅ (Already installed!)
-- **Supabase Account** (Free PostgreSQL database - recommended)
-  - OR **PostgreSQL** 15+ (local installation)
-- **Git** (optional)
-
-### Installation
-
-1. **Clone the repository**
-   ```bash
-   git clone <repository-url>
-   cd "St.stephen EMR"
-   ```
-
-2. **Install dependencies** ✅ (Already done!)
-   ```bash
-   npm install  # 879 packages installed
-   ```
-
-3. **Set up Supabase Database** (Recommended - Free & Easy!)
-
-   **📘 Follow the step-by-step guide:** [SUPABASE_CHECKLIST.md](SUPABASE_CHECKLIST.md)
-
-   Quick steps:
-   - Create free account at https://supabase.com
-   - Create new project
-   - Copy connection string
-   - Configure `.env` file
-   - Run migrations
-
-   **Total time:** ~15 minutes
-
-   **Alternative:** [Local PostgreSQL setup](INSTALL_POSTGRESQL.md) (requires admin rights)
-
-4. **Configure environment**
-   ```bash
-   cp .env.example .env
-   # Edit .env with your Supabase connection string
-   ```
-
-5. **Initialize database**
-   ```bash
-   npm run prisma:generate
-   npm run prisma:migrate
-   ```
-
-### Development
-
-Run the development servers:
+## Getting started (local development)
 
 ```bash
-# Terminal 1: Backend API server (http://localhost:3000)
-npm run dev:backend
+git clone <repository-url>
+cd St.stephen_EMR
+npm install
 
-# Terminal 2: Frontend dev server (http://localhost:5173)
-npm run dev:frontend
+# Configure .env — see CLAUDE.md's Environment Configuration section
+# for the current required variables (there's no committed .env.example;
+# the running .env is the source of truth for what's in use)
 
-# Terminal 3: Electron desktop app (when ready)
-npm run dev:electron
+npx prisma migrate deploy   # apply the tracked migration history
+node scripts/final-create-admin.js   # creates initial tenant + admin login
+
+npm run dev:backend    # http://localhost:3000
+npm run dev:frontend   # http://localhost:5173
 ```
 
-### Building for Production
+### Testing
 
 ```bash
-# Build backend
-npm run build:backend
-
-# Build frontend
-npm run build:frontend
-
-# Build Electron desktop app
-npm run build:electron
+npm test                 # full suite
+npm test -- --coverage   # with coverage report
 ```
 
----
+### Production deployment
 
-## 📋 Database Schema
-
-The system includes comprehensive models covering:
-
-### Core Entities
-- **Tenants** - Multi-tenancy support
-- **Users** - 7 role types (Admin, Doctor, Nurse, Lab Tech, Pharmacist, Cashier, Receptionist)
-- **Patients** - Complete demographics and medical history
-- **Appointments** - Scheduling with reminders
-- **Consultations** - SOAP notes and vital signs
-- **Prescriptions** - E-prescribing with allergy checking
-- **Lab Tests** - Full lab workflow
-- **Medications** - Inventory management
-- **Invoices** - Billing and payments
-
-### Sync & Compliance
-- **SyncDevices** - Device registration and token management
-- **SyncQueue** - Conflict detection and resolution
-- **AuditLogs** - 7-year retention for compliance
-
-**View the complete schema:** [prisma/schema.prisma](prisma/schema.prisma)
+Production runs under PM2 (`ecosystem.config.js`), not the dev scripts above. For standing up a **new** clinic server from scratch — TLS certificates, scheduled backups, boot-time recovery, and an offline-deployment path for unreliable connectivity — see [`CLINIC_DEPLOYMENT_CHECKLIST.md`](CLINIC_DEPLOYMENT_CHECKLIST.md).
 
 ---
 
-## 🔐 Security Features
+## License
 
-- ✅ **JWT Authentication** with 8-hour expiration
-- ✅ **bcrypt Password Hashing** (cost factor 12)
-- ✅ **SQLCipher Encryption** for local databases
-- ✅ **TLS 1.3** for data in transit
-- ✅ **Rate Limiting** (100 req/min per IP)
-- ✅ **Helmet.js** security headers
-- ✅ **Role-Based Access Control** (RBAC)
-- ✅ **SQL Injection Prevention** via Prisma ORM
-- ✅ **XSS Protection** via input sanitization
-
----
-
-## 🔄 Offline Sync Strategy
-
-### How It Works
-
-1. **Local-First Operations**
-   - All CRUD operations hit local SQLite database first
-   - Immediate response to user actions (no network latency)
-   - Changes queued for synchronization
-
-2. **Automatic Sync** (every 15 minutes when online)
-   - Incremental sync (only changed records)
-   - Priority-based queue (prescriptions > routine updates)
-   - Checksum verification for data integrity
-
-3. **Conflict Resolution**
-   - Last-write-wins for simple fields
-   - Operational transform for complex merges
-   - Manual resolution UI for unresolvable conflicts
-
-4. **Full Sync** (nightly at 2 AM)
-   - Complete database reconciliation
-   - Ensures eventual consistency
-
----
-
-## 👥 User Roles & Permissions
-
-| Role | Capabilities |
-|------|-------------|
-| **Admin** | Full system access, user management, tenant configuration |
-| **Doctor** | Patient records, consultations, prescriptions, lab orders |
-| **Nurse** | Vital signs, patient check-in, consultation support |
-| **Lab Tech** | Lab test processing, results entry |
-| **Pharmacist** | Medication dispensing, inventory management |
-| **Cashier** | Billing, payment collection, invoice generation |
-| **Receptionist** | Patient registration, appointment scheduling |
-
----
-
-## 📊 MVP Development Plan
-
-### Sprint Timeline (6 months)
-
-**Sprint 1-2: Foundation** (4 weeks)
-- User authentication & role management
-- Desktop app installation
-- Patient registration
-
-**Sprint 3-4: Offline Core** (4 weeks)
-- Offline operation implementation
-- Initial data download
-- Basic bi-directional sync
-
-**Sprint 5-6: Clinical Workflows Part 1** (4 weeks)
-- Consultation documentation (SOAP notes)
-- E-prescribing
-- Vital signs capture
-
-**Sprint 7-8: Sync Intelligence** (4 weeks)
-- Conflict detection & resolution
-- Priority-based sync queue
-- Manual sync triggers
-
-**Sprint 9-10: Appointments & Lab** (4 weeks)
-- Appointment scheduling
-- Lab test ordering & processing
-- Lab results entry & approval
-
-**Sprint 11-12: Pharmacy & Billing** (4 weeks)
-- Medication dispensing
-- Inventory management
-- Automatic bill generation
-
-**Sprint 13: GDPR & Polish** (2 weeks)
-- GDPR compliance features
-- Reporting
-- Bug fixes & documentation
-
----
-
-## 🧪 Testing
-
-```bash
-# Run all tests
-npm test
-
-# Run tests in watch mode
-npm test -- --watch
-
-# Generate coverage report
-npm test -- --coverage
-```
-
----
-
-## 📝 API Documentation
-
-Once the server is running, API documentation is available at:
-- **Swagger UI:** `http://localhost:3000/api-docs` (TODO)
-
-### Example Endpoints
-
-```
-POST   /api/auth/login              # User login
-GET    /api/patients                # List patients
-POST   /api/patients                # Register patient
-GET    /api/patients/search?q=John  # Search patients
-POST   /api/consultations           # Create consultation
-POST   /api/prescriptions           # Create prescription
-GET    /api/lab/tests               # List lab tests
-POST   /api/billing/invoices        # Generate invoice
-POST   /api/sync/push               # Push local changes
-GET    /api/sync/pull               # Pull remote changes
-```
-
----
-
-## 🔧 Configuration
-
-### Environment Variables
-
-See [.env.example](.env.example) for all available configuration options.
-
-Key settings:
-- `DATABASE_URL` - PostgreSQL connection
-- `JWT_SECRET` - Authentication secret
-- `SYNC_INTERVAL_MS` - Sync frequency (default: 900000 = 15 min)
-- `RATE_LIMIT_MAX_REQUESTS` - API rate limit
-
----
-
-## 🐛 Troubleshooting
-
-### Common Issues
-
-**Database connection failed**
-```bash
-# Check PostgreSQL is running
-# Verify DATABASE_URL in .env
-npm run prisma:migrate
-```
-
-**Port already in use**
-```bash
-# Change PORT in .env
-# Or kill process on port 3000/5173
-```
-
-**Sync not working**
-```bash
-# Check internet connection
-# Verify device token is valid
-# Check sync_queue table for errors
-```
-
----
-
-## 📄 License
-
-**PROPRIETARY** - This software is proprietary and confidential. Unauthorized copying, distribution, or use is strictly prohibited.
-
----
-
-## 👨‍💻 Development Team
-
-- **Product Manager / Architect:** Hillz
-- **Full-Stack Developer:** [Your Name]
-- **Healthcare Consultant:** [TBD]
-
----
-
-## 🤝 Contributing
-
-This is a proprietary project. For internal team members:
-
-1. Create a feature branch
-2. Make your changes
-3. Write/update tests
-4. Submit pull request for review
-
----
-
-## 📞 Support
-
-For issues and questions:
-- **Email:** support@medflowemr.com
-- **Docs:** [Internal Wiki]
-- **Slack:** #medflow-dev
-
----
-
-**Built with ❤️ for healthcare providers in emerging markets**
+Proprietary. Built for a real clinic handling real patient data — not licensed for reuse. Shared here as a portfolio/case-study reference.
