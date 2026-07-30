@@ -2,6 +2,12 @@ import { Router, Request, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
 import { authMiddleware, requireRole } from '../middleware/auth';
 import { GetFhirPatientUseCase } from '../../application/use-cases/interoperability/get-fhir-patient.use-case';
+import { GetFhirEncounterUseCase } from '../../application/use-cases/interoperability/get-fhir-encounter.use-case';
+import { GetFhirConditionUseCase } from '../../application/use-cases/interoperability/get-fhir-condition.use-case';
+import { GetFhirObservationUseCase } from '../../application/use-cases/interoperability/get-fhir-observation.use-case';
+import { GetFhirMedicationRequestUseCase } from '../../application/use-cases/interoperability/get-fhir-medication-request.use-case';
+import { GetFhirDiagnosticReportUseCase } from '../../application/use-cases/interoperability/get-fhir-diagnostic-report.use-case';
+import { GetFhirPatientEverythingUseCase } from '../../application/use-cases/interoperability/get-fhir-patient-everything.use-case';
 import { SyncDhis2AggregateUseCase } from '../../application/use-cases/interoperability/sync-dhis2-aggregate.use-case';
 
 const router = Router();
@@ -14,24 +20,122 @@ const prisma = new PrismaClient();
 // Admin-only access.
 const ADMIN_ONLY = requireRole(['SUPER_ADMIN', 'ADMIN']);
 
+// Generic handler for the single-resource-read FHIR routes below — they all
+// share the same shape (fetch by id scoped to tenant, 404 on not-found, 500
+// otherwise), so this avoids repeating the same try/catch six times.
+function fhirReadHandler(
+  execute: (id: string, tenantId: string) => Promise<any>,
+  notFoundMessage: string,
+  resourceLabel: string
+) {
+  return async (req: Request, res: Response) => {
+    try {
+      const resource = await execute(req.params.id, req.user!.tenantId);
+      res.json(resource);
+    } catch (error: any) {
+      if (error.message === notFoundMessage) {
+        res.status(404).json({ error: notFoundMessage });
+      } else {
+        res.status(500).json({ error: `Failed to retrieve FHIR ${resourceLabel} resource` });
+      }
+    }
+  };
+}
+
+/**
+ * @route GET /api/interoperability/fhir/metadata
+ * @desc FHIR CapabilityStatement — the honest, load-bearing declaration of
+ *       exactly what this server supports. Every resource/interaction
+ *       listed here must be backed by a real route below; nothing
+ *       aspirational belongs in this object.
+ * @access Private (Admin)
+ */
+router.get('/fhir/metadata', authMiddleware, ADMIN_ONLY, (_req: Request, res: Response) => {
+  const readOnly = { interaction: [{ code: 'read' }] };
+  res.json({
+    resourceType: 'CapabilityStatement',
+    status: 'active',
+    date: new Date().toISOString(),
+    kind: 'instance',
+    fhirVersion: '4.0.1',
+    format: ['json'],
+    rest: [
+      {
+        mode: 'server',
+        resource: [
+          { type: 'Patient', ...readOnly },
+          { type: 'Encounter', ...readOnly },
+          { type: 'Condition', ...readOnly },
+          { type: 'Observation', ...readOnly },
+          { type: 'MedicationRequest', ...readOnly },
+          { type: 'DiagnosticReport', ...readOnly }
+        ],
+        operation: [
+          {
+            name: 'everything',
+            definition: 'http://hl7.org/fhir/OperationDefinition/Patient-everything'
+          }
+        ]
+      }
+    ]
+  });
+});
+
 /**
  * @route GET /api/interoperability/fhir/Patient/:id
  * @desc Get Patient resource in FHIR R4 format
  * @access Private (Admin)
  */
-router.get('/fhir/Patient/:id', authMiddleware, ADMIN_ONLY, async (req: Request, res: Response) => {
-  try {
-    const useCase = new GetFhirPatientUseCase(prisma);
-    const fhirPatient = await useCase.execute(req.params.id, req.user!.tenantId);
-    res.json(fhirPatient);
-  } catch (error: any) {
-    if (error.message === 'Patient not found') {
-      res.status(404).json({ error: 'Patient not found' });
-    } else {
-      res.status(500).json({ error: 'Failed to retrieve FHIR Patient resource' });
-    }
-  }
-});
+router.get('/fhir/Patient/:id', authMiddleware, ADMIN_ONLY,
+  fhirReadHandler((id, tenantId) => new GetFhirPatientUseCase(prisma).execute(id, tenantId), 'Patient not found', 'Patient'));
+
+/**
+ * @route GET /api/interoperability/fhir/Patient/:id/$everything
+ * @desc Full FHIR Bundle for a patient — every Encounter, Condition,
+ *       Observation, MedicationRequest, and DiagnosticReport, composed from
+ *       the same mappers backing the single-resource routes below.
+ * @access Private (Admin)
+ */
+router.get('/fhir/Patient/:id/$everything', authMiddleware, ADMIN_ONLY,
+  fhirReadHandler((id, tenantId) => new GetFhirPatientEverythingUseCase(prisma).execute(id, tenantId), 'Patient not found', 'Patient $everything Bundle'));
+
+/**
+ * @route GET /api/interoperability/fhir/Encounter/:id
+ * @access Private (Admin)
+ */
+router.get('/fhir/Encounter/:id', authMiddleware, ADMIN_ONLY,
+  fhirReadHandler((id, tenantId) => new GetFhirEncounterUseCase(prisma).execute(id, tenantId), 'Consultation not found', 'Encounter'));
+
+/**
+ * @route GET /api/interoperability/fhir/Condition/:id
+ * @access Private (Admin)
+ */
+router.get('/fhir/Condition/:id', authMiddleware, ADMIN_ONLY,
+  fhirReadHandler((id, tenantId) => new GetFhirConditionUseCase(prisma).execute(id, tenantId), 'Diagnosis record not found', 'Condition'));
+
+/**
+ * @route GET /api/interoperability/fhir/Observation/:id
+ * @desc :id is either a real LabResultValue id, or a synthetic
+ *       `vitals-<consultationId>-<loincCode>` id for a vital-sign
+ *       Observation (vitals are scalar Consultation columns, not rows).
+ * @access Private (Admin)
+ */
+router.get('/fhir/Observation/:id', authMiddleware, ADMIN_ONLY,
+  fhirReadHandler((id, tenantId) => new GetFhirObservationUseCase(prisma).execute(id, tenantId), 'Observation not found', 'Observation'));
+
+/**
+ * @route GET /api/interoperability/fhir/MedicationRequest/:id
+ * @access Private (Admin)
+ */
+router.get('/fhir/MedicationRequest/:id', authMiddleware, ADMIN_ONLY,
+  fhirReadHandler((id, tenantId) => new GetFhirMedicationRequestUseCase(prisma).execute(id, tenantId), 'Prescription not found', 'MedicationRequest'));
+
+/**
+ * @route GET /api/interoperability/fhir/DiagnosticReport/:id
+ * @access Private (Admin)
+ */
+router.get('/fhir/DiagnosticReport/:id', authMiddleware, ADMIN_ONLY,
+  fhirReadHandler((id, tenantId) => new GetFhirDiagnosticReportUseCase(prisma).execute(id, tenantId), 'Lab test record not found', 'DiagnosticReport'));
 
 /**
  * @route POST /api/interoperability/dhis2/sync

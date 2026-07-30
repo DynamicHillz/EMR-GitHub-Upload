@@ -30,7 +30,7 @@ This was built AI-assisted, directed end-to-end through Claude Code: every produ
 - **Billing** — itemized invoicing, insurance & exemption-policy handling, refund workflow, fraud-prevention checks, and multi-gateway payments (Flutterwave, Moniepoint, Paystack) — including billing for blood transfusions, surgical procedures, and labour & delivery, each linked back to its clinical record so nothing is billed twice
 - **Inpatient/ward management** — admissions, bed transfers, discharge summaries, vital/fluid/transfusion/blood-sugar charts, operation notes with a procedure-analytics dashboard
 - **Triage, MCH** — antenatal care, immunization schedules, labour & delivery with partograph tracking
-- **Interoperability** — FHIR patient export, DHIS2 aggregate reporting
+- **Interoperability** — read-only FHIR R4 export (Patient, Encounter, Condition, Observation, MedicationRequest, DiagnosticReport, plus a per-patient `$everything` Bundle), backed by a `CapabilityStatement` at `/fhir/metadata` that declares exactly what's implemented — no inbound FHIR, no write operations, no resource types beyond the six listed; DHIS2 aggregate reporting
 - **Audit logging** — 7-year retention for regulatory compliance (NDPR)
 - **Offline-first** — an IndexedDB write queue and encrypted read cache keep the app usable through connectivity drops, with a PWA service worker precaching the app shell
 
