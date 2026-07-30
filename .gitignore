@@ -77,3 +77,4 @@ backups/
 
 # TLS cert/key generated locally via mkcert — machine-specific, private key
 certs/
+.claude/

@@ -9,6 +9,8 @@
 
 ---
 
+> **Note on history**: this repository is a published snapshot for portfolio review. Active development history lives in the clinic's private repository.
+
 ## About this project
 
 Built for **St. Stephen Medical Centre**, a private clinic, to replace paper-based patient records with a full digital workflow — registration, consultations, lab, pharmacy, billing, and inpatient care — running on a single Windows PC at the clinic, with no dependency on cloud infrastructure or reliable internet.
