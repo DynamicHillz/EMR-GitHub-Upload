@@ -301,7 +301,7 @@ RATE_LIMIT_MAX_REQUESTS=100
 SYNC_INTERVAL_MS=900000  # 15 minutes
 ```
 
-**Note**: `.env.example` referenced above doesn't actually exist in this repo as of 2026-07-27 — treat `.env` itself (gitignored) as the source of truth for what variables are in use.
+**Correction (2026-07-30): `.env.example` now exists** — added as part of the portfolio-polish pass, since the README's Getting Started section referencing a template that didn't exist read as a gap in a healthcare repo. It's kept manually in sync with `.env`'s actual keys (no automated check for drift) — if you add a new env var to the running `.env`, add it to `.env.example` too in the same change.
 
 ### TLS / HTTPS (required for LAN deployments)
 

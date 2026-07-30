@@ -96,9 +96,8 @@ git clone <repository-url>
 cd St.stephen_EMR
 npm install
 
-# Configure .env — see CLAUDE.md's Environment Configuration section
-# for the current required variables (there's no committed .env.example;
-# the running .env is the source of truth for what's in use)
+cp .env.example .env
+# Fill in real values — at minimum DATABASE_URL, DIRECT_URL, and JWT_SECRET
 
 npx prisma migrate deploy   # apply the tracked migration history
 node scripts/final-create-admin.js   # creates initial tenant + admin login
