@@ -18,6 +18,10 @@ export class GetLaborRecordUseCase {
         pregnancy: { select: { id: true, gravidity: true, parity: true, lmp: true, edd: true } },
         startedBy: { select: { firstName: true, lastName: true } },
         deliveredBy: { select: { firstName: true, lastName: true } },
+        // Lets the frontend recover the newborn's patient ID after a lost
+        // response (e.g. network timeout post-commit) instead of the
+        // delivery succeeding with no way to find what was just created.
+        newbornPatient: { select: { id: true, patientId: true } },
         observations: {
           where: { isDeleted: false },
           orderBy: { recordedAt: 'asc' },

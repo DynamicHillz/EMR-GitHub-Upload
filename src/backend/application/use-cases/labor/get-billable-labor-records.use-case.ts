@@ -26,6 +26,12 @@ export class GetBillableLaborRecordsUseCase {
       const lookupName = isCesarean ? 'cesarean section' : 'vaginal delivery';
       const catalogPrice = serviceCatalog.find(s => s.serviceName.toLowerCase().includes(lookupName));
       const unitPrice = Number(catalogPrice?.basePrice || (isCesarean ? 40000 : 15000));
+      // Tax must be included here too — generate-invoice.use-case.ts adds
+      // (unitPrice * taxRate/100) on top of unitPrice for the same matched
+      // catalog entry, so a preview total that omits it would understate
+      // what actually lands on the invoice whenever taxRate > 0.
+      const taxRate = Number(catalogPrice?.taxRate || 0);
+      const tax = unitPrice * (taxRate / 100);
 
       return {
         id: labor.id,
@@ -33,7 +39,8 @@ export class GetBillableLaborRecordsUseCase {
         detail: labor.deliveredAt ? new Date(labor.deliveredAt).toLocaleDateString() : '',
         quantity: 1,
         unitPrice,
-        total: unitPrice
+        tax,
+        total: unitPrice + tax
       };
     });
 

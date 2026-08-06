@@ -1,7 +1,7 @@
 import { PrismaClient } from '@prisma/client';
 import { mapPatientToFhirPatient } from './get-fhir-patient.use-case';
 import { mapConsultationToFhirEncounter } from './get-fhir-encounter.use-case';
-import { mapConsultationDiagnosisToFhirCondition } from './get-fhir-condition.use-case';
+import { mapConsultationDiagnosisToFhirCondition, AdditionalCoding, CODE_SYSTEM_MAP } from './get-fhir-condition.use-case';
 import { mapVitalToFhirObservation, mapLabResultToFhirObservation, VITAL_SIGNS } from './get-fhir-observation.use-case';
 import { mapPrescriptionToFhirMedicationRequest } from './get-fhir-medication-request.use-case';
 import { mapLabTestRecordToFhirDiagnosticReport } from './get-fhir-diagnostic-report.use-case';
@@ -40,6 +40,10 @@ export class GetFhirPatientEverythingUseCase {
       }
     });
 
+    // Batch-resolve every diagnosis's code mapping in one query rather than
+    // one findMany per diagnosis in the loop below.
+    const codingsBySourceKey = await this.resolveAdditionalCodingsForDiagnoses(diagnoses);
+
     const labResultValues = await this.prisma.labResultValue.findMany({
       where: { tenantId, testRecord: { order: { patientId, tenantId } } },
       include: {
@@ -75,7 +79,8 @@ export class GetFhirPatientEverythingUseCase {
     }
 
     for (const diagnosis of diagnoses) {
-      resources.push(mapConsultationDiagnosisToFhirCondition(diagnosis as any));
+      const key = `${diagnosis.diagnosis.type}|${diagnosis.diagnosis.code}`;
+      resources.push(mapConsultationDiagnosisToFhirCondition(diagnosis as any, codingsBySourceKey.get(key) || []));
     }
 
     for (const resultValue of labResultValues) {
@@ -101,5 +106,38 @@ export class GetFhirPatientEverythingUseCase {
         resource
       }))
     };
+  }
+
+  private async resolveAdditionalCodingsForDiagnoses(
+    diagnoses: { diagnosis: { code: string; type: string } }[]
+  ): Promise<Map<string, AdditionalCoding[]>> {
+    const result = new Map<string, AdditionalCoding[]>();
+    if (diagnoses.length === 0) return result;
+
+    const distinctPairs = new Map<string, { sourceSystem: string; sourceCode: string }>();
+    for (const d of diagnoses) {
+      const key = `${d.diagnosis.type}|${d.diagnosis.code}`;
+      if (!distinctPairs.has(key)) {
+        distinctPairs.set(key, { sourceSystem: d.diagnosis.type, sourceCode: d.diagnosis.code });
+      }
+    }
+
+    const mappings = await this.prisma.diagnosisCodeMapping.findMany({
+      where: { OR: Array.from(distinctPairs.values()) }
+    });
+
+    for (const mapping of mappings) {
+      if (!CODE_SYSTEM_MAP[mapping.targetSystem]) continue;
+      const key = `${mapping.sourceSystem}|${mapping.sourceCode}`;
+      const coding: AdditionalCoding = {
+        system: CODE_SYSTEM_MAP[mapping.targetSystem],
+        code: mapping.targetCode,
+        display: mapping.note || undefined
+      };
+      if (!result.has(key)) result.set(key, []);
+      result.get(key)!.push(coding);
+    }
+
+    return result;
   }
 }

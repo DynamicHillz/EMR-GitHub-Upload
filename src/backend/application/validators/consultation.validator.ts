@@ -162,6 +162,71 @@ export const updateConsultationSchema = Joi.object<any>({
 });
 
 /**
+ * Validator for creating a prescription from a consultation
+ * (consultationId comes from the URL param, not the body)
+ */
+export const createPrescriptionSchema = Joi.object<any>({
+  patientId: Joi.string().uuid().required().messages({
+    'string.empty': 'Patient ID is required',
+    'string.guid': 'Patient ID must be a valid UUID',
+  }),
+
+  admissionId: Joi.string().uuid().allow(null).optional(),
+  ancVisitId: Joi.string().uuid().allow(null).optional(),
+  type: Joi.string().valid('OUTPATIENT', 'INPATIENT', 'ANC').optional(),
+
+  medicationId: Joi.string().uuid().allow(null).optional(),
+  medicationName: Joi.string().trim().min(1).max(200).required().messages({
+    'string.empty': 'Medication name is required',
+  }),
+  route: Joi.string()
+    .valid(
+      'ORAL', 'INTRAVENOUS', 'INTRAMUSCULAR', 'SUBCUTANEOUS', 'TOPICAL',
+      'RECTAL', 'SUBLINGUAL', 'INHALATION', 'OPHTHALMIC', 'OTIC', 'NASAL',
+      'VAGINAL', 'OTHER'
+    )
+    .required()
+    .messages({
+      'any.only': 'Invalid administration route',
+      'string.empty': 'Route is required',
+    }),
+  dosage: Joi.string().trim().min(1).max(100).required().messages({
+    'string.empty': 'Dosage is required',
+  }),
+  frequency: Joi.string().trim().min(1).max(100).required().messages({
+    'string.empty': 'Frequency is required',
+  }),
+  duration: Joi.string().trim().min(1).max(100).required().messages({
+    'string.empty': 'Duration is required',
+  }),
+  instructions: Joi.string().max(1000).allow('', null).optional(),
+  quantity: Joi.number().integer().min(1).allow(null).optional(),
+  isControlledSubstance: Joi.boolean().optional(),
+  dispenseRationale: Joi.string().max(500).allow('', null).optional(),
+});
+
+/**
+ * Validator for ordering a lab test from a consultation
+ * (consultationId comes from the URL param, not the body)
+ */
+export const orderLabTestSchema = Joi.object<any>({
+  patientId: Joi.string().uuid().required().messages({
+    'string.empty': 'Patient ID is required',
+    'string.guid': 'Patient ID must be a valid UUID',
+  }),
+
+  admissionId: Joi.string().uuid().allow(null).optional(),
+  testId: Joi.string().uuid().allow(null).optional(),
+  testName: Joi.string().trim().min(1).max(200).required().messages({
+    'string.empty': 'Test name is required',
+  }),
+  testCode: Joi.string().allow('', null).optional(),
+  clinicalIndication: Joi.string().max(1000).allow('', null).optional(),
+  urgency: Joi.string().valid('ROUTINE', 'URGENT', 'STAT').optional(),
+  specimenType: Joi.string().allow('', null).optional(),
+});
+
+/**
  * Validator for consultation query parameters
  */
 export const getConsultationsSchema = Joi.object<any>({

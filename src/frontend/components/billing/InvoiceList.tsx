@@ -11,6 +11,7 @@ import ErrorAlert from '../common/ErrorAlert';
 import ConfirmDialog from '../common/ConfirmDialog';
 import { useConfirm } from '../../hooks/useConfirm';
 import Dropdown from '../common/Dropdown';
+import PageLoader from '../common/PageLoader';
 import { getErrorMessage } from '../../utils/errorHandler';
 
 interface InvoiceListProps {
@@ -24,8 +25,11 @@ const InvoiceList: React.FC<InvoiceListProps> = ({
   onViewInvoice,
   onRecordPayment,
 }) => {
+  const PAGE_SIZE = 50;
   const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string>('');
   const [filters, setFilters] = useState<InvoiceFilters>({ patientId });
@@ -41,12 +45,25 @@ const InvoiceList: React.FC<InvoiceListProps> = ({
     try {
       setLoading(true);
       setError(null);
-      const data = await billingService.getInvoices(filters);
+      const { invoices: data, total: newTotal } = await billingService.getInvoices({ ...filters, limit: PAGE_SIZE, offset: 0 });
       setInvoices(data);
+      setTotal(newTotal);
     } catch (err: any) {
       setError(getErrorMessage(err, 'Failed to load invoices'));
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadMoreInvoices = async () => {
+    try {
+      setLoadingMore(true);
+      const { invoices: more } = await billingService.getInvoices({ ...filters, limit: PAGE_SIZE, offset: invoices.length });
+      setInvoices((prev) => [...prev, ...more]);
+    } catch (err: any) {
+      setError(getErrorMessage(err, 'Failed to load more invoices'));
+    } finally {
+      setLoadingMore(false);
     }
   };
 
@@ -108,11 +125,7 @@ const InvoiceList: React.FC<InvoiceListProps> = ({
   });
 
   if (loading) {
-    return (
-      <div className="flex justify-center items-center py-12">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
-      </div>
-    );
+    return <PageLoader />;
   }
 
   if (error) {
@@ -186,7 +199,7 @@ const InvoiceList: React.FC<InvoiceListProps> = ({
       </div>
 
       <div className="text-sm text-gray-600">
-        Showing {filteredInvoices.length} invoice{filteredInvoices.length !== 1 ? 's' : ''}
+        Showing {filteredInvoices.length} of {total} invoice{total !== 1 ? 's' : ''}
       </div>
 
       {filteredInvoices.length === 0 ? (
@@ -284,6 +297,17 @@ const InvoiceList: React.FC<InvoiceListProps> = ({
               </tbody>
             </table>
           </div>
+          {!searchTerm && invoices.length < total && (
+            <div className="p-4 text-center border-t border-gray-100">
+              <button
+                onClick={loadMoreInvoices}
+                disabled={loadingMore}
+                className="px-4 py-2 text-sm font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-md disabled:opacity-50"
+              >
+                {loadingMore ? 'Loading...' : 'Load More'}
+              </button>
+            </div>
+          )}
         </div>
       )}
 

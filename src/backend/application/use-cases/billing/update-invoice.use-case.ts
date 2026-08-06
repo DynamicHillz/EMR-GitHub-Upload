@@ -78,14 +78,41 @@ export class UpdateInvoiceUseCase {
       if (dto.discount !== undefined && dto.discount !== Number(current.discount)) {
         const newDiscount = dto.discount;
         const totalBeforeDiscount = Number(current.subtotal) + Number(current.taxAmount);
+        // totalAmount is the full billed amount (informational — includes any
+        // insurance-covered portion) and moves 1:1 with discount. balance is
+        // the patient's own remaining responsibility, which does NOT equal
+        // totalAmount - paidAmount whenever insurance coverage applies — see
+        // record-payment.use-case.ts. Re-deriving it from current.balance
+        // (which already excludes that covered portion) and adjusting only
+        // by the change in discount preserves that invariant instead of
+        // reintroducing the covered amount as newly owed.
         const totalAmount = totalBeforeDiscount - newDiscount;
-        const balance = totalAmount - Number(current.paidAmount);
+        const balance = Math.max(0, Number(current.balance) + Number(current.discount) - newDiscount);
+
+        // Keep paymentStatus/status in sync with the recomputed balance —
+        // otherwise a discount that fully waives the remaining balance would
+        // still show as UNPAID/ISSUED and keep cluttering Outstanding
+        // Balances despite owing nothing (same fix already applied at
+        // invoice generation — see generate-invoice.use-case.ts).
+        let paymentStatus = current.paymentStatus;
+        let status = current.status;
+        if (balance === 0) {
+          paymentStatus = 'PAID';
+          status = 'PAID';
+        } else if (Number(current.paidAmount) > 0) {
+          paymentStatus = 'PARTIALLY_PAID';
+          status = 'PARTIALLY_PAID';
+        } else {
+          paymentStatus = 'UNPAID';
+        }
 
         updateData = {
           ...updateData,
           discount: newDiscount,
           totalAmount,
-          balance
+          balance,
+          paymentStatus,
+          status
         };
       }
 

@@ -40,6 +40,13 @@ export class UpdateBillingConfigUseCase {
       }
     }
 
+    // Validate overstay grace period
+    if (dto.overstayGraceDays !== undefined) {
+      if (dto.overstayGraceDays < 0 || dto.overstayGraceDays > 30) {
+        throw new ValidationError('Overstay grace period must be between 0 and 30 days');
+      }
+    }
+
     // Prepare update data
     const updateData: Prisma.TenantUpdateInput = {};
 
@@ -68,6 +75,9 @@ export class UpdateBillingConfigUseCase {
     if (dto.invoiceStartNumber !== undefined) updateData.invoiceStartNumber = dto.invoiceStartNumber;
     if (dto.invoiceFooterText !== undefined) updateData.invoiceFooterText = dto.invoiceFooterText;
     if (dto.termsAndConditions !== undefined) updateData.termsAndConditions = dto.termsAndConditions;
+
+    // Inpatient Settings
+    if (dto.overstayGraceDays !== undefined) updateData.overstayGraceDays = dto.overstayGraceDays;
 
     // Bank Details
     if (dto.bankName !== undefined) updateData.bankName = dto.bankName;
@@ -114,6 +124,7 @@ export class UpdateBillingConfigUseCase {
         invoiceStartNumber: true,
         invoiceFooterText: true,
         termsAndConditions: true,
+        overstayGraceDays: true,
         bankName: true,
         accountNumber: true,
         accountName: true,

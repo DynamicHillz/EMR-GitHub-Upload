@@ -110,8 +110,8 @@ export interface IAppointmentRepository {
   delete(id: string, tenantId: string, userId?: string): Promise<void>;
 
   /**
-   * Get appointments needing reminders
+   * Get appointments needing reminders for one tenant
    */
-  findNeedingReminder(hours: number): Promise<Appointment[]>;
+  findNeedingReminder(hours: number, tenantId: string): Promise<Appointment[]>;
   markReminderSent(id: string, hours: number): Promise<void>;
 }

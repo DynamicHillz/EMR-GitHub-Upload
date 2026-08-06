@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, Link } from 'react-router-dom';
 import { FileText, Mail } from 'lucide-react';
 import ErrorAlert from '../../components/common/ErrorAlert';
 import billingService from '../../services/billing.service';
@@ -13,9 +13,9 @@ interface ReceiptData {
     paymentDate: string;
     referenceNumber?: string | null;
     transactionId?: string | null;
+    cashReceivedByName?: string | null;
     invoice: {
       invoiceNumber: string;
-      items: { description: string; quantity: number; unitPrice: number; subtotal: number }[];
     };
     patient: { firstName: string; lastName: string; patientId: string; email?: string | null };
     processedBy: { firstName: string; lastName: string };
@@ -103,6 +103,9 @@ const ReceiptPrintPage: React.FC = () => {
       {/* Action bar for screen only */}
       <div className="no-print mb-8 pb-4 border-b border-gray-200 flex justify-between items-center">
         <div>
+          <Link to="/billing/invoices" className="text-sm text-blue-600 hover:text-blue-800 font-medium mb-1 inline-block">
+            ← Back to Invoices
+          </Link>
           <h1 className="text-2xl font-bold text-gray-800">Print Preview</h1>
           <p className="text-gray-500">Review the receipt before printing.</p>
         </div>
@@ -171,39 +174,29 @@ const ReceiptPrintPage: React.FC = () => {
           )}
         </div>
 
-        {/* Line Items */}
-        <table className="w-full text-sm text-left border-collapse mb-6">
-          <thead>
-            <tr className="bg-gray-100 text-gray-700 uppercase tracking-wider text-xs">
-              <th className="py-2 px-3 border-y border-gray-300">Description</th>
-              <th className="py-2 px-3 border-y border-gray-300 text-center">Qty</th>
-              <th className="py-2 px-3 border-y border-gray-300 text-right">Amount</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-200">
-            {payment.invoice.items.map((item, index) => (
-              <tr key={index}>
-                <td className="py-2 px-3">{item.description}</td>
-                <td className="py-2 px-3 text-center">{item.quantity}</td>
-                <td className="py-2 px-3 text-right">{formatCurrency(item.subtotal)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-
-        <div className="flex justify-end mb-8">
-          <div className="w-56 text-sm">
-            <div className="flex justify-between py-2 border-t-2 border-gray-800 font-bold text-base">
-              <span>Amount Paid</span>
-              <span>{formatCurrency(payment.amount)}</span>
-            </div>
-          </div>
+        {/* No line-item breakdown by design — same principle as the
+            patient-facing bill (see InvoiceDetail.tsx's Generate Bill):
+            the itemized service list is an internal clinic record, not
+            something handed to the patient. */}
+        <div className="text-center py-6 mb-6 bg-gray-50 rounded-lg">
+          <div className="text-sm text-gray-500 mb-1">Amount Paid</div>
+          <div className="text-3xl font-bold text-gray-900">{formatCurrency(payment.amount)}</div>
         </div>
 
-        {/* Signature */}
-        <div className="mt-12 pt-6 border-t border-gray-300 text-sm">
-          <p className="text-gray-500 mb-1">Received By</p>
-          <p className="font-semibold text-gray-800">{payment.processedBy.firstName} {payment.processedBy.lastName}</p>
+        {/* Signature — for cash, the person who physically took the money
+            isn't always who's logged in recording it, so both are shown
+            when they're tracked separately. */}
+        <div className="mt-12 pt-6 border-t border-gray-300 text-sm grid grid-cols-2 gap-6">
+          {payment.paymentMethod === 'CASH' && payment.cashReceivedByName && (
+            <div>
+              <p className="text-gray-500 mb-1">Cash Received By</p>
+              <p className="font-semibold text-gray-800">{payment.cashReceivedByName}</p>
+            </div>
+          )}
+          <div>
+            <p className="text-gray-500 mb-1">Recorded By</p>
+            <p className="font-semibold text-gray-800">{payment.processedBy.firstName} {payment.processedBy.lastName}</p>
+          </div>
         </div>
 
         <div className="mt-8 text-center text-xs text-gray-400 border-t pt-4">

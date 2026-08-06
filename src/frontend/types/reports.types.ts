@@ -25,8 +25,21 @@ export interface PatientVolumeReport {
 }
 
 export interface RevenueReport {
-  series: Array<{ bucket: string; label: string; revenue: number; paymentCount: number }>;
-  summary: { totalRevenue: number; totalPayments: number; averagePerBucket: number };
+  series: Array<{
+    bucket: string;
+    label: string;
+    revenue: number;
+    paymentCount: number;
+    insuranceRevenue: number;
+    claimCount: number;
+  }>;
+  summary: {
+    totalRevenue: number;
+    totalPayments: number;
+    totalInsuranceRevenue: number;
+    totalClaims: number;
+    averagePerBucket: number;
+  };
 }
 
 export interface DiagnosisTrendsReport {
@@ -51,6 +64,40 @@ export interface StockTurnoverReport {
     turnoverRatio: number | null;
   }>;
   summary: { totalDispensed: number; totalMedicationsTracked: number };
+}
+
+export interface NhmisMonthlyReturnParams {
+  month: number;
+  year: number;
+  limit?: number;
+}
+
+export interface NhmisAttendanceCell {
+  ageGroup: string;
+  newMale: number;
+  newFemale: number;
+  repeatMale: number;
+  repeatFemale: number;
+}
+
+export interface NhmisTopCondition {
+  diagnosisId: string;
+  code: string;
+  name: string;
+  count: number;
+}
+
+export interface NhmisMonthlyReturnReport {
+  period: { month: number; year: number };
+  attendance: {
+    byAgeGroupAndSex: NhmisAttendanceCell[];
+    totalNew: number;
+    totalRepeat: number;
+    otherGenderCount: number;
+    grandTotal: number;
+  };
+  topConditions: NhmisTopCondition[];
+  summary: { totalConsultations: number; totalDiagnosesRecorded: number };
 }
 
 export interface NoShowReport {

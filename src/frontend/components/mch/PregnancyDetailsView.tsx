@@ -1,9 +1,20 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { ancService } from '../../services/anc.service';
+import postnatalService from '../../services/postnatal.service';
 import { AncPregnancy, AncVisit } from '../../types/anc';
-import { ArrowLeft, Plus, Calendar, Activity, CheckCircle, FileText, Pill } from 'lucide-react';
+import { PostnatalVisit } from '../../types/postnatal';
+import { ArrowLeft, Plus, Calendar, Activity, CheckCircle, FileText, Pill, Baby } from 'lucide-react';
 import RecordAncVisitModal from './RecordAncVisitModal';
+import RecordPostnatalVisitModal from './RecordPostnatalVisitModal';
 import PrescriptionModal from '../consultations/PrescriptionModal';
+
+const PNC_CONTACT_LABELS: Record<string, string> = {
+  PNC_24H: '24 Hours',
+  PNC_DAY3: 'Day 3',
+  PNC_WEEK1: 'Week 1',
+  PNC_WEEK6: 'Week 6',
+  OTHER: 'Other',
+};
 
 interface PregnancyDetailsViewProps {
   pregnancy: AncPregnancy;
@@ -36,6 +47,9 @@ const PregnancyDetailsView: React.FC<PregnancyDetailsViewProps> = ({ pregnancy, 
   const [showRecordModal, setShowRecordModal] = useState(false);
   const [patient, setPatient] = useState<{ id: string; firstName: string; lastName: string; fullName: string; allergies: string[] } | null>(null);
   const [prescribeForVisitId, setPrescribeForVisitId] = useState<string | null>(null);
+  const [postnatalVisits, setPostnatalVisits] = useState<PostnatalVisit[]>([]);
+  const [loadingPostnatal, setLoadingPostnatal] = useState(false);
+  const [showPostnatalModal, setShowPostnatalModal] = useState(false);
 
   useEffect(() => {
     const fetchVisits = async () => {
@@ -50,6 +64,22 @@ const PregnancyDetailsView: React.FC<PregnancyDetailsViewProps> = ({ pregnancy, 
     };
     fetchVisits();
   }, [pregnancy.id]);
+
+  useEffect(() => {
+    if (!pregnancy.deliveryDate) return;
+    const fetchPostnatalVisits = async () => {
+      try {
+        setLoadingPostnatal(true);
+        const data = await postnatalService.getVisitsByPatient(pregnancy.patientId, pregnancy.id);
+        setPostnatalVisits(data);
+      } catch (error) {
+        console.error('Failed to load postnatal visits', error);
+      } finally {
+        setLoadingPostnatal(false);
+      }
+    };
+    fetchPostnatalVisits();
+  }, [pregnancy.deliveryDate, pregnancy.patientId, pregnancy.id]);
 
   useEffect(() => {
     const fetchPatient = async () => {
@@ -234,12 +264,73 @@ const PregnancyDetailsView: React.FC<PregnancyDetailsViewProps> = ({ pregnancy, 
         )}
       </div>
 
+      {pregnancy.deliveryDate && (
+        <div className="space-y-4 mt-8">
+          <div className="flex justify-between items-center">
+            <h3 className="text-lg font-bold text-gray-900 flex items-center">
+              <Baby className="w-5 h-5 mr-2 text-primary-600" /> Postnatal Visits
+            </h3>
+            <button onClick={() => setShowPostnatalModal(true)} className="btn btn-secondary flex items-center">
+              <Plus className="w-4 h-4 mr-2" /> Record Postnatal Visit
+            </button>
+          </div>
+
+          {loadingPostnatal ? (
+            <div className="text-center py-8 text-gray-500">Loading postnatal visits...</div>
+          ) : postnatalVisits.length === 0 ? (
+            <div className="text-center py-12 bg-gray-50 border-2 border-dashed rounded-lg text-gray-500">
+              No postnatal visits recorded yet.
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {postnatalVisits.map((visit) => (
+                <div key={visit.id} className="bg-white rounded-lg border p-4 shadow-sm">
+                  <div className="flex justify-between items-start mb-2">
+                    <h4 className="font-bold text-gray-900">{PNC_CONTACT_LABELS[visit.contactType] || visit.contactType}</h4>
+                    <span className="text-xs text-gray-500">{new Date(visit.visitDate).toLocaleString()}</span>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+                    <div className="space-y-1">
+                      <div><span className="text-gray-500">Maternal BP:</span> {visit.maternalSystolicBP && visit.maternalDiastolicBP ? `${visit.maternalSystolicBP}/${visit.maternalDiastolicBP}` : '-'}</div>
+                      <div><span className="text-gray-500">Lochia:</span> {visit.lochiaStatus || '-'}</div>
+                      <div><span className="text-gray-500">Breastfeeding:</span> {visit.breastfeedingStatus || '-'}</div>
+                    </div>
+                    <div className="space-y-1">
+                      <div><span className="text-gray-500">Newborn Weight:</span> {visit.newbornWeightGrams != null ? `${visit.newbornWeightGrams}g` : '-'}</div>
+                      <div><span className="text-gray-500">Feeding Well:</span> {visit.newbornFeedingWell == null ? '-' : (visit.newbornFeedingWell ? 'Yes' : 'No')}</div>
+                      <div><span className="text-gray-500">Jaundice:</span> {visit.jaundiceObserved ? 'Observed' : 'No'}</div>
+                    </div>
+                  </div>
+                  {visit.newbornDangerSigns.length > 0 && (
+                    <p className="mt-2 text-sm text-red-700">Danger signs: {visit.newbornDangerSigns.join(', ')}</p>
+                  )}
+                  {visit.notes && <p className="mt-2 text-sm text-gray-600">{visit.notes}</p>}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {showRecordModal && (
         <RecordAncVisitModal
           patientId={pregnancy.patientId}
           pregnancyId={pregnancy.id}
           onClose={() => setShowRecordModal(false)}
           onSuccess={handleVisitRecorded}
+        />
+      )}
+
+      {showPostnatalModal && (
+        <RecordPostnatalVisitModal
+          patientId={pregnancy.patientId}
+          pregnancyId={pregnancy.id}
+          pregnancyOutcome={pregnancy.outcome}
+          onClose={() => setShowPostnatalModal(false)}
+          onSuccess={(visit) => {
+            setPostnatalVisits([visit, ...postnatalVisits]);
+            setShowPostnatalModal(false);
+          }}
         />
       )}
 

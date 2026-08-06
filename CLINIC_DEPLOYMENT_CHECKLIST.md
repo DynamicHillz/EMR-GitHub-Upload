@@ -10,6 +10,7 @@ Where a step just says "see CLAUDE.md," the detailed explanation of *why* lives 
 - [ ] PostgreSQL installed, running, and its `bin/` directory (e.g. `C:\Program Files\PostgreSQL\16\bin`) added to `PATH` — required for `pg_dump`/`pg_restore` (backups) and `psql`/`createdb` to resolve without a hardcoded path.
 - [ ] `npm install -g pm2` (process manager — see CLAUDE.md "Production Process Management").
 - [ ] Chocolatey installed, then `choco install mkcert` (local HTTPS certificate authority — see CLAUDE.md "TLS / HTTPS").
+- [ ] [rclone](https://rclone.org/downloads/) installed and on `PATH` — required for the off-site backup step in section 7 (see CLAUDE.md "Database Backups").
 - [ ] Decide the Windows account this will run under. Enable `AutoAdminLogon` for it now (`HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon`) if it isn't already — step 6 depends on this account logging in automatically after every reboot/power cycle.
 
 ## 2. Get the code running
@@ -61,6 +62,7 @@ Where a step just says "see CLAUDE.md," the detailed explanation of *why* lives 
   ```
 - [ ] `Start-ScheduledTask -TaskName "SSMC EMR Database Backup"`, then confirm a fresh file lands in `backups/`.
 - [ ] Do one real restore drill into a scratch database before trusting the backup (see CLAUDE.md's Restore procedure) — an untested backup is not a verified backup.
+- [ ] Set up the off-site copy — **Backblaze B2, Google Drive, or both**, whichever the clinic already has or prefers (see CLAUDE.md "Database Backups" for both setup paths — B2 is a simpler one-time API key, Google Drive needs a one-time interactive `rclone authorize` login instead). Not optional in spirit — the local-only backup above shares a single point of failure with the live database (this machine). Confirm with a manual `node scripts\backup-database.js` run showing `Off-site backup verified (<provider>): ...` in the output before moving on.
 
 ## 8. Distribute trust to workstations
 

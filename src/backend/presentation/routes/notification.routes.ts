@@ -10,5 +10,6 @@ router.get('/', notificationController.getMyNotifications.bind(notificationContr
 router.get('/unread-count', notificationController.getUnreadCount.bind(notificationController));
 router.patch('/read-all', notificationController.markAllRead.bind(notificationController));
 router.patch('/:id/read', notificationController.markRead.bind(notificationController));
+router.patch('/:id/acknowledge', notificationController.acknowledge.bind(notificationController));
 
 export default router;

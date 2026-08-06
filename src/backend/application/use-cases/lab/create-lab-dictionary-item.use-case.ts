@@ -23,7 +23,7 @@ export class CreateLabDictionaryItemUseCase {
         const param = parameters[i];
         
         let parameterId = param.id;
-        
+
         if (!parameterId) {
           const newParam = await this.prisma.labParameter.create({
             data: {
@@ -35,6 +35,16 @@ export class CreateLabDictionaryItemUseCase {
             }
           });
           parameterId = newParam.id;
+        } else {
+          // parameterId comes straight from the request body — verify it's
+          // actually this tenant's before linking it, otherwise another
+          // tenant's LabParameter could be attached to this test.
+          const existingParam = await this.prisma.labParameter.findFirst({
+            where: { id: parameterId, tenantId }
+          });
+          if (!existingParam) {
+            throw new Error('Lab parameter not found or unauthorized');
+          }
         }
 
         // Link parameter to test

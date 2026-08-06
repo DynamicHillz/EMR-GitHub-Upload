@@ -21,70 +21,71 @@ export interface UnbilledQueuePatient {
   oldestItemDate: string;
 }
 
+interface UnbilledQueueRow {
+  patientDbId: string;
+  patientId: string;
+  firstName: string;
+  lastName: string;
+  phone: string;
+  prescriptionCount: bigint | number;
+  labOrderCount: bigint | number;
+  consultationCount: bigint | number;
+  itemCount: bigint | number;
+  oldestItemDate: Date;
+}
+
 export class GetUnbilledQueueUseCase {
   constructor(private prisma: PrismaClient) {}
 
   async execute(tenantId: string): Promise<{ patients: UnbilledQueuePatient[]; totalPatients: number; totalItems: number }> {
-    const patientSelect = {
-      select: {
-        id: true,
-        patientId: true,
-        firstName: true,
-        lastName: true,
-        phone: true,
-      },
-    };
+    // Previously 3 unbounded findMany calls (prescriptions/labOrders/
+    // consultations) fetched into memory and grouped by patient via a JS
+    // Map — Prisma's query builder can't UNION across three tables or
+    // express a per-type COUNT FILTER, so this pushes the grouping into one
+    // SQL query instead (same $queryRaw justification as
+    // generate-stock-alerts.use-case.ts).
+    const rows = await this.prisma.$queryRaw<UnbilledQueueRow[]>`
+      WITH items AS (
+        SELECT "patientId" AS patient_id, "createdAt" AS item_date, 'PRESCRIPTION' AS item_type
+        FROM prescriptions
+        WHERE "tenantId" = ${tenantId} AND status = 'DISPENSED' AND "billingStatus" = 'UNBILLED'
+        UNION ALL
+        SELECT "patientId" AS patient_id, "createdAt" AS item_date, 'LAB_ORDER' AS item_type
+        FROM lab_orders
+        WHERE "tenantId" = ${tenantId} AND "billingStatus" = 'UNBILLED' AND "isDeleted" = false
+        UNION ALL
+        SELECT "patientId" AS patient_id, COALESCE("finalizedAt", "createdAt") AS item_date, 'CONSULTATION' AS item_type
+        FROM consultations
+        WHERE "tenantId" = ${tenantId} AND status = 'COMPLETED' AND "billingStatus" = 'UNBILLED' AND "isDeleted" = false
+      )
+      SELECT
+        p.id AS "patientDbId",
+        p."patientId" AS "patientId",
+        p."firstName" AS "firstName",
+        p."lastName" AS "lastName",
+        p.phone AS "phone",
+        COUNT(*) FILTER (WHERE i.item_type = 'PRESCRIPTION') AS "prescriptionCount",
+        COUNT(*) FILTER (WHERE i.item_type = 'LAB_ORDER') AS "labOrderCount",
+        COUNT(*) FILTER (WHERE i.item_type = 'CONSULTATION') AS "consultationCount",
+        COUNT(*) AS "itemCount",
+        MIN(i.item_date) AS "oldestItemDate"
+      FROM items i
+      JOIN patients p ON p.id = i.patient_id
+      GROUP BY p.id, p."patientId", p."firstName", p."lastName", p.phone
+      ORDER BY "oldestItemDate" ASC
+    `;
 
-    const [prescriptions, labOrders, consultations] = await Promise.all([
-      this.prisma.prescription.findMany({
-        where: { tenantId, status: 'DISPENSED', billingStatus: 'UNBILLED' },
-        select: { createdAt: true, patient: patientSelect },
-      }),
-      this.prisma.labOrder.findMany({
-        where: { tenantId, billingStatus: 'UNBILLED', isDeleted: false },
-        select: { createdAt: true, patient: patientSelect },
-      }),
-      this.prisma.consultation.findMany({
-        where: { tenantId, status: 'COMPLETED', billingStatus: 'UNBILLED', isDeleted: false },
-        select: { createdAt: true, finalizedAt: true, patient: patientSelect },
-      }),
-    ]);
-
-    const groups = new Map<string, UnbilledQueuePatient>();
-
-    const upsert = (
-      patient: { id: string; patientId: string; firstName: string; lastName: string; phone: string },
-      type: 'PRESCRIPTION' | 'LAB_ORDER' | 'CONSULTATION',
-      date: Date
-    ) => {
-      const isoDate = date.toISOString();
-      let entry = groups.get(patient.id);
-      if (!entry) {
-        entry = {
-          patientDbId: patient.id,
-          patientId: patient.patientId,
-          patientName: `${patient.firstName} ${patient.lastName}`,
-          patientPhone: patient.phone,
-          prescriptionCount: 0,
-          labOrderCount: 0,
-          consultationCount: 0,
-          itemCount: 0,
-          oldestItemDate: isoDate,
-        };
-        groups.set(patient.id, entry);
-      }
-      if (type === 'PRESCRIPTION') entry.prescriptionCount++;
-      if (type === 'LAB_ORDER') entry.labOrderCount++;
-      if (type === 'CONSULTATION') entry.consultationCount++;
-      entry.itemCount++;
-      if (isoDate < entry.oldestItemDate) entry.oldestItemDate = isoDate;
-    };
-
-    prescriptions.forEach((p) => upsert(p.patient, 'PRESCRIPTION', p.createdAt));
-    labOrders.forEach((l) => upsert(l.patient, 'LAB_ORDER', l.createdAt));
-    consultations.forEach((c) => upsert(c.patient, 'CONSULTATION', c.finalizedAt || c.createdAt));
-
-    const patients = Array.from(groups.values()).sort((a, b) => a.oldestItemDate.localeCompare(b.oldestItemDate));
+    const patients: UnbilledQueuePatient[] = rows.map((row) => ({
+      patientDbId: row.patientDbId,
+      patientId: row.patientId,
+      patientName: `${row.firstName} ${row.lastName}`,
+      patientPhone: row.phone,
+      prescriptionCount: Number(row.prescriptionCount),
+      labOrderCount: Number(row.labOrderCount),
+      consultationCount: Number(row.consultationCount),
+      itemCount: Number(row.itemCount),
+      oldestItemDate: row.oldestItemDate.toISOString(),
+    }));
 
     return {
       patients,

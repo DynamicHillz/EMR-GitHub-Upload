@@ -81,6 +81,7 @@ export const createPatientSchema = Joi.object<any>({
   nhisNumber: Joi.string().optional().trim().max(50).allow('', null),
   patientType: Joi.string().optional().valid('PRIVATE', 'HMO').default('PRIVATE'),
   hmoProvider: Joi.string().optional().trim().max(100).allow('', null),
+  hmoProviderId: Joi.string().optional().uuid().allow('', null),
   hmoNumber: Joi.string().optional().trim().max(50).allow('', null),
   photoUrl: Joi.string().optional().uri().trim().allow('', null),
   consentGiven: Joi.boolean().valid(true).required().messages({
@@ -137,6 +138,7 @@ export const updatePatientSchema = Joi.object({
   nhisNumber: Joi.string().optional().trim().max(50).allow('', null),
   patientType: Joi.string().optional().valid('PRIVATE', 'HMO'),
   hmoProvider: Joi.string().optional().trim().max(100).allow('', null),
+  hmoProviderId: Joi.string().optional().uuid().allow('', null),
   hmoNumber: Joi.string().optional().trim().max(50).allow('', null),
   photoUrl: Joi.string().optional().uri().trim().allow('', null),
 }).min(1);

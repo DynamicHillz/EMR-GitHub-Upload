@@ -29,6 +29,9 @@ describe('GetFhirConditionUseCase', () => {
       consultationDiagnosis: {
         findFirst: jest.fn(),
       },
+      diagnosisCodeMapping: {
+        findMany: jest.fn().mockResolvedValue([]),
+      },
     };
 
     useCase = new GetFhirConditionUseCase(mockPrisma);
@@ -110,5 +113,45 @@ describe('GetFhirConditionUseCase', () => {
     mockPrisma.consultationDiagnosis.findFirst.mockResolvedValue(null);
 
     await expect(useCase.execute(recordId, tenantId)).rejects.toThrow('Diagnosis record not found');
+  });
+
+  describe('resolved code mapping', () => {
+    it('appends a resolved ICD-10 equivalent coding alongside the primary ICD-11 coding', async () => {
+      mockPrisma.consultationDiagnosis.findFirst.mockResolvedValue(baseRecord);
+      mockPrisma.diagnosisCodeMapping.findMany.mockResolvedValue([
+        { id: 'm1', sourceSystem: 'ICD-11', sourceCode: '1A00', targetSystem: 'ICD-10', targetCode: 'A00', mapKind: 'EXACT', note: 'Cholera' },
+      ]);
+
+      const result = await useCase.execute(recordId, tenantId);
+
+      expect(mockPrisma.diagnosisCodeMapping.findMany).toHaveBeenCalledWith({
+        where: { sourceSystem: 'ICD-11', sourceCode: '1A00' },
+      });
+      expect(result.code?.coding).toEqual([
+        { system: 'http://id.who.int/icd/release/11/mms', code: '1A00', display: 'Cholera' },
+        { system: 'http://hl7.org/fhir/sid/icd-10', code: 'A00', display: 'Cholera' },
+      ]);
+    });
+
+    it('appends every coding for a one-to-many mapping', async () => {
+      mockPrisma.consultationDiagnosis.findFirst.mockResolvedValue(baseRecord);
+      mockPrisma.diagnosisCodeMapping.findMany.mockResolvedValue([
+        { id: 'm1', sourceSystem: 'ICD-11', sourceCode: '1A00', targetSystem: 'ICD-10', targetCode: 'A00', mapKind: 'ONE_TO_MANY', note: 'Cholera due to X' },
+        { id: 'm2', sourceSystem: 'ICD-11', sourceCode: '1A00', targetSystem: 'ICD-10', targetCode: 'A001', mapKind: 'ONE_TO_MANY', note: 'Cholera due to Y' },
+      ]);
+
+      const result = await useCase.execute(recordId, tenantId);
+
+      expect(result.code?.coding).toHaveLength(3);
+    });
+
+    it('adds no additional coding when no mapping exists — unchanged single-coding behavior', async () => {
+      mockPrisma.consultationDiagnosis.findFirst.mockResolvedValue(baseRecord);
+      mockPrisma.diagnosisCodeMapping.findMany.mockResolvedValue([]);
+
+      const result = await useCase.execute(recordId, tenantId);
+
+      expect(result.code?.coding).toHaveLength(1);
+    });
   });
 });

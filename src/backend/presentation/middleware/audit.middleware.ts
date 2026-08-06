@@ -13,6 +13,8 @@ import { logger } from '../../config/logger';
 export enum AuditAction {
   // User actions
   USER_LOGIN = 'USER_LOGIN',
+  LOGIN_FAILED = 'LOGIN_FAILED',
+  ACCOUNT_LOCKED = 'ACCOUNT_LOCKED',
   USER_LOGOUT = 'USER_LOGOUT',
   USER_CREATED = 'USER_CREATED',
   USER_UPDATED = 'USER_UPDATED',
@@ -102,6 +104,178 @@ export const createAuditLog = async (
   }
 };
 
+// Expanded Map resource to entity type
+const resourceMap: Record<string, string> = {
+  users: 'USER',
+  patients: 'PATIENT',
+  appointments: 'APPOINTMENT',
+  consultations: 'CONSULTATION',
+  invoices: 'INVOICE',
+  payments: 'PAYMENT',
+  prescriptions: 'PRESCRIPTION',
+  medications: 'MEDICATION',
+  inpatients: 'INPATIENT',
+  admissions: 'INPATIENT',
+  wards: 'WARD',
+  lab: 'LAB',
+  pharmacy: 'PHARMACY',
+  clinical: 'CLINICAL',
+  billing: 'BILLING',
+  // Previously unmapped entirely — every action under these route groups
+  // silently fell to the generic 'SYSTEM' catch-all regardless of what it
+  // actually was, with no way to filter for it on the Audit Log page.
+  insurance: 'INSURANCE',
+  exemptions: 'EXEMPTION_POLICY',
+  anc: 'ANC',
+  immunization: 'IMMUNIZATION',
+  tenants: 'TENANT',
+  'fraud-prevention': 'FRAUD_PREVENTION_SETTINGS',
+  notifications: 'NOTIFICATION',
+  sync: 'SYNC',
+  triage: 'TRIAGE',
+  labor: 'LABOR',
+  verification: 'VERIFICATION',
+  interoperability: 'INTEROPERABILITY',
+  reports: 'REPORT',
+  dashboard: 'DASHBOARD',
+};
+
+// Some route groups mount several distinct resource types under one shared
+// prefix (e.g. /api/billing/invoices, /api/billing/payments, /api/billing/
+// refunds all live under '/api/billing') — `resource` (pathParts[1]) is only
+// ever that shared prefix, never the actual resource, so every billing/
+// inpatient action was logging as the same generic 'BILLING'/'INPATIENT'
+// entityType regardless of which one it actually was (e.g. the Audit Log
+// UI's "Invoice"/"Payment" filters matched zero rows, since no row ever had
+// that entityType). Look one segment deeper for these known groups.
+const nestedResourceMap: Record<string, Record<string, string>> = {
+  billing: {
+    invoices: 'INVOICE',
+    payments: 'PAYMENT',
+    'gateway-payments': 'PAYMENT',
+    refunds: 'REFUND',
+    services: 'SERVICE_CATALOG',
+  },
+  inpatients: {
+    wards: 'WARD',
+    beds: 'WARD',
+    admissions: 'INPATIENT',
+    'operation-notes': 'INPATIENT',
+    transfusions: 'INPATIENT',
+  },
+  // /api/pharmacy/medications, /api/pharmacy/dispense, etc. all live under
+  // the shared '/api/pharmacy' prefix — same issue as billing/inpatients
+  // above. resourceMap's own 'medications' entry (matching pathParts[1]
+  // directly) has been dead code for the same reason: there's no top-level
+  // /api/medications mount, so it never matched anything either.
+  pharmacy: {
+    medications: 'MEDICATION',
+    dispense: 'MEDICATION',
+  },
+  // /api/insurance/providers, /api/insurance/patients/:patientId (policy
+  // enrollment), /api/insurance/claims — same grouped-prefix pattern.
+  insurance: {
+    providers: 'INSURANCE_PROVIDER',
+    patients: 'PATIENT_INSURANCE',
+    claims: 'INSURANCE_CLAIM',
+  },
+};
+
+/**
+ * Resolve the audit entityType from a request's path segments (already
+ * split on '/' and filtered of empties, e.g. ['api', 'billing', 'invoices',
+ * '123']). Exported for direct unit testing of the nested-resource fix.
+ */
+export function resolveEntityType(pathParts: string[]): string {
+  const resource = pathParts[1];
+  const nestedResource = pathParts[2];
+  const nestedType = nestedResourceMap[resource]?.[nestedResource];
+  return nestedType || resourceMap[resource] || 'SYSTEM';
+}
+
+const idShapePattern = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$|^\d+$/;
+
+// Query param names confirmed in actual use across controllers (grep for
+// `req.query.<name>` / destructured `req.query`) that unambiguously name the
+// entity they reference. Deliberately not a guessed/exhaustive list — only
+// names this codebase actually uses today.
+const QUERY_PARAM_ENTITY_TYPES: Record<string, string> = {
+  patientId: 'PATIENT',
+  invoiceId: 'INVOICE',
+  doctorId: 'USER',
+  consultationId: 'CONSULTATION',
+  admissionId: 'INPATIENT',
+  ancVisitId: 'ANC',
+};
+
+export interface ResolvedEntity {
+  entityId?: string;
+  // Set only when a NAMED query param (e.g. ?invoiceId=X) identifies the
+  // entity — overrides the path-derived entityType, since the query param's
+  // name is a stronger, unambiguous signal of what's actually being looked
+  // at than the URL's resource segment is. E.g. GET /billing/payments
+  // ?invoiceId=X is "show invoice X's payment history" — the invoice is the
+  // real subject, not some anonymous 'PAYMENT' record (there is no single
+  // payment here; grabbing the query value as if it were a payment id, with
+  // no matching override, made the row un-resolvable to any real name).
+  entityTypeOverride?: string;
+}
+
+/**
+ * Resolve the audit entityId (and, where a named query param earns it, an
+ * entityType override) for a request. Checked in order: (1) every path
+ * segment for something ID-shaped (UUID/numeric) — nested routes like
+ * /api/inpatients/admissions/:id/vitals/:recordId have more than one, so the
+ * LAST match wins (favors the most specific entity actually being written,
+ * e.g. recordId over admissionId); (2) a query param whose name is in
+ * QUERY_PARAM_ENTITY_TYPES, carrying its type override; (3) any other
+ * ID-shaped query value, with no override (better than nothing for an
+ * unrecognized key, path-derived entityType stays as-is); (4) body.id, for
+ * offline-sync/pre-assigned-id creates. Exported for direct unit testing.
+ */
+export function resolveEntity(pathParts: string[], query: Record<string, unknown>, body: any): ResolvedEntity {
+  let entityId: string | undefined;
+  for (const part of pathParts) {
+    if (idShapePattern.test(part)) {
+      entityId = part;
+    }
+  }
+  if (entityId) return { entityId };
+
+  if (query) {
+    for (const [key, value] of Object.entries(query)) {
+      const type = QUERY_PARAM_ENTITY_TYPES[key];
+      if (type && typeof value === 'string' && idShapePattern.test(value)) {
+        return { entityId: value, entityTypeOverride: type };
+      }
+    }
+    for (const value of Object.values(query)) {
+      if (typeof value === 'string' && idShapePattern.test(value)) {
+        return { entityId: value };
+      }
+    }
+  }
+  if (body && body.id) {
+    return { entityId: body.id };
+  }
+  return {};
+}
+
+/**
+ * Best-effort extraction of a created record's id from a controller's JSON
+ * response — used as a fallback for CREATE (POST) actions, whose URL never
+ * contains the new record's id (unlike PUT/PATCH/DELETE, which already get
+ * entityId from the path). Covers the two response shapes actually used
+ * across controllers in this codebase: `{ data: { id } }` and a bare `{ id }`.
+ */
+export function extractIdFromResponse(data: any): string | undefined {
+  if (data && typeof data === 'object') {
+    if (typeof data.id === 'string') return data.id;
+    if (data.data && typeof data.data === 'object' && typeof data.data.id === 'string') return data.data.id;
+  }
+  return undefined;
+}
+
 /**
  * Middleware to automatically log all API requests
  */
@@ -155,44 +329,12 @@ export const auditRequest = async (req: Request, res: Response, next: NextFuncti
     if (pathParts.length >= 2) {
       // e.g. /api/patients/123/vitals -> pathParts = ['api', 'patients', '123', 'vitals']
       // pathParts[0] is always 'api'
-      const resource = pathParts[1];
-
-      // Scan every path segment for something ID-shaped (UUID, or numeric)
-      // rather than assuming the ID always sits at a fixed index — nested
-      // routes like /api/inpatients/admissions/:id/vitals/:recordId have
-      // more than one ID segment, and a fixed index picks up a literal path
-      // word ('admissions') instead. Taking the LAST match favors the most
-      // specific entity actually being written (recordId over admissionId).
-      const uuidPattern = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
-      for (const part of pathParts) {
-        if (uuidPattern.test(part) || /^\d+$/.test(part)) {
-          entityId = part;
-        }
+      entityType = resolveEntityType(pathParts);
+      const resolved = resolveEntity(pathParts, req.query as Record<string, unknown>, req.body);
+      entityId = resolved.entityId;
+      if (resolved.entityTypeOverride) {
+        entityType = resolved.entityTypeOverride;
       }
-      if (!entityId && req.body && req.body.id) {
-        entityId = req.body.id;
-      }
-
-      // Expanded Map resource to entity type
-      const resourceMap: Record<string, string> = {
-        users: 'USER',
-        patients: 'PATIENT',
-        appointments: 'APPOINTMENT',
-        consultations: 'CONSULTATION',
-        invoices: 'INVOICE',
-        payments: 'PAYMENT',
-        prescriptions: 'PRESCRIPTION',
-        medications: 'MEDICATION',
-        inpatients: 'INPATIENT',
-        admissions: 'INPATIENT',
-        wards: 'WARD',
-        lab: 'LAB',
-        pharmacy: 'PHARMACY',
-        clinical: 'CLINICAL',
-        billing: 'BILLING'
-      };
-
-      entityType = resourceMap[resource] || 'SYSTEM';
 
       // Map method to action
       if (method === 'POST') action = `${entityType}_CREATED`;
@@ -245,6 +387,13 @@ export const auditRequest = async (req: Request, res: Response, next: NextFuncti
           if (responseData) {
              const statusObj = { status: res.statusCode };
              changes.response = statusObj;
+          }
+
+          // CREATE actions have no id in their URL — the new record's id
+          // only exists in the response. Fallback only (never overrides an
+          // id already found in the path), so PUT/PATCH/DELETE are unaffected.
+          if (!entityId && method === 'POST') {
+            entityId = extractIdFromResponse(responseData);
           }
 
           // We use setTimeout to execute this asynchronously so it does not block the API response

@@ -3,7 +3,9 @@ import { Search, Loader } from 'lucide-react';
 
 export interface Diagnosis {
   id: string;
-  tenantId: string;
+  // null for a shared/global reference row (e.g. bulk-imported ICD-10) —
+  // see DiagnosisCatalog.tenantId in prisma/schema.prisma.
+  tenantId: string | null;
   code: string;
   name: string;
   description: string | null;
@@ -11,20 +13,30 @@ export interface Diagnosis {
   isActive: boolean;
 }
 
+export type DiagnosisCodeSystem = 'ICD-11' | 'ICD-10';
+
 interface DiagnosisAutocompleteProps {
   onSelect: (diagnosis: Diagnosis) => void;
   placeholder?: string;
+  /** Shows an ICD-11/ICD-10 toggle above the search box. Defaults to true —
+   * pass false for a caller that wants a fixed single system with no toggle. */
+  allowCodeSystemToggle?: boolean;
 }
 
 const DiagnosisAutocomplete: React.FC<DiagnosisAutocompleteProps> = ({
   onSelect,
-  placeholder = "Search ICD-11 diagnosis by name or code...",
+  placeholder,
+  allowCodeSystemToggle = true,
 }) => {
   const [query, setQuery] = useState('');
   const [isOpen, setIsOpen] = useState(false);
   const [results, setResults] = useState<Diagnosis[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [codeSystem, setCodeSystem] = useState<DiagnosisCodeSystem>('ICD-11');
   const wrapperRef = useRef<HTMLDivElement>(null);
+
+  const effectivePlaceholder =
+    placeholder || `Search ${codeSystem} diagnosis by name or code...`;
 
   useEffect(() => {
     const fetchDiagnoses = async () => {
@@ -37,7 +49,7 @@ const DiagnosisAutocomplete: React.FC<DiagnosisAutocompleteProps> = ({
       try {
         const token = localStorage.getItem('token');
         const apiBaseUrl = import.meta.env.VITE_API_URL || `${window.location.protocol}//${window.location.hostname}:3000`;
-        const response = await fetch(`${apiBaseUrl}/api/clinical/diagnoses?query=${encodeURIComponent(query)}`, {
+        const response = await fetch(`${apiBaseUrl}/api/clinical/diagnoses?query=${encodeURIComponent(query)}&codeSystem=${codeSystem}`, {
           headers: { Authorization: `Bearer ${token}` }
         });
 
@@ -54,7 +66,7 @@ const DiagnosisAutocomplete: React.FC<DiagnosisAutocompleteProps> = ({
 
     const debounceTimer = setTimeout(fetchDiagnoses, 300);
     return () => clearTimeout(debounceTimer);
-  }, [query]);
+  }, [query, codeSystem]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -69,6 +81,27 @@ const DiagnosisAutocomplete: React.FC<DiagnosisAutocompleteProps> = ({
 
   return (
     <div className="relative w-full" ref={wrapperRef}>
+      {allowCodeSystemToggle && (
+        <div className="flex gap-1 mb-1">
+          {(['ICD-11', 'ICD-10'] as DiagnosisCodeSystem[]).map((system) => (
+            <button
+              key={system}
+              type="button"
+              onClick={() => {
+                setCodeSystem(system);
+                setResults([]);
+              }}
+              className={`px-2 py-0.5 rounded text-xs font-medium border ${
+                codeSystem === system
+                  ? 'bg-blue-600 text-white border-blue-600'
+                  : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'
+              }`}
+            >
+              {system}
+            </button>
+          ))}
+        </div>
+      )}
       <div className="relative">
         <input
           type="text"
@@ -79,7 +112,7 @@ const DiagnosisAutocomplete: React.FC<DiagnosisAutocompleteProps> = ({
             setIsOpen(true);
           }}
           onFocus={() => setIsOpen(true)}
-          placeholder={placeholder}
+          placeholder={effectivePlaceholder}
         />
         <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
           {isLoading ? (

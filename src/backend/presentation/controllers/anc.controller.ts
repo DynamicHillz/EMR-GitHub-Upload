@@ -1,8 +1,29 @@
 import { Request, Response } from 'express';
-import { PrismaClient } from '@prisma/client';
 import { getSafeErrorMessage } from '../../shared/utils/error-message.util';
+import { NotificationService } from '../../application/services/notification.service';
+import { prisma } from '../../infrastructure/database/prisma.client';
 
-const prisma = new PrismaClient();
+const notificationService = new NotificationService(prisma);
+
+// Mirrors RecordAncVisitModal.tsx's getAncDangerSigns() thresholds — the
+// on-screen banner there is informational only and doesn't reach anyone not
+// looking at that screen, so this is what actually alerts staff (same
+// notifyRole pattern record-partograph-observation.use-case.ts already uses).
+function getAncVisitDangerSigns(data: {
+  systolicBP?: number;
+  diastolicBP?: number;
+  urineProtein?: string;
+  fetalHeartRate?: number;
+}): string[] {
+  const signs: string[] = [];
+  if (data.systolicBP != null && data.systolicBP >= 140) signs.push(`elevated systolic BP (${data.systolicBP} mmHg)`);
+  if (data.diastolicBP != null && data.diastolicBP >= 90) signs.push(`elevated diastolic BP (${data.diastolicBP} mmHg)`);
+  if (data.urineProtein === '2+' || data.urineProtein === '3+') signs.push(`significant proteinuria (${data.urineProtein})`);
+  if (data.fetalHeartRate != null && (data.fetalHeartRate < 110 || data.fetalHeartRate > 160)) {
+    signs.push(`fetal heart rate outside normal range (${data.fetalHeartRate} bpm)`);
+  }
+  return signs;
+}
 
 export const ancController = {
   // -------------------------
@@ -11,6 +32,7 @@ export const ancController = {
   getActivePregnancies: async (req: Request, res: Response) => {
     try {
       const tenantId = req.user?.tenantId;
+      if (!tenantId) return res.status(401).json({ message: 'Unauthorized' });
 
       const activePregnancies = await prisma.ancPregnancy.findMany({
         where: { tenantId, isActive: true },
@@ -38,6 +60,7 @@ export const ancController = {
     try {
       const { patientId } = req.params;
       const tenantId = req.user?.tenantId;
+      if (!tenantId) return res.status(401).json({ message: 'Unauthorized' });
 
       const pregnancies = await prisma.ancPregnancy.findMany({
         where: { tenantId, patientId },
@@ -55,7 +78,8 @@ export const ancController = {
     try {
       const { patientId } = req.params;
       const tenantId = req.user?.tenantId;
-      const { 
+      if (!tenantId) return res.status(401).json({ message: 'Unauthorized' });
+      const {
         gravidity, parity, lmp, edd, bloodGroup, husbandBloodGroup,
         livingChildren, abortionsMiscarriages, historyOfCSection, historyOfPPH, historyOfPreEclampsia, historyOfStillbirth,
         preExistingDiabetes, preExistingHypertension, cardiacDisease, multipleGestation
@@ -94,14 +118,29 @@ export const ancController = {
     try {
       const { pregnancyId } = req.params;
       const tenantId = req.user?.tenantId;
+      if (!tenantId) return res.status(401).json({ message: 'Unauthorized' });
       const { isActive, outcome, deliveryDate } = req.body;
+
+      const existing = await prisma.ancPregnancy.findFirst({ where: { id: pregnancyId, tenantId } });
+      if (!existing) return res.status(404).json({ message: 'Pregnancy not found' });
+
+      // Reactivating must close out any other active pregnancy for the same
+      // patient first — createPregnancy already maintains this "only one
+      // active pregnancy at a time" invariant; this is the only other writer
+      // of isActive and must not be able to silently violate it.
+      if (isActive === true) {
+        await prisma.ancPregnancy.updateMany({
+          where: { tenantId, patientId: existing.patientId, isActive: true, id: { not: pregnancyId } },
+          data: { isActive: false }
+        });
+      }
 
       const updated = await prisma.ancPregnancy.update({
         where: { id: pregnancyId, tenantId },
         data: {
-          isActive,
-          outcome,
-          deliveryDate: deliveryDate ? new Date(deliveryDate) : null
+          ...(isActive !== undefined ? { isActive } : {}),
+          ...(outcome !== undefined ? { outcome } : {}),
+          ...(deliveryDate !== undefined ? { deliveryDate: deliveryDate ? new Date(deliveryDate) : null } : {}),
         }
       });
 
@@ -119,6 +158,7 @@ export const ancController = {
     try {
       const { pregnancyId } = req.params;
       const tenantId = req.user?.tenantId;
+      if (!tenantId) return res.status(401).json({ message: 'Unauthorized' });
 
       const visits = await prisma.ancVisit.findMany({
         where: { tenantId, pregnancyId },
@@ -140,6 +180,16 @@ export const ancController = {
       const { pregnancyId } = req.params;
       const tenantId = req.user?.tenantId;
       const userId = req.user?.id;
+      if (!tenantId || !userId) return res.status(401).json({ message: 'Unauthorized' });
+
+      // The FK alone only proves pregnancyId exists somewhere, not that it
+      // belongs to this tenant — verify before attaching a visit to it.
+      const pregnancy = await prisma.ancPregnancy.findFirst({
+        where: { id: pregnancyId, tenantId },
+        include: { patient: { select: { firstName: true, lastName: true } } },
+      });
+      if (!pregnancy) return res.status(404).json({ message: 'Pregnancy not found' });
+
       const {
         gestationalAgeWeeks,
         weight,
@@ -205,6 +255,19 @@ export const ancController = {
           recordedBy: { select: { firstName: true, lastName: true, role: true } }
         }
       });
+
+      const dangerSigns = getAncVisitDangerSigns({ systolicBP, diastolicBP, urineProtein, fetalHeartRate });
+      if (dangerSigns.length > 0) {
+        const patientName = `${pregnancy.patient.firstName} ${pregnancy.patient.lastName}`;
+        await notificationService.notifyRole(tenantId, ['DOCTOR', 'NURSE'], {
+          type: 'ANC_VISIT_ALERT',
+          severity: 'WARNING',
+          title: 'ANC Visit Alert',
+          message: `${patientName} — ${dangerSigns.join('; ')}`,
+          entityType: 'AncVisit',
+          entityId: visit.id,
+        });
+      }
 
       res.status(201).json(visit);
     } catch (error: any) {

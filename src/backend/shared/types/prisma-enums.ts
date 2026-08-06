@@ -121,6 +121,8 @@ export type SyncStatus = 'PENDING' | 'IN_PROGRESS' | 'COMPLETED' | 'FAILED';
 
 export type SyncOperation = 'CREATE' | 'UPDATE' | 'DELETE';
 
+export type NotificationSeverity = 'INFO' | 'WARNING' | 'CRITICAL';
+
 /**
  * Helper functions for array handling (since SQLite stores arrays as comma-separated strings)
  */

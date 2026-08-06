@@ -50,6 +50,8 @@ enum ClaimStatus {
   DENIED
   PARTIALLY_APPROVED
   APPEALED
+  PAID
+  CANCELLED
 }
 
 enum ExemptionCriteriaType {
@@ -116,6 +118,12 @@ model Tenant {
   email         String?
   licenseNumber String?
 
+  // Software license (on-premise licensing model, not the clinic's own
+  // regulatory licenseNumber above) — a signed RS256 JWT issued by the
+  // vendor, verified against config/license-public-key.pem. Null until the
+  // vendor issues one. See LICENSING.md.
+  licenseToken String?
+
   // Subscription
   subscriptionTier  String    @default("BASIC")
   subscriptionStart DateTime  @default(now())
@@ -152,6 +160,11 @@ model Tenant {
   invoiceFooterText  String?
   termsAndConditions String?
 
+  // Inpatient Settings
+  // Days after discharge before bed-space overstay charges start accruing
+  // for a patient whose bed is still being held (see Admission.bedClearedAt).
+  overstayGraceDays Int @default(2)
+
   // Bank Details
   bankName      String?
   accountNumber String?
@@ -173,6 +186,21 @@ model Tenant {
   moniepointEnabled      Boolean @default(false)
   moniepointApiKey       String?
   moniepointContractCode String?
+
+  // DHIS2 Integration — different clinics may report to different DHIS2
+  // instances (national NHMIS, a state instance, a demo server), so both
+  // the connection and the metadata mapping are per-tenant, not fixed.
+  dhis2Enabled                               Boolean @default(false)
+  dhis2BaseUrl                               String?
+  dhis2Username                              String?
+  dhis2Password                              String? // encrypted at rest — see infrastructure/security/encryption.util.ts
+  dhis2OrgUnitId                             String? // this tenant's real DHIS2 org unit UID — never the tenantId itself
+  dhis2DataElementTotalVisits                String? // DHIS2 data element UID
+  dhis2DataElementPediatricUnder5            String? // DHIS2 data element UID
+  dhis2DataElementSevereMalnutrition         String? // DHIS2 data element UID
+  dhis2DataElementLiveBirths                 String? // DHIS2 data element UID
+  dhis2DataElementSeverePostpartumHemorrhage String? // DHIS2 data element UID
+  dhis2CategoryOptionCombo                   String? // shared category option combo UID applied to all data values
 
   // Settings (JSON)
   settings Json?
@@ -239,7 +267,10 @@ model Tenant {
   ImmunizationSchedule     ImmunizationSchedule[]
   LaborRecord              LaborRecord[]
   PartographObservation    PartographObservation[]
+  PostnatalVisit           PostnatalVisit[]
+  WorklistDismissal        WorklistDismissal[]
   SyncConflict             SyncConflict[]
+  dhis2SyncLogs            Dhis2SyncLog[]
 
   @@map("tenants")
 }
@@ -297,6 +328,7 @@ model User {
   paymentsFlagged        Payment[]            @relation("PaymentFlags")
   paymentsReviewed       Payment[]            @relation("PaymentReviews")
   paymentAuditLogs       PaymentAuditLog[]
+  dhis2SyncLogsTriggered Dhis2SyncLog[]
   refundsRequested       Refund[]             @relation("RefundRequester")
   refundsApproved        Refund[]             @relation("RefundApprover")
   refundsRejected        Refund[]             @relation("RefundRejecter")
@@ -316,14 +348,17 @@ model User {
   operationNotesRecorded    OperationNote[]            @relation("OperationNotesRecorded")
   consumableUsageRecorded   ConsumableUsage[]          @relation("ConsumableUsageRecorded")
   notifications             Notification[]
+  notificationsAcknowledged Notification[]             @relation("NotificationsAcknowledged")
 
   laborRecordsStarted            LaborRecord[]           @relation("LaborRecordsStarted")
   laborRecordsDelivered          LaborRecord[]           @relation("LaborRecordsDelivered")
   partographObservationsRecorded PartographObservation[] @relation("PartographObservationsRecorded")
+  postnatalVisitsRecorded        PostnatalVisit[]        @relation("PostnatalVisitsRecorded")
+  worklistDismissalsRecorded     WorklistDismissal[]     @relation("WorklistDismissalsRecorded")
   syncConflictsResolved          SyncConflict[]
-  deletionReason            String?
-  ancVisits                 AncVisit[]
-  administeredImmunizations PatientImmunization[]
+  deletionReason                 String?
+  ancVisits                      AncVisit[]
+  administeredImmunizations      PatientImmunization[]
 
   @@unique([tenantId, email])
   @@map("users")
@@ -363,10 +398,11 @@ model Patient {
   emergencyContact Json? // { name, relationship, phone, address }
 
   // NHIS & HMO
-  patientType PatientType @default(PRIVATE)
-  hmoProvider String?
-  hmoNumber   String?
-  nhisNumber  String?
+  patientType   PatientType @default(PRIVATE)
+  hmoProvider   String? // legacy free-text name — kept for backward-compat display/fallback only
+  hmoProviderId String? // real FK, drives billing coverage — see generate-invoice.use-case.ts
+  hmoNumber     String?
+  nhisNumber    String?
 
   // Photo
   photoUrl String?
@@ -391,30 +427,43 @@ model Patient {
   // that supply an expectedVersion (currently: the offline-sync push path).
   version Int @default(1)
 
+  // Newborn linkage — set on a newborn's own Patient row when they're
+  // registered at delivery (see record-delivery-outcome.use-case.ts). Lets a
+  // newborn's chart surface the mother's obstetric risk history and supports
+  // "newborns delivered this month" style reporting.
+  motherPatientId String?
+
   // Relations
-  tenant         Tenant                @relation(fields: [tenantId], references: [id])
-  appointments   Appointment[]
-  consultations  Consultation[]
-  prescriptions  Prescription[]
-  labOrders      LabOrder[]
-  invoices       Invoice[]
-  payments       Payment[]
-  refunds        Refund[]
-  Admission      Admission[]
-  Triage         Triage[]
-  PatientAllergy PatientAllergy[]
-  NextOfKin      NextOfKin[]
-  insurances     PatientInsurance[]
-  ancPregnancies AncPregnancy[]
-  immunizations  PatientImmunization[]
-  ImagingResult  ImagingResult[]
-  laborRecords   LaborRecord[]
+  tenant                 Tenant                @relation(fields: [tenantId], references: [id])
+  appointments           Appointment[]
+  consultations          Consultation[]
+  prescriptions          Prescription[]
+  labOrders              LabOrder[]
+  invoices               Invoice[]
+  payments               Payment[]
+  refunds                Refund[]
+  Admission              Admission[]
+  Triage                 Triage[]
+  PatientAllergy         PatientAllergy[]
+  NextOfKin              NextOfKin[]
+  insurances             PatientInsurance[]
+  hmoProviderInsurer     InsuranceProvider?    @relation(fields: [hmoProviderId], references: [id])
+  ancPregnancies         AncPregnancy[]
+  immunizations          PatientImmunization[]
+  ImagingResult          ImagingResult[]
+  laborRecords           LaborRecord[]
   consumableUsageRecords ConsumableUsage[]
+  mother                 Patient?              @relation("MotherNewborn", fields: [motherPatientId], references: [id])
+  newbornChildren        Patient[]             @relation("MotherNewborn")
+  deliveryAsNewborn      LaborRecord?          @relation("LaborRecordNewborn")
+  postnatalVisits        PostnatalVisit[]
+  worklistDismissals     WorklistDismissal[]
 
   @@unique([tenantId, patientId])
   @@unique([tenantId, phone])
   @@index([tenantId, lastName, firstName])
   @@index([tenantId, status])
+  @@index([tenantId, motherPatientId])
   // Trigram GIN indexes — the search repository does `contains`/ILIKE
   // matching on these four fields, which a plain btree index (above)
   // can't accelerate. Without these, every search is a sequential scan
@@ -463,10 +512,22 @@ model Appointment {
   version Int @default(1)
 
   // Relations
-  tenant  Tenant  @relation(fields: [tenantId], references: [id])
-  patient Patient @relation(fields: [patientId], references: [id])
-  doctor  User    @relation(fields: [doctorId], references: [id])
+  tenant          Tenant           @relation(fields: [tenantId], references: [id])
+  patient         Patient          @relation(fields: [patientId], references: [id])
+  doctor          User             @relation(fields: [doctorId], references: [id])
+  postnatalVisits PostnatalVisit[]
 
+  // A partial unique index on (tenantId, doctorId, appointmentDate,
+  // appointmentTime) WHERE "isDeleted" = false AND status NOT IN
+  // ('CANCELLED', 'NO_SHOW') is added by hand in the migration SQL — same
+  // technique as DiagnosisCatalog's partial unique index above, since
+  // Prisma's schema DSL has no partial-index syntax. This is the real
+  // double-booking backstop: the application-level findOverlapping check in
+  // book-appointment.use-case.ts is check-then-act and can't stop two
+  // concurrent requests from both seeing "no overlap". It only catches an
+  // exact-slot collision, not partial time-range overlaps of
+  // variable-duration appointments — a true overlap-exclusion constraint
+  // would need EXCLUDE USING gist + btree_gist, out of scope here.
   @@index([tenantId, appointmentDate, doctorId])
   @@map("appointments")
 }
@@ -517,14 +578,14 @@ model Consultation {
   version Int @default(1)
 
   // Relations
-  tenant           Tenant                  @relation(fields: [tenantId], references: [id])
-  patient          Patient                 @relation(fields: [patientId], references: [id])
-  doctor           User                    @relation(fields: [doctorId], references: [id])
-  prescriptions    Prescription[]
-  labOrders        LabOrder[]
-  diagnoses        ConsultationDiagnosis[]
-  ancVisit         AncVisit?
-  invoiceLineItems InvoiceLineItem[]
+  tenant                 Tenant                  @relation(fields: [tenantId], references: [id])
+  patient                Patient                 @relation(fields: [patientId], references: [id])
+  doctor                 User                    @relation(fields: [doctorId], references: [id])
+  prescriptions          Prescription[]
+  labOrders              LabOrder[]
+  diagnoses              ConsultationDiagnosis[]
+  ancVisit               AncVisit?
+  invoiceLineItems       InvoiceLineItem[]
   consumableUsageRecords ConsumableUsage[]
 
   @@index([tenantId, patientId])
@@ -1049,11 +1110,11 @@ model Consumable {
   unitPrice    Decimal @db.Decimal(12, 2)
 
   // Status
-  status    String    @default("AVAILABLE")
+  status         String    @default("AVAILABLE")
   // Soft Delete
-  isDeleted Boolean   @default(false)
-  deletedAt DateTime?
-  deletedBy String?
+  isDeleted      Boolean   @default(false)
+  deletedAt      DateTime?
+  deletedBy      String?
   deletionReason String?
 
   createdAt DateTime @default(now())
@@ -1074,22 +1135,22 @@ model ConsumableBatch {
   consumableId String
 
   // Batch Details
-  batchNumber String
-  expiryDate  DateTime? // optional — some consumables (gloves, cotton wool) aren't tracked by expiry
-  quantity    Int
-  unitCost    Decimal  @db.Decimal(12, 2)
-  sellingPrice Decimal @db.Decimal(12, 2)
+  batchNumber  String
+  expiryDate   DateTime? // optional — some consumables (gloves, cotton wool) aren't tracked by expiry
+  quantity     Int
+  unitCost     Decimal   @db.Decimal(12, 2)
+  sellingPrice Decimal   @db.Decimal(12, 2)
 
   // Supplier
   supplier     String?
   purchaseDate DateTime?
 
   // Status
-  status    BatchStatus @default(ACTIVE)
+  status         BatchStatus @default(ACTIVE)
   // Soft Delete
-  isDeleted Boolean     @default(false)
-  deletedAt DateTime?
-  deletedBy String?
+  isDeleted      Boolean     @default(false)
+  deletedAt      DateTime?
+  deletedBy      String?
   deletionReason String?
 
   createdAt DateTime @default(now())
@@ -1129,19 +1190,19 @@ model ConsumableUsage {
   // nebulizer treatment); null for ordinary consumables (gloves, syringes,
   // gauze, etc.). Explicit typed columns rather than a JSON blob so this
   // stays a real, indexable/queryable field.
-  flowRateLpm    Float?  // Liters per minute
+  flowRateLpm    Float? // Liters per minute
   deliveryMethod String? // "Nasal Cannula" | "Face Mask" | "Non-Rebreather Mask" | "CPAP/BiPAP"
-  spO2Before     Int?    // SpO2 % immediately before starting
-  spO2After      Int?    // SpO2 % after/during administration
+  spO2Before     Int? // SpO2 % immediately before starting
+  spO2After      Int? // SpO2 % after/during administration
 
   billingStatus BillingStatus @default(UNBILLED)
 
   usedAt DateTime @default(now())
 
   // Soft Delete
-  isDeleted Boolean   @default(false)
-  deletedAt DateTime?
-  deletedBy String?
+  isDeleted      Boolean   @default(false)
+  deletedAt      DateTime?
+  deletedBy      String?
   deletionReason String?
 
   createdAt DateTime @default(now())
@@ -1246,16 +1307,18 @@ model InvoiceLineItem {
   transfusionChartId String?
   operationNoteId    String?
   laborRecordId      String?
+  postnatalVisitId   String?
 
-  invoice         Invoice          @relation(fields: [invoiceId], references: [id])
-  consultation    Consultation?    @relation(fields: [consultationId], references: [id], onDelete: Restrict)
-  prescription    Prescription?    @relation(fields: [prescriptionId], references: [id], onDelete: Restrict)
-  labOrder        LabOrder?        @relation(fields: [labOrderId], references: [id], onDelete: Restrict)
-  admission       Admission?       @relation(fields: [admissionId], references: [id], onDelete: Restrict)
-  consumableUsage ConsumableUsage? @relation(fields: [consumableUsageId], references: [id], onDelete: Restrict)
+  invoice          Invoice           @relation(fields: [invoiceId], references: [id])
+  consultation     Consultation?     @relation(fields: [consultationId], references: [id], onDelete: Restrict)
+  prescription     Prescription?     @relation(fields: [prescriptionId], references: [id], onDelete: Restrict)
+  labOrder         LabOrder?         @relation(fields: [labOrderId], references: [id], onDelete: Restrict)
+  admission        Admission?        @relation(fields: [admissionId], references: [id], onDelete: Restrict)
+  consumableUsage  ConsumableUsage?  @relation(fields: [consumableUsageId], references: [id], onDelete: Restrict)
   transfusionChart TransfusionChart? @relation(fields: [transfusionChartId], references: [id], onDelete: Restrict)
   operationNote    OperationNote?    @relation(fields: [operationNoteId], references: [id], onDelete: Restrict)
   laborRecord      LaborRecord?      @relation(fields: [laborRecordId], references: [id], onDelete: Restrict)
+  postnatalVisit   PostnatalVisit?   @relation(fields: [postnatalVisitId], references: [id], onDelete: Restrict)
 
   // Soft Delete
   isDeleted Boolean   @default(false)
@@ -1299,9 +1362,10 @@ model InsuranceProvider {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  tenant   Tenant             @relation(fields: [tenantId], references: [id])
-  policies PatientInsurance[]
-  claims   InsuranceClaim[]
+  tenant      Tenant             @relation(fields: [tenantId], references: [id])
+  policies    PatientInsurance[]
+  claims      InsuranceClaim[]
+  hmoPatients Patient[]
 
   @@index([tenantId, type])
   @@map("insurance_providers")
@@ -1346,6 +1410,14 @@ model InsuranceClaim {
   submittedAt   DateTime?
   adjudicatedAt DateTime?
   denialReason  String?
+
+  // Settlement — tracked here, deliberately NOT via Invoice/Payment. See
+  // generate-invoice.use-case.ts: Invoice.balance already excludes the
+  // insurance-covered portion at generation time (it's the patient's
+  // out-of-pocket share only), so there's no invoice balance for an
+  // insurance settlement to reduce.
+  paidAmount Decimal?  @db.Decimal(12, 2)
+  paidAt     DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1402,6 +1474,12 @@ model Payment {
   // Mobile Money Details (if applicable)
   mobileProvider String? // MTN, Airtel, etc.
   mobileNumber   String?
+
+  // Cash Payment Details (if applicable) — the staff member who physically
+  // received the cash, which isn't always the same person logged in as
+  // processedById (e.g. a nurse collects payment and hands it to the
+  // cashier who then records it in the system).
+  cashReceivedByName String?
 
   // Status
   status PaymentProcessStatus @default(COMPLETED)
@@ -1578,6 +1656,32 @@ model PaymentAuditLog {
   @@map("payment_audit_logs")
 }
 
+// ==================== DHIS2 INTEGRATION ====================
+// Unrelated to SyncDevice/SyncQueue/SyncConflict below despite the shared
+// "sync" word — those three back the app's own offline-first device sync;
+// this one is purely about pushing aggregate reports to a DHIS2 server.
+model Dhis2SyncLog {
+  id       String @id @default(uuid())
+  tenantId String
+
+  period  String // ISO monthly period, e.g. "202607"
+  payload Json // exact dataValueSet payload sent (or attempted, if it never reached DHIS2)
+
+  // SUCCESS | WARNING | ERROR (DHIS2 responded, see responseSummary) |
+  // FAILED (never reached DHIS2 — network/auth/config error)
+  status          String
+  responseSummary Json? // DHIS2's importCount/conflicts, or the caught error message
+
+  triggeredById String
+  createdAt     DateTime @default(now())
+
+  tenant      Tenant @relation(fields: [tenantId], references: [id])
+  triggeredBy User   @relation(fields: [triggeredById], references: [id])
+
+  @@index([tenantId, period])
+  @@map("dhis2_sync_logs")
+}
+
 // FRAUD PREVENTION: Configuration per tenant for fraud detection
 model FraudPreventionSettings {
   id       String @id @default(uuid())
@@ -1590,7 +1694,11 @@ model FraudPreventionSettings {
   refundAutoApproveThreshold    Float? // Refund requests at or below this amount skip manual approval
 
   // Mandatory fields for manual payments
-  requireReceiptPhotoForCash      Boolean @default(true)
+  // Default flipped to false (2026-07-31) — a photo-upload requirement for
+  // cash payments isn't realistic for most Nigerian clinics (no camera/
+  // upload workflow at the till); the system-generated receipt plus the
+  // approval-threshold gate are the real safeguard instead.
+  requireReceiptPhotoForCash      Boolean @default(false)
   requireReferenceForBankTransfer Boolean @default(true)
   requireReferenceForMobileMoney  Boolean @default(true)
 
@@ -1815,6 +1923,12 @@ model AuditLog {
 
   @@index([tenantId, timestamp])
   @@index([tenantId, entityType, entityId])
+  // Speeds the free-text `contains` search on these two columns (same
+  // gin_trgm_ops technique as Patient's name/phone indexes above). `metadata`
+  // (raw JSON text) is deliberately NOT indexed this way — low value, index
+  // bloat — its search is bounded by a default `timestamp` range instead.
+  @@index([action(ops: raw("gin_trgm_ops"))], type: Gin)
+  @@index([entityType(ops: raw("gin_trgm_ops"))], type: Gin)
   @@map("audit_logs")
 }
 
@@ -2184,6 +2298,15 @@ model Admission {
   status        String    @default("ADMITTED") // ADMITTED, DISCHARGED, TRANSFERRED
   billingStatus String    @default("UNBILLED") // UNBILLED, BILLED
 
+  // When the bed actually became available again — separate from
+  // dischargeDate because a discharged patient sometimes physically stays
+  // in the bed for days while settling an outstanding bill. Null means the
+  // bed is still being held for this admission even though it's
+  // DISCHARGED. Set automatically at discharge if the stay was already
+  // fully paid; otherwise only via the explicit "Confirm Bed Vacated"
+  // action, regardless of how long that takes.
+  bedClearedAt DateTime?
+
   // Drives which clinical tabs show on the inpatient details page (Operation
   // Note / Partograph) — see the two override flags below for the "medical
   // admission that turns into a surgery mid-stay" case.
@@ -2462,6 +2585,22 @@ model AdmissionDiagnosis {
   @@map("admission_diagnoses")
 }
 
+enum MaternalDischargeCondition {
+  STABLE
+  GUARDED
+  CRITICAL
+  TRANSFERRED
+  DECEASED
+}
+
+enum NewbornDischargeCondition {
+  STABLE
+  GUARDED
+  CRITICAL
+  TRANSFERRED
+  DECEASED
+}
+
 model DischargeSummary {
   id             String  @id @default(uuid())
   tenantId       String
@@ -2469,6 +2608,22 @@ model DischargeSummary {
   finalNotes     String
   followUpPlan   String?
   ttoMedications Json? // To Take Out medications
+
+  // Maternity-specific — populated only when the admission has a linked
+  // LaborRecord; left null for every other discharge. Kept as nullable
+  // columns on this same table rather than a parallel model since a
+  // discharge summary is already strictly 1:1 with Admission.
+  breastfeedingCounselingDone   Boolean?
+  familyPlanningMethodDiscussed String?
+  newbornDangerSignsCounseled   Boolean?
+  postnatalFollowUpDate         DateTime?
+  // Structured (not free text) for reportability — DHIS2/national aggregate
+  // reporting and internal analytics need a controlled vocabulary, not
+  // prose. Notes fields alongside carry whatever nuance the enum can't.
+  maternalConditionAtDischarge  MaternalDischargeCondition?
+  maternalConditionNotes        String?
+  newbornConditionAtDischarge   NewbornDischargeCondition?
+  newbornConditionNotes         String?
 
   tenant    Tenant    @relation(fields: [tenantId], references: [id])
   admission Admission @relation(fields: [admissionId], references: [id])
@@ -2519,7 +2674,6 @@ model OperationNote {
   assistants        String?
   anaesthetics      String?
   anaesthetist      String?
-  anaesthesis       String?
   incision          String?
   findings          String?
   procedure         String?
@@ -2551,30 +2705,57 @@ model OperationNote {
   @@map("operation_notes")
 }
 
+enum NotificationSeverity {
+  INFO
+  WARNING
+  CRITICAL
+}
+
 model Notification {
-  id         String    @id @default(uuid())
+  id         String               @id @default(uuid())
   tenantId   String
   userId     String
   type       String // CRITICAL_LAB_RESULT | STOCK_ALERT
+  severity   NotificationSeverity @default(WARNING)
   title      String
   message    String
   entityType String?
   entityId   String?
-  isRead     Boolean   @default(false)
+  isRead     Boolean              @default(false)
   readAt     DateTime?
+
+  // Distinct from isRead/readAt — read just means "seen it in the list";
+  // acknowledged means a clinician confirmed they're acting on it. Only
+  // meaningfully required for CRITICAL notifications (see NotificationBell.tsx).
+  acknowledgedById String?
+  acknowledgedAt   DateTime?
 
   createdAt DateTime @default(now())
 
-  tenant Tenant @relation(fields: [tenantId], references: [id])
-  user   User   @relation(fields: [userId], references: [id])
+  tenant         Tenant @relation(fields: [tenantId], references: [id])
+  user           User   @relation(fields: [userId], references: [id])
+  acknowledgedBy User?  @relation("NotificationsAcknowledged", fields: [acknowledgedById], references: [id])
 
   @@index([tenantId, userId, isRead])
+  @@index([tenantId, userId, severity, isRead])
+  // Supports notifyRoleWithCooldown's "was this alert already fired
+  // recently" lookup (tenantId+type+entityId, most-recent-first).
+  @@index([tenantId, type, entityId, createdAt])
   @@map("notifications")
 }
 
 model DiagnosisCatalog {
   id          String  @id @default(uuid())
-  tenantId    String
+  // null = shared/global reference row (e.g. bulk-imported ICD-10 catalog,
+  // reused across every tenant); non-null = tenant-cached row (e.g. live
+  // ICD-11 search results upserted per-tenant from the WHO API). A partial
+  // unique index on (code) WHERE tenant_id IS NULL — added by hand in the
+  // migration SQL, since Prisma's schema DSL has no partial-index syntax —
+  // is what actually keeps global rows unique (partial index on "tenantId");
+  // @@unique([tenantId, code]) below does NOT do this on its own, since
+  // Postgres treats every NULL as distinct from every other NULL in a
+  // unique index.
+  tenantId    String?
   code        String // e.g., 'A00', '1B00'
   name        String
   description String?
@@ -2584,7 +2765,7 @@ model DiagnosisCatalog {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  tenant             Tenant                  @relation(fields: [tenantId], references: [id])
+  tenant             Tenant?                 @relation(fields: [tenantId], references: [id])
   consultations      ConsultationDiagnosis[]
   admissionDiagnoses AdmissionDiagnosis[]
 
@@ -2592,6 +2773,31 @@ model DiagnosisCatalog {
   @@index([name])
   @@index([code])
   @@map("diagnosis_catalog")
+}
+
+// WHO's ICD-10<->ICD-11 equivalence mapping. Deliberately NOT tenant-scoped
+// and NOT FK'd to DiagnosisCatalog — it's pure reference data matched by
+// (system, code), which works even before a given code has ever been
+// cached locally, and avoids coupling to DiagnosisCatalog's global-vs-
+// tenant row split. A single source code can legitimately map to several
+// target codes (WHO's own tables carry this distinction via mapKind), so
+// this is intentionally not a 1:1 lookup table.
+model DiagnosisCodeMapping {
+  id           String   @id @default(uuid())
+  sourceSystem String // 'ICD-10' | 'ICD-11'
+  sourceCode   String
+  targetSystem String
+  targetCode   String
+  mapKind      String // 'EXACT' | 'APPROXIMATE' | 'ONE_TO_MANY'
+  note         String?
+  createdAt    DateTime @default(now())
+
+  // Makes the bulk import script's `skipDuplicates` actually idempotent on
+  // re-runs — without a real unique constraint, skipDuplicates has nothing
+  // to compare against and every re-run would duplicate every row.
+  @@unique([sourceSystem, sourceCode, targetSystem, targetCode])
+  @@index([sourceSystem, sourceCode])
+  @@map("diagnosis_code_mappings")
 }
 
 enum FluidType {
@@ -2768,10 +2974,11 @@ model AncPregnancy {
   updatedAt DateTime @updatedAt
 
   // Relations
-  tenant       Tenant        @relation(fields: [tenantId], references: [id])
-  patient      Patient       @relation(fields: [patientId], references: [id])
-  visits       AncVisit[]
-  laborRecords LaborRecord[]
+  tenant          Tenant           @relation(fields: [tenantId], references: [id])
+  patient         Patient          @relation(fields: [patientId], references: [id])
+  visits          AncVisit[]
+  laborRecords    LaborRecord[]
+  postnatalVisits PostnatalVisit[]
 
   @@index([tenantId, patientId])
   @@index([tenantId, isActive])
@@ -2828,10 +3035,10 @@ model AncVisit {
   updatedAt DateTime @updatedAt
 
   // Relations
-  tenant       Tenant         @relation(fields: [tenantId], references: [id])
-  pregnancy    AncPregnancy   @relation(fields: [pregnancyId], references: [id], onDelete: Cascade)
-  consultation Consultation?  @relation(fields: [consultationId], references: [id])
-  recordedBy   User           @relation(fields: [recordedById], references: [id])
+  tenant        Tenant         @relation(fields: [tenantId], references: [id])
+  pregnancy     AncPregnancy   @relation(fields: [pregnancyId], references: [id], onDelete: Cascade)
+  consultation  Consultation?  @relation(fields: [consultationId], references: [id])
+  recordedBy    User           @relation(fields: [recordedById], references: [id])
   prescriptions Prescription[]
 
   @@index([tenantId, pregnancyId])
@@ -2848,9 +3055,9 @@ enum LaborStatus {
 }
 
 model LaborRecord {
-  id          String @id @default(uuid())
+  id          String  @id @default(uuid())
   tenantId    String
-  admissionId String @unique
+  admissionId String  @unique
   patientId   String
   pregnancyId String? // nullable — walk-in delivery may have no ANC record on file
   startedById String
@@ -2877,8 +3084,15 @@ model LaborRecord {
   babyBirthWeightGrams  Int?
   apgarScore1Min        Int?
   apgarScore5Min        Int?
-  resuscitationRequired Boolean @default(false)
+  resuscitationRequired Boolean   @default(false)
   deliveryNotes         String?
+
+  // Set when the newborn is registered as their own Patient record at
+  // delivery (see record-delivery-outcome.use-case.ts). Singleton-birth
+  // assumption: this model has no support for twin/multiple-gestation
+  // outcomes today (each field above is single-valued) — a separate,
+  // larger redesign would be needed for that.
+  newbornPatientId String? @unique
 
   billingStatus BillingStatus @default(UNBILLED)
 
@@ -2887,14 +3101,15 @@ model LaborRecord {
   updatedAt DateTime @updatedAt
 
   // Relations
-  tenant           Tenant                   @relation(fields: [tenantId], references: [id])
-  admission        Admission                @relation(fields: [admissionId], references: [id])
-  patient          Patient                  @relation(fields: [patientId], references: [id])
-  pregnancy        AncPregnancy?            @relation(fields: [pregnancyId], references: [id])
-  startedBy        User                     @relation("LaborRecordsStarted", fields: [startedById], references: [id])
-  deliveredBy      User?                    @relation("LaborRecordsDelivered", fields: [deliveredById], references: [id])
+  tenant           Tenant                  @relation(fields: [tenantId], references: [id])
+  admission        Admission               @relation(fields: [admissionId], references: [id])
+  patient          Patient                 @relation(fields: [patientId], references: [id])
+  pregnancy        AncPregnancy?           @relation(fields: [pregnancyId], references: [id])
+  startedBy        User                    @relation("LaborRecordsStarted", fields: [startedById], references: [id])
+  deliveredBy      User?                   @relation("LaborRecordsDelivered", fields: [deliveredById], references: [id])
   observations     PartographObservation[]
   invoiceLineItems InvoiceLineItem[]
+  newbornPatient   Patient?                @relation("LaborRecordNewborn", fields: [newbornPatientId], references: [id])
 
   // Soft Delete
   isDeleted      Boolean   @default(false)
@@ -2957,6 +3172,113 @@ model PartographObservation {
   @@index([tenantId, laborRecordId])
   @@index([tenantId, recordedAt])
   @@map("partograph_observations")
+}
+
+enum PncContactType {
+  PNC_24H
+  PNC_DAY3
+  PNC_WEEK1
+  PNC_WEEK6
+  OTHER
+}
+
+// Postnatal (PNC) contact — WHO/Nigeria schedule is 4 contacts (24h, day 3,
+// week 1, week 6). One row per contact actually recorded; the "due" worklist
+// (get-postnatal-worklist.use-case.ts) computes expected dates from
+// LaborRecord.deliveredAt rather than pre-creating placeholder rows here.
+model PostnatalVisit {
+  id            String         @id @default(uuid())
+  tenantId      String
+  patientId     String // the mother
+  pregnancyId   String?
+  appointmentId String? // optional — the PNC follow-up appointment this visit fulfills, if booked as one
+  contactType   PncContactType
+  visitDate     DateTime
+  recordedById  String
+
+  billingStatus BillingStatus @default(UNBILLED)
+
+  // Maternal observations
+  maternalTemperature     Float?
+  maternalSystolicBP      Int?
+  maternalDiastolicBP     Int?
+  lochiaStatus            String? // NORMAL, HEAVY, OFFENSIVE
+  uterineInvolutionNormal Boolean?
+  perinealWoundStatus     String? // NORMAL, INTACT, INFECTED, BREAKDOWN — only relevant if there was a wound
+  breastfeedingStatus     String? // EXCLUSIVE, MIXED, NOT_BREASTFEEDING
+  moodScreeningConcern    Boolean? // simple flag — not a full EPDS score
+
+  // Newborn observations
+  newbornWeightGrams  Int?
+  newbornTemperature  Float?
+  newbornFeedingWell  Boolean?
+  cordConditionNormal Boolean?
+  jaundiceObserved    Boolean?
+  newbornDangerSigns  String[] // free-text tags, e.g. "difficulty breathing", "convulsions"
+
+  familyPlanningCounselingDone Boolean?
+  notes                        String?
+
+  // Audit
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  tenant           Tenant            @relation(fields: [tenantId], references: [id])
+  patient          Patient           @relation(fields: [patientId], references: [id])
+  pregnancy        AncPregnancy?     @relation(fields: [pregnancyId], references: [id])
+  appointment      Appointment?      @relation(fields: [appointmentId], references: [id])
+  recordedBy       User              @relation("PostnatalVisitsRecorded", fields: [recordedById], references: [id])
+  invoiceLineItems InvoiceLineItem[]
+
+  // Soft Delete
+  isDeleted      Boolean   @default(false)
+  deletedAt      DateTime?
+  deletedBy      String?
+  deletionReason String?
+
+  @@index([tenantId, patientId])
+  @@index([tenantId, pregnancyId])
+  @@map("postnatal_visits")
+}
+
+enum WorklistType {
+  IMMUNIZATION_DUE
+  POSTNATAL_DUE
+}
+
+enum WorklistDismissalReason {
+  GIVEN_ELSEWHERE
+  DECLINED
+  TRANSFERRED_OUT
+  DECEASED
+  OTHER
+}
+
+// Resolves a false-positive "due" item on either computed worklist
+// (get-overdue-immunizations / get-postnatal-worklist) without fabricating a
+// dose/visit that never happened. One generic table for both worklist
+// shapes — scheduleId identifies an immunization item, pregnancyId+
+// contactType identifies a postnatal item; only the relevant pair is set.
+model WorklistDismissal {
+  id            String                  @id @default(uuid())
+  tenantId      String
+  worklistType  WorklistType
+  patientId     String
+  scheduleId    String? // immunization due-item key
+  pregnancyId   String? // postnatal due-item key
+  contactType   PncContactType? // postnatal due-item key
+  reason        WorklistDismissalReason
+  reasonNotes   String?
+  dismissedById String
+  dismissedAt   DateTime                @default(now())
+
+  tenant      Tenant  @relation(fields: [tenantId], references: [id])
+  patient     Patient @relation(fields: [patientId], references: [id])
+  dismissedBy User    @relation("WorklistDismissalsRecorded", fields: [dismissedById], references: [id])
+
+  @@index([tenantId, worklistType, patientId])
+  @@map("worklist_dismissals")
 }
 
 // ==================== IMMUNIZATION ====================

@@ -24,7 +24,7 @@ function highestOf(severities: AlertSeverity[]): AlertSeverity | null {
   return severities.reduce((max, s) => (SEVERITY_RANK[s] > SEVERITY_RANK[max] ? s : max));
 }
 
-async function getActiveMedications(
+export async function getActiveMedications(
   prisma: PrismaClient,
   tenantId: string,
   patientId: string
@@ -41,16 +41,24 @@ async function getActiveMedications(
   return activePrescriptions.map((p) => p.medicationName);
 }
 
-export async function checkDrugInteractions(
+/**
+ * Raw DrugInteraction rows for a candidate medication against a patient's
+ * currently active prescriptions. The single source of truth for "what
+ * counts as active" and "how names are matched" — every caller that needs
+ * interaction data (whether formatted for a warning banner or returned
+ * as-is for a UI table) goes through this, so they can't drift apart the
+ * way the standalone pharmacy interactions-check endpoint once did.
+ */
+export async function findInteractionRecords(
   prisma: PrismaClient,
   tenantId: string,
   patientId: string,
   medicationName: string
-): Promise<InteractionCheckResult> {
+) {
   const activeMeds = await getActiveMedications(prisma, tenantId, patientId);
 
   if (activeMeds.length === 0) {
-    return { interactionWarning: false, interactionDetails: [], highestSeverity: null };
+    return [];
   }
 
   const orConditions = activeMeds.flatMap((med) => [
@@ -58,9 +66,18 @@ export async function checkDrugInteractions(
     { drug2: { contains: medicationName, mode: 'insensitive' as const }, drug1: { contains: med, mode: 'insensitive' as const } },
   ]);
 
-  const interactions = await prisma.drugInteraction.findMany({
+  return prisma.drugInteraction.findMany({
     where: { OR: orConditions },
   });
+}
+
+export async function checkDrugInteractions(
+  prisma: PrismaClient,
+  tenantId: string,
+  patientId: string,
+  medicationName: string
+): Promise<InteractionCheckResult> {
+  const interactions = await findInteractionRecords(prisma, tenantId, patientId, medicationName);
 
   if (interactions.length === 0) {
     return { interactionWarning: false, interactionDetails: [], highestSeverity: null };

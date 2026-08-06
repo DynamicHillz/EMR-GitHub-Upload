@@ -31,6 +31,10 @@ export interface Admission {
   admittedById: string;
   admissionDate: string;
   dischargeDate?: string;
+  /** When the bed actually became available again after discharge — null
+   * means the bed is still being held for this admission. See
+   * OverstayStatus for the countdown/overstay computation. */
+  bedClearedAt?: string | null;
   reason: string;
   status: string;
   notes?: string;
@@ -86,7 +90,6 @@ export interface OperationNote {
   assistants?: string;
   anaesthetics?: string;
   anaesthetist?: string;
-  anaesthesis?: string;
   incision?: string;
   findings?: string;
   procedure?: string;
@@ -142,6 +145,20 @@ export interface BedTransferHistory {
   transferredBy?: User;
 }
 
+// One entry per newly-added medication that triggered an allergy/
+// interaction/duplicate-therapy flag (REQ-CLIN-7) — same checks
+// CreatePrescriptionUseCase runs, now also run when a medication is added
+// during a ward round. Absent/empty medicationWarnings means nothing to warn about.
+export interface MedicationWarning {
+  medicationName: string;
+  allergyWarning: boolean;
+  allergyDetails: string[];
+  interactionWarning: boolean;
+  interactionDetails: string[];
+  duplicateWarning: boolean;
+  duplicateDetails: string[];
+}
+
 export interface WardRound {
   id: string;
   admissionId: string;
@@ -150,8 +167,24 @@ export interface WardRound {
   notes: string;
   vitals?: any;
   plan?: string;
-  
+  medicationWarnings?: MedicationWarning[];
+
   conductedBy?: User;
+}
+
+// Powers the "Awaiting Bed Clearance" countdown on InpatientPage — one entry
+// per discharged admission whose bed is still being held (bedClearedAt null).
+export interface OverstayStatus {
+  admissionId: string;
+  patient?: Patient;
+  bed?: Bed;
+  dischargeDate: string;
+  billingStatus: 'UNBILLED' | 'BILLED';
+  daysSinceDischarge: number;
+  graceDaysRemaining: number;
+  overstayDays: number;
+  estimatedExtraCharge: number;
+  isOverstay: boolean;
 }
 
 export interface MedicationAdministration {

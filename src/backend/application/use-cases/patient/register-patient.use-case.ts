@@ -81,6 +81,7 @@ export class RegisterPatientUseCase {
       emergencyContact: dto.emergencyContact,
       patientType: dto.patientType,
       hmoProvider: dto.hmoProvider,
+      hmoProviderId: dto.hmoProviderId,
       hmoNumber: dto.hmoNumber,
       nhisNumber: dto.nhisNumber,
       consentGiven: dto.consentGiven, // US-PAT-006: Include consent data
@@ -132,6 +133,7 @@ export class RegisterPatientUseCase {
       nhisNumber: patient.nhisNumber,
       patientType: patient.patientType,
       hmoProvider: patient.hmoProvider,
+      hmoProviderId: patient.hmoProviderId,
       hmoNumber: patient.hmoNumber,
       photoUrl: patient.photoUrl,
       status: patient.status,
@@ -141,6 +143,9 @@ export class RegisterPatientUseCase {
       consentVersion: patient.consentVersion || null,
       createdAt: patient.createdAt.toISOString(),
       updatedAt: patient.updatedAt.toISOString(),
+      motherPatientId: null,
+      mother: null,
+      newbornChildren: [],
     };
   }
 }

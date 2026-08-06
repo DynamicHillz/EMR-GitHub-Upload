@@ -16,6 +16,9 @@ import {
 } from '../../utils/prescriptionHelpers';
 import Dropdown from '../common/Dropdown';
 import TypeaheadTextField from '../common/TypeaheadTextField';
+import DiagnosisAutocomplete, { Diagnosis } from '../common/DiagnosisAutocomplete';
+import laborService from '../../services/labor.service';
+import { LaborRecord } from '../../types/labor';
 
 interface DischargeModalProps {
   admissionId: string;
@@ -87,11 +90,27 @@ const DischargeModal: React.FC<DischargeModalProps> = ({
   // WHO Discharge Summary extensions
   const [finalNotes, setFinalNotes] = useState('');
   const [followUpPlan, setFollowUpPlan] = useState('');
-  const [primaryDiagnosisId, setPrimaryDiagnosisId] = useState('');
-  const [diagnosisSearch, setDiagnosisSearch] = useState('');
-  const [diagnoses, setDiagnoses] = useState<Array<{ id: string; name: string; code: string }>>([]);
-  const [isSearchingDiagnosis, setIsSearchingDiagnosis] = useState(false);
+  const [selectedDiagnosis, setSelectedDiagnosis] = useState<Diagnosis | null>(null);
   const [activeMedications, setActiveMedications] = useState<any[]>([]);
+
+  // Maternity — only shown when this admission has a linked, delivered
+  // LaborRecord; every field stays null for a non-maternity discharge.
+  const [laborRecord, setLaborRecord] = useState<LaborRecord | null>(null);
+  const [breastfeedingCounselingDone, setBreastfeedingCounselingDone] = useState(false);
+  const [familyPlanningMethodDiscussed, setFamilyPlanningMethodDiscussed] = useState('');
+  const [newbornDangerSignsCounseled, setNewbornDangerSignsCounseled] = useState(false);
+  const [postnatalFollowUpDate, setPostnatalFollowUpDate] = useState('');
+  const [maternalConditionAtDischarge, setMaternalConditionAtDischarge] = useState('');
+  const [maternalConditionNotes, setMaternalConditionNotes] = useState('');
+  const [newbornConditionAtDischarge, setNewbornConditionAtDischarge] = useState('');
+  const [newbornConditionNotes, setNewbornConditionNotes] = useState('');
+
+  useEffect(() => {
+    laborService
+      .getLaborRecordByAdmission(admissionId)
+      .then((record) => setLaborRecord(record && record.status === 'DELIVERED' ? record : null))
+      .catch((err) => console.error('Failed to check for a linked labor record', err));
+  }, [admissionId]);
 
   // Same active-prescriptions fetch WardRoundModal already makes, so TTO
   // entry can offer "convert this" instead of a blank form per drug.
@@ -106,41 +125,6 @@ const DischargeModal: React.FC<DischargeModalProps> = ({
       .catch((err) => console.error('Failed to fetch active medications', err));
   }, [admissionId]);
 
-  // Search Diagnoses
-  const searchDiagnoses = async (query: string) => {
-    if (query.length < 2) {
-      setDiagnoses([]);
-      return;
-    }
-
-    setIsSearchingDiagnosis(true);
-    try {
-      const apiBaseUrl = import.meta.env.VITE_API_URL || `${window.location.protocol}//${window.location.hostname}:3000`;
-      const response = await fetch(`${apiBaseUrl}/api/clinical/diagnoses?query=${encodeURIComponent(query)}`, {
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem('token')}`,
-        },
-      });
-
-      if (response.ok) {
-        const result = await response.json();
-        setDiagnoses(result.data || []);
-      }
-    } catch (error) {
-      console.error('Error searching diagnoses:', error);
-    } finally {
-      setIsSearchingDiagnosis(false);
-    }
-  };
-
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      if (diagnosisSearch) searchDiagnoses(diagnosisSearch);
-    }, 300);
-
-    return () => clearTimeout(timer);
-  }, [diagnosisSearch]);
-
   // Pre-populate a discharge draft from data already on the admission
   // record — the admission diagnosis, the latest ward round's notes/plan.
   // Everything below stays fully editable; this only saves re-typing.
@@ -149,8 +133,15 @@ const DischargeModal: React.FC<DischargeModalProps> = ({
 
     const admissionDiagnosis = admission.diagnoses?.find(d => d.isAdmission);
     if (admissionDiagnosis?.diagnosis) {
-      setPrimaryDiagnosisId(admissionDiagnosis.diagnosisId);
-      setDiagnosisSearch(`${admissionDiagnosis.diagnosis.code} - ${admissionDiagnosis.diagnosis.name}`);
+      setSelectedDiagnosis({
+        id: admissionDiagnosis.diagnosisId,
+        tenantId: null,
+        code: admissionDiagnosis.diagnosis.code,
+        name: admissionDiagnosis.diagnosis.name,
+        description: null,
+        type: (admissionDiagnosis.diagnosis as any).type || 'ICD-11',
+        isActive: true,
+      });
     }
 
     const latestRound = admission.wardRounds?.[0];
@@ -279,15 +270,46 @@ const DischargeModal: React.FC<DischargeModalProps> = ({
     try {
       setLoading(true);
       const finalPrescriptions = prescriptions.filter(p => p.medicationName).map(composePrescriptionForSubmit);
-      await InpatientService.dischargePatient(admissionId, {
+      const result: any = await InpatientService.dischargePatient(admissionId, {
         notes,
         finalNotes: finalNotes || notes,
         followUpPlan,
-        finalDiagnosisId: primaryDiagnosisId,
+        finalDiagnosisId: selectedDiagnosis?.id || '',
         ttoMedications: finalPrescriptions,
-        prescriptions: finalPrescriptions
+        prescriptions: finalPrescriptions,
+        ...(laborRecord
+          ? {
+              breastfeedingCounselingDone,
+              familyPlanningMethodDiscussed: familyPlanningMethodDiscussed || undefined,
+              newbornDangerSignsCounseled,
+              postnatalFollowUpDate: postnatalFollowUpDate || undefined,
+              maternalConditionAtDischarge: maternalConditionAtDischarge || undefined,
+              maternalConditionNotes: maternalConditionNotes || undefined,
+              newbornConditionAtDischarge: newbornConditionAtDischarge || undefined,
+              newbornConditionNotes: newbornConditionNotes || undefined,
+            }
+          : {})
       });
-      toast.success('Patient discharged successfully');
+      if (result.bedCleared) {
+        toast.success('Patient discharged successfully');
+      } else {
+        toast.success(
+          'Patient discharged — bed held',
+          'Balance not yet settled, so the bed stays reserved. Use "Confirm Bed Vacated" on the Inpatients page once the patient has actually left.'
+        );
+      }
+
+      // Surface any allergy/interaction/duplicate-therapy flags on a TTO
+      // medication (REQ-CLIN-7) — informational only, discharge already
+      // succeeded by this point.
+      result.medicationWarnings?.forEach((w: any) => {
+        const parts: string[] = [];
+        if (w.allergyWarning) parts.push(`Allergy: ${w.allergyDetails.join(', ')}`);
+        if (w.interactionWarning) parts.push(`Interaction: ${w.interactionDetails.join(', ')}`);
+        if (w.duplicateWarning) parts.push(`Duplicate therapy: ${w.duplicateDetails.join(', ')}`);
+        toast.warning(`Warning: ${w.medicationName}`, parts.join(' — '));
+      });
+
       window.open(`/inpatient/admissions/${admissionId}/discharge-summary`, '_blank');
       onSuccess();
     } catch (err: any) {
@@ -332,36 +354,20 @@ const DischargeModal: React.FC<DischargeModalProps> = ({
               <h3 className="text-lg font-medium text-blue-900 mb-4">Discharge Summary (WHO Standard)</h3>
               <div className="grid grid-cols-1 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Final Primary Diagnosis (ICD-11)</label>
-                  <input
-                    type="text"
-                    value={diagnosisSearch}
-                    onChange={(e) => {
-                      setDiagnosisSearch(e.target.value);
-                      setPrimaryDiagnosisId('');
-                    }}
-                    placeholder="Search diagnosis..."
-                    className="input w-full bg-white"
-                  />
-                  {isSearchingDiagnosis && <p className="text-sm text-gray-500 mt-1">Searching...</p>}
-                  {diagnoses.length > 0 && !primaryDiagnosisId && (
-                    <div className="mt-2 border border-gray-200 rounded-md max-h-40 overflow-y-auto bg-white shadow-sm">
-                      {diagnoses.map((diag) => (
-                        <button
-                          key={diag.id}
-                          type="button"
-                          onClick={() => {
-                            setPrimaryDiagnosisId(diag.id);
-                            setDiagnosisSearch(`${diag.code} - ${diag.name}`);
-                            setDiagnoses([]);
-                          }}
-                          className="w-full text-left px-3 py-2 hover:bg-primary-50 border-b border-gray-100 last:border-b-0"
-                        >
-                          <div className="font-medium text-gray-900">{diag.name}</div>
-                          <div className="text-sm text-gray-500">{diag.code}</div>
-                        </button>
-                      ))}
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Final Primary Diagnosis</label>
+                  {selectedDiagnosis ? (
+                    <div className="flex items-center justify-between p-2 border border-gray-200 rounded-md bg-white">
+                      <span className="text-sm font-medium">{selectedDiagnosis.code} - {selectedDiagnosis.name}</span>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedDiagnosis(null)}
+                        className="text-xs text-primary-600 hover:underline"
+                      >
+                        Change
+                      </button>
                     </div>
+                  ) : (
+                    <DiagnosisAutocomplete onSelect={(diagnosis) => setSelectedDiagnosis(diagnosis)} />
                   )}
                 </div>
 
@@ -389,6 +395,58 @@ const DischargeModal: React.FC<DischargeModalProps> = ({
                 </div>
               </div>
             </div>
+
+            {laborRecord && (
+              <div className="bg-pink-50 p-4 rounded-lg border border-pink-100">
+                <h3 className="text-lg font-medium text-pink-900 mb-4">Maternal & Neonatal Outcome</h3>
+                <div className="grid grid-cols-1 gap-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <label className="flex items-center gap-2 text-sm text-gray-800">
+                      <input type="checkbox" checked={breastfeedingCounselingDone} onChange={e => setBreastfeedingCounselingDone(e.target.checked)} className="rounded border-gray-300 text-primary-600 focus:ring-primary-500" />
+                      Breastfeeding counseling done
+                    </label>
+                    <label className="flex items-center gap-2 text-sm text-gray-800">
+                      <input type="checkbox" checked={newbornDangerSignsCounseled} onChange={e => setNewbornDangerSignsCounseled(e.target.checked)} className="rounded border-gray-300 text-primary-600 focus:ring-primary-500" />
+                      Newborn danger signs counseled
+                    </label>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Family Planning Method Discussed</label>
+                    <input type="text" className="input w-full bg-white" value={familyPlanningMethodDiscussed} onChange={e => setFamilyPlanningMethodDiscussed(e.target.value)} placeholder="e.g. Injectable, none discussed" />
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Maternal Condition at Discharge</label>
+                      <Dropdown className="input w-full bg-white" value={maternalConditionAtDischarge} onChange={e => setMaternalConditionAtDischarge(e.target.value)}>
+                        <option value="">Not recorded</option>
+                        <option value="STABLE">Stable</option>
+                        <option value="GUARDED">Guarded</option>
+                        <option value="CRITICAL">Critical</option>
+                        <option value="TRANSFERRED">Transferred</option>
+                        <option value="DECEASED">Deceased</option>
+                      </Dropdown>
+                      <input type="text" className="input w-full bg-white mt-2" value={maternalConditionNotes} onChange={e => setMaternalConditionNotes(e.target.value)} placeholder="Additional detail (optional)" />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Newborn Condition at Discharge</label>
+                      <Dropdown className="input w-full bg-white" value={newbornConditionAtDischarge} onChange={e => setNewbornConditionAtDischarge(e.target.value)}>
+                        <option value="">Not recorded</option>
+                        <option value="STABLE">Stable</option>
+                        <option value="GUARDED">Guarded</option>
+                        <option value="CRITICAL">Critical</option>
+                        <option value="TRANSFERRED">Transferred</option>
+                        <option value="DECEASED">Deceased</option>
+                      </Dropdown>
+                      <input type="text" className="input w-full bg-white mt-2" value={newbornConditionNotes} onChange={e => setNewbornConditionNotes(e.target.value)} placeholder="Additional detail (optional)" />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Postnatal Follow-up Date</label>
+                    <input type="date" className="input w-full max-w-xs bg-white" value={postnatalFollowUpDate} onChange={e => setPostnatalFollowUpDate(e.target.value)} />
+                  </div>
+                </div>
+              </div>
+            )}
 
             <div>
               <div className="flex items-center justify-between mb-4">

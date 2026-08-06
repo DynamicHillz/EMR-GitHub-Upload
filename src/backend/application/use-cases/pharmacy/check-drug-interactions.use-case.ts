@@ -2,9 +2,17 @@
  * Check Drug Interactions Use Case
  *
  * REQ-PHARM-6: Check for drug interactions before dispensing
+ *
+ * Delegates to the shared findInteractionRecords helper (also used by
+ * create-prescription/dispense-medication) instead of reimplementing the
+ * "active medication" query and name-matching logic here — a prior
+ * standalone version diverged (exact-match only, DISPENSED-in-last-30-days
+ * only) from the check that actually gates dispensing, so this advisory
+ * pre-dispense banner could under-report relative to the real block.
  */
 
 import { PrismaClient } from '@prisma/client';
+import { findInteractionRecords } from '../../services/drug-interaction-checker.service';
 
 export interface DrugInteractionCheckDto {
   patientId: string;
@@ -30,62 +38,16 @@ export class CheckDrugInteractionsUseCase {
     dto: DrugInteractionCheckDto,
     tenantId: string
   ): Promise<DrugInteractionResult> {
-    // Get patient's current active prescriptions
-    const activePrescriptions = await this.prisma.prescription.findMany({
-      where: {
-        tenantId,
-        patientId: dto.patientId,
-        status: 'DISPENSED',
-        // Consider prescriptions from the last 30 days as active
-        dispensedAt: {
-          gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
-        },
-      },
-      select: {
-        medicationName: true,
-      },
-    });
+    const records = await findInteractionRecords(this.prisma, tenantId, dto.patientId, dto.medicationName);
 
-    const currentMedications = activePrescriptions.map((p) => p.medicationName);
-    const interactions: DrugInteractionResult['interactions'] = [];
-
-    // Check for interactions with each current medication
-    for (const currentMed of currentMedications) {
-      // Check both directions: new drug with current, and current with new drug
-      const potentialInteractions = await this.prisma.drugInteraction.findMany({
-        where: {
-          OR: [
-            {
-              drug1: {
-                equals: dto.medicationName,
-                },
-              drug2: {
-                equals: currentMed,
-                },
-            },
-            {
-              drug1: {
-                equals: currentMed,
-                },
-              drug2: {
-                equals: dto.medicationName,
-                },
-            },
-          ],
-        },
-      });
-
-      for (const interaction of potentialInteractions) {
-        interactions.push({
-          drug1: interaction.drug1,
-          drug2: interaction.drug2,
-          severity: interaction.severity,
-          description: interaction.description,
-          clinicalEffect: interaction.clinicalEffect || undefined,
-          management: interaction.management || undefined,
-        });
-      }
-    }
+    const interactions = records.map((interaction) => ({
+      drug1: interaction.drug1,
+      drug2: interaction.drug2,
+      severity: interaction.severity,
+      description: interaction.description,
+      clinicalEffect: interaction.clinicalEffect || undefined,
+      management: interaction.management || undefined,
+    }));
 
     return {
       hasInteractions: interactions.length > 0,

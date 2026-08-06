@@ -105,7 +105,7 @@ const WardModal: React.FC<WardModalProps> = ({ ward, onClose, onSuccess }) => {
             />
             {ward && (
               <p className="text-xs text-yellow-600 mt-1">
-                Warning: Reducing capacity will delete empty beds. It will fail if deleted beds are currently occupied.
+                Warning: Reducing capacity will delete empty beds. It will fail if a bed to be removed is currently occupied, or has ever been used for an admission or transfer — those beds can be marked as under Maintenance instead.
               </p>
             )}
           </div>

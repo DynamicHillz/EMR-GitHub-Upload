@@ -205,6 +205,24 @@ describe('GenerateStockAlertsUseCase', () => {
     });
   });
 
+  it('batches multiple low-stock items into a single notifyRole call instead of one per item', async () => {
+    mockPrisma.$queryRaw.mockResolvedValue([
+      { id: 'med-2', name: 'Ibuprofen', stockLevel: 5, reorderPoint: 20 },
+      { id: 'med-7', name: 'Aspirin', stockLevel: 2, reorderPoint: 10 },
+    ]);
+    mockPrisma.stockAlert.create
+      .mockResolvedValueOnce({ id: 'alert-2', alertType: 'LOW_STOCK', severity: 'WARNING', message: 'Ibuprofen is low in stock (5 units remaining)', createdAt: new Date('2026-01-01') })
+      .mockResolvedValueOnce({ id: 'alert-7', alertType: 'LOW_STOCK', severity: 'WARNING', message: 'Aspirin is low in stock (2 units remaining)', createdAt: new Date('2026-01-01') });
+
+    const result = await useCase.execute(tenantId);
+
+    const lowStockCalls = mockNotifyRole.mock.calls.filter((call) => call[2].title === 'Low Stock');
+    expect(lowStockCalls).toHaveLength(1);
+    expect(lowStockCalls[0][2].message).toContain('Ibuprofen');
+    expect(lowStockCalls[0][2].message).toContain('Aspirin');
+    expect(result).toHaveLength(2);
+  });
+
   it('should not duplicate a NEAR_EXPIRY/EXPIRED alert for a batch that already has one ACTIVE', async () => {
     mockPrisma.medicationBatch.findMany.mockResolvedValue([
       {

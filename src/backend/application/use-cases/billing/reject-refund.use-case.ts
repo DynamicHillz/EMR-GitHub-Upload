@@ -5,7 +5,7 @@
  */
 
 import { PrismaClient } from '@prisma/client';
-import { NotFoundError, ValidationError } from '../../../shared/errors/AppError';
+import { NotFoundError, ValidationError, ConflictError } from '../../../shared/errors/AppError';
 
 export class RejectRefundUseCase {
   constructor(private prisma: PrismaClient) {}
@@ -27,9 +27,11 @@ export class RejectRefundUseCase {
       throw new ValidationError(`Cannot reject refund with status: ${refund.status}`);
     }
 
-    // Update refund status
-    const updatedRefund = await this.prisma.refund.update({
-      where: { id: refundId },
+    // Guarded on status, same as process-refund.use-case.ts — two admins
+    // acting on the same refund at once can otherwise both pass the check
+    // above and both write, one silently clobbering the other's result.
+    const updateResult = await this.prisma.refund.updateMany({
+      where: { id: refundId, tenantId, status: 'PENDING' },
       data: {
         status: 'REJECTED',
         rejectedById,
@@ -38,6 +40,10 @@ export class RejectRefundUseCase {
       }
     });
 
-    return updatedRefund;
+    if (updateResult.count === 0) {
+      throw new ConflictError('This refund was already approved or rejected by another request.');
+    }
+
+    return this.prisma.refund.findUniqueOrThrow({ where: { id: refundId } });
   }
 }

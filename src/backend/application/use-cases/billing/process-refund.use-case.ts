@@ -52,7 +52,11 @@ export class ProcessRefundUseCase {
 
       const current = await tx.invoice.findUniqueOrThrow({ where: { id: refund.invoiceId } });
       const newPaidAmount = Number(current.paidAmount) - Number(refund.amount);
-      const newBalance = Number(current.totalAmount) - newPaidAmount;
+      // current.balance, not totalAmount — see record-payment.use-case.ts.
+      // A refund gives money back, so it increases what's still outstanding
+      // by exactly the refunded amount; deriving from totalAmount instead
+      // would silently reintroduce any insurance-covered portion as owed.
+      const newBalance = Number(current.balance) + Number(refund.amount);
 
       // request-refund only validates a new request against the invoice's
       // *current* paidAmount, which doesn't move until a refund is actually

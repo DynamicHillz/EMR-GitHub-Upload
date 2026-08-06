@@ -1,8 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
-import { PrismaClient } from '@prisma/client';
 import { NotFoundError } from '../../shared/errors/AppError';
-
-const prisma = new PrismaClient();
+import { prisma } from '../../infrastructure/database/prisma.client';
 
 export class InsuranceController {
   // ==================== INSURANCE PROVIDERS (HMOs/NHIA) ====================
@@ -103,6 +101,38 @@ export class InsuranceController {
     }
   }
 
+  // Partial update — covers both correcting enrollment details (copay %,
+  // dates, plan type) and ending coverage early (isActive: false). No
+  // hard-delete, same reasoning as InsuranceProvider: a policy may already
+  // be referenced by past invoice line items' coverage math.
+  async updatePatientInsurance(req: Request, res: Response, next: NextFunction) {
+    try {
+      const tenantId = req.user!.tenantId;
+      const { patientId, policyId } = req.params;
+      const { policyNumber, groupNumber, planType, copayPercentage, validFrom, validTo, isActive } = req.body;
+
+      const existing = await prisma.patientInsurance.findFirst({ where: { id: policyId, tenantId, patientId } });
+      if (!existing) throw new NotFoundError('PatientInsurance', policyId);
+
+      const policy = await prisma.patientInsurance.update({
+        where: { id: policyId },
+        data: {
+          ...(policyNumber !== undefined && { policyNumber }),
+          ...(groupNumber !== undefined && { groupNumber }),
+          ...(planType !== undefined && { planType }),
+          ...(copayPercentage !== undefined && { copayPercentage }),
+          ...(validFrom !== undefined && { validFrom: new Date(validFrom) }),
+          ...(validTo !== undefined && { validTo: new Date(validTo) }),
+          ...(isActive !== undefined && { isActive }),
+        },
+        include: { provider: true }
+      });
+      res.json(policy);
+    } catch (error) {
+      next(error);
+    }
+  }
+
   // ==================== INSURANCE CLAIMS ====================
 
   async getClaims(req: Request, res: Response, next: NextFunction) {
@@ -142,19 +172,30 @@ export class InsuranceController {
 
       if (!existingClaim) throw new NotFoundError('InsuranceClaim', id);
 
+      // Settlement is tracked on the claim itself, not via Invoice/Payment —
+      // Invoice.balance already excludes the insurance-covered portion at
+      // generation time (it's the patient's own out-of-pocket share only),
+      // so there's no invoice balance for an insurance settlement to
+      // reduce. Idempotent: only stamps paidAmount/paidAt the first time a
+      // claim reaches PAID, so re-saving an already-paid claim doesn't
+      // reset its paid timestamp.
+      const isNewlyPaid = status === 'PAID' && existingClaim.status !== 'PAID';
+
       const claim = await prisma.insuranceClaim.update({
         where: { id },
         data: {
           status,
           amountApproved: amountApproved ? Number(amountApproved) : null,
           denialReason,
-          adjudicatedAt: ['APPROVED', 'DENIED', 'PARTIALLY_APPROVED'].includes(status) ? new Date() : null,
-          submittedAt: status === 'SUBMITTED' && !existingClaim.submittedAt ? new Date() : undefined
+          adjudicatedAt: ['APPROVED', 'DENIED', 'PARTIALLY_APPROVED', 'PAID'].includes(status) ? new Date() : null,
+          submittedAt: status === 'SUBMITTED' && !existingClaim.submittedAt ? new Date() : undefined,
+          ...(isNewlyPaid && {
+            paidAmount: Number(amountApproved ?? existingClaim.amountApproved ?? existingClaim.amountClaimed),
+            paidAt: new Date(),
+          }),
         }
       });
 
-      // If approved, update the invoice's paid amount automatically (or leave for manual payment application)
-      // Usually, it requires a bulk payment reconciliation, so we'll just return the claim
       res.json(claim);
     } catch (error) {
       next(error);

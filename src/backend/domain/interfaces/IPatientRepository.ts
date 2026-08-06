@@ -52,6 +52,7 @@ export interface PatientCreateData {
   };
   patientType?: 'PRIVATE' | 'HMO';
   hmoProvider?: string;
+  hmoProviderId?: string;
   hmoNumber?: string;
   nhisNumber?: string;
   consentGiven?: boolean; // US-PAT-006: Consent tracking
@@ -85,6 +86,7 @@ export interface PatientUpdateData {
   };
   patientType?: 'PRIVATE' | 'HMO';
   hmoProvider?: string;
+  hmoProviderId?: string;
   hmoNumber?: string;
   nhisNumber?: string;
 }

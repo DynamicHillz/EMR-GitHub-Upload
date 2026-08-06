@@ -14,6 +14,39 @@ import { logger } from '../../../config/logger';
 export class LoginUseCase {
   constructor(private prisma: PrismaClient) {}
 
+  // Every rejection branch below writes its own AuditLog row — previously
+  // only a *successful* login ever reached the compliance-facing audit
+  // trail; failed attempts, lockouts, and suspended-account/tenant hits only
+  // went to the Winston logger, invisible to the Audit Log page. Wrapped in
+  // its own try/catch (swallow + log) so a DB hiccup writing the audit row
+  // can never replace the real auth error the caller is supposed to see.
+  private async logAuditSafe(entry: {
+    userId: string | null;
+    tenantId: string;
+    action: string;
+    entityId: string | null;
+    metadata: any;
+    ipAddress?: string;
+    userAgent?: string;
+  }): Promise<void> {
+    try {
+      await this.prisma.auditLog.create({
+        data: {
+          userId: entry.userId,
+          tenantId: entry.tenantId,
+          action: entry.action,
+          entityType: 'USER',
+          entityId: entry.entityId,
+          metadata: JSON.stringify(entry.metadata),
+          ipAddress: entry.ipAddress || null,
+          userAgent: entry.userAgent || null,
+        },
+      });
+    } catch (err) {
+      logger.error('Failed to write login audit log:', err);
+    }
+  }
+
   async execute(dto: LoginUserDto, tenantId: string, requestMeta?: { ipAddress?: string; userAgent?: string }): Promise<LoginUserResponseDto> {
     try {
       // Reject login for a suspended/inactive clinic before even looking up
@@ -28,6 +61,15 @@ export class LoginUseCase {
 
       if (tenant && tenant.status !== 'ACTIVE') {
         logger.warn(`Login attempt for ${tenant.status} tenant ${tenantId}`);
+        await this.logAuditSafe({
+          userId: null,
+          tenantId,
+          action: 'LOGIN_FAILED',
+          entityId: null,
+          metadata: { attemptedEmail: dto.email, reason: 'tenant_suspended', tenantStatus: tenant.status },
+          ipAddress: requestMeta?.ipAddress,
+          userAgent: requestMeta?.userAgent,
+        });
         throw new Error(`This clinic account is ${tenant.status.toLowerCase()}. Please contact support.`);
       }
 
@@ -43,17 +85,44 @@ export class LoginUseCase {
 
       if (!user) {
         logger.warn(`Login attempt with non-existent email: ${dto.email}`);
+        await this.logAuditSafe({
+          userId: null,
+          tenantId,
+          action: 'LOGIN_FAILED',
+          entityId: null,
+          metadata: { attemptedEmail: dto.email, reason: 'no_such_user' },
+          ipAddress: requestMeta?.ipAddress,
+          userAgent: requestMeta?.userAgent,
+        });
         throw new Error('Invalid email or password');
       }
 
       // Check if account is locked
       if (user.lockedUntil && new Date() < user.lockedUntil) {
         const unlockTime = user.lockedUntil.toLocaleString();
+        await this.logAuditSafe({
+          userId: user.id,
+          tenantId: user.tenantId,
+          action: 'LOGIN_FAILED',
+          entityId: user.id,
+          metadata: { email: user.email, reason: 'account_locked', lockedUntil: user.lockedUntil },
+          ipAddress: requestMeta?.ipAddress,
+          userAgent: requestMeta?.userAgent,
+        });
         throw new Error(`Account is locked until ${unlockTime}. Please try again later.`);
       }
 
       // Check if account is active
       if (user.status !== 'ACTIVE') {
+        await this.logAuditSafe({
+          userId: user.id,
+          tenantId: user.tenantId,
+          action: 'LOGIN_FAILED',
+          entityId: user.id,
+          metadata: { email: user.email, reason: 'account_inactive', status: user.status },
+          ipAddress: requestMeta?.ipAddress,
+          userAgent: requestMeta?.userAgent,
+        });
         throw new Error(`Account is ${user.status.toLowerCase()}. Please contact administrator.`);
       }
 
@@ -82,6 +151,15 @@ export class LoginUseCase {
           await EmailService.sendAccountLockedEmail(user.email, user.firstName, lockedUntil);
 
           logger.warn(`Account locked for user ${user.email} due to ${newFailedAttempts} failed attempts`);
+          await this.logAuditSafe({
+            userId: user.id,
+            tenantId: user.tenantId,
+            action: 'ACCOUNT_LOCKED',
+            entityId: user.id,
+            metadata: { email: user.email, reason: 'too_many_failed_attempts', failedAttempts: newFailedAttempts, lockedUntil },
+            ipAddress: requestMeta?.ipAddress,
+            userAgent: requestMeta?.userAgent,
+          });
           throw new Error(
             `Account locked due to too many failed login attempts. Please try again in ${lockoutMinutes} minutes.`
           );
@@ -98,6 +176,15 @@ export class LoginUseCase {
           logger.warn(
             `Failed login attempt for ${user.email}. Attempts: ${newFailedAttempts}. Remaining: ${remainingAttempts}`
           );
+          await this.logAuditSafe({
+            userId: user.id,
+            tenantId: user.tenantId,
+            action: 'LOGIN_FAILED',
+            entityId: user.id,
+            metadata: { email: user.email, reason: 'invalid_password', failedAttempts: newFailedAttempts, remainingAttempts },
+            ipAddress: requestMeta?.ipAddress,
+            userAgent: requestMeta?.userAgent,
+          });
           throw new Error(
             `Invalid email or password. ${remainingAttempts} attempts remaining before account lockout.`
           );
@@ -155,6 +242,8 @@ export class LoginUseCase {
             email: user.email,
             timestamp: new Date().toISOString(),
           }),
+          ipAddress: requestMeta?.ipAddress || null,
+          userAgent: requestMeta?.userAgent || null,
         },
       });
 

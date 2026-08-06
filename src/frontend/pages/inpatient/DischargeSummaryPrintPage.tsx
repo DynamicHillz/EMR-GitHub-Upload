@@ -188,6 +188,37 @@ const DischargeSummaryPrintPage: React.FC = () => {
           </div>
         )}
 
+        {(summary.breastfeedingCounselingDone != null ||
+          summary.familyPlanningMethodDiscussed ||
+          summary.newbornDangerSignsCounseled != null ||
+          summary.postnatalFollowUpDate ||
+          summary.maternalConditionAtDischarge ||
+          summary.newbornConditionAtDischarge) && (
+          <div className="mb-8">
+            <h3 className="font-bold text-gray-800 uppercase tracking-wider text-xs mb-2">Maternal & Neonatal Outcome</h3>
+            <div className="bg-gray-50 border border-gray-200 p-4 rounded text-sm text-gray-700 grid grid-cols-2 gap-2">
+              {summary.maternalConditionAtDischarge && (
+                <><div className="text-gray-500">Maternal Condition:</div><div>{summary.maternalConditionAtDischarge}{summary.maternalConditionNotes ? ` — ${summary.maternalConditionNotes}` : ''}</div></>
+              )}
+              {summary.newbornConditionAtDischarge && (
+                <><div className="text-gray-500">Newborn Condition:</div><div>{summary.newbornConditionAtDischarge}{summary.newbornConditionNotes ? ` — ${summary.newbornConditionNotes}` : ''}</div></>
+              )}
+              {summary.breastfeedingCounselingDone != null && (
+                <><div className="text-gray-500">Breastfeeding Counseling:</div><div>{summary.breastfeedingCounselingDone ? 'Done' : 'Not done'}</div></>
+              )}
+              {summary.newbornDangerSignsCounseled != null && (
+                <><div className="text-gray-500">Newborn Danger Signs Counseling:</div><div>{summary.newbornDangerSignsCounseled ? 'Done' : 'Not done'}</div></>
+              )}
+              {summary.familyPlanningMethodDiscussed && (
+                <><div className="text-gray-500">Family Planning Discussed:</div><div>{summary.familyPlanningMethodDiscussed}</div></>
+              )}
+              {summary.postnatalFollowUpDate && (
+                <><div className="text-gray-500">Postnatal Follow-up Date:</div><div>{new Date(summary.postnatalFollowUpDate).toLocaleDateString()}</div></>
+              )}
+            </div>
+          </div>
+        )}
+
         <div className="mb-8">
           <h3 className="font-bold text-gray-800 uppercase tracking-wider text-xs mb-2">Medications to Take Home (TTO)</h3>
           {ttoMedications.length === 0 ? (

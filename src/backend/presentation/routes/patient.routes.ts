@@ -17,6 +17,7 @@ import {
   getPatientById,
   getPatientByPatientNumber,
   getPatientClinicalSummary,
+  getUnnamedNewborns,
   updatePatient,
   deletePatient,
 } from '../controllers/patient.controller';
@@ -62,6 +63,14 @@ router.get(
   '/patient-id/:patientId',
   CAN_VIEW_PATIENTS,
   asyncHandler(getPatientByPatientNumber)
+);
+
+// Must come before the /:id catch-all below, or Express would match
+// "unnamed-newborns" as an :id param and never reach this handler.
+router.get(
+  '/unnamed-newborns',
+  CAN_VIEW_PATIENTS,
+  asyncHandler(getUnnamedNewborns)
 );
 
 router.get(

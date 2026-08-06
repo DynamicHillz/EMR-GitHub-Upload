@@ -119,6 +119,49 @@ describe('Record Payment Integration', () => {
     });
   });
 
+  describe('Cash payment attribution', () => {
+    it('should reject a cash payment with no cashReceivedByName', async () => {
+      const invoice = await createTestInvoice(prisma, tenantId, patientId, cashierId, [
+        { description: 'Consultation', quantity: 1, unitPrice: 3000, amount: 3000 },
+      ]);
+
+      await expect(
+        useCase.execute({ invoiceId: invoice.id, amount: 3000, paymentMethod: 'CASH' }, tenantId, cashierId)
+      ).rejects.toThrow('name of the staff member who received the cash');
+
+      const dbInvoice = await prisma.invoice.findUnique({ where: { id: invoice.id } });
+      expect(Number(dbInvoice?.paidAmount)).toBe(0);
+    });
+
+    it('should accept a cash payment once cashReceivedByName is supplied, and store it on the payment', async () => {
+      const invoice = await createTestInvoice(prisma, tenantId, patientId, cashierId, [
+        { description: 'Consultation', quantity: 1, unitPrice: 3000, amount: 3000 },
+      ]);
+
+      const result = await useCase.execute(
+        { invoiceId: invoice.id, amount: 3000, paymentMethod: 'CASH', cashReceivedByName: 'Bisi Adeyemi' },
+        tenantId,
+        cashierId
+      );
+
+      expect((result.payment as any).cashReceivedByName).toBe('Bisi Adeyemi');
+    });
+
+    it('should not require cashReceivedByName for a non-cash payment method', async () => {
+      const invoice = await createTestInvoice(prisma, tenantId, patientId, cashierId, [
+        { description: 'Consultation', quantity: 1, unitPrice: 3000, amount: 3000 },
+      ]);
+
+      const result = await useCase.execute(
+        { invoiceId: invoice.id, amount: 3000, paymentMethod: 'BANK_TRANSFER', referenceNumber: 'REF-2' },
+        tenantId,
+        cashierId
+      );
+
+      expect((result.payment as any).cashReceivedByName).toBeNull();
+    });
+  });
+
   describe('Fraud prevention: approval thresholds', () => {
     it('should require an approver name once the cash approval threshold is met, and reject without one', async () => {
       // Default FraudPreventionSettings from createTestTenant leaves
@@ -128,7 +171,11 @@ describe('Record Payment Integration', () => {
       ]);
 
       await expect(
-        useCase.execute({ invoiceId: invoice.id, amount: 60000, paymentMethod: 'CASH' }, tenantId, cashierId)
+        useCase.execute(
+          { invoiceId: invoice.id, amount: 60000, paymentMethod: 'CASH', cashReceivedByName: 'Chidinma Okoro' },
+          tenantId,
+          cashierId
+        )
       ).rejects.toThrow('requires an approver name');
 
       // Invoice must be untouched by the rejected attempt
@@ -142,7 +189,13 @@ describe('Record Payment Integration', () => {
       ]);
 
       const result = await useCase.execute(
-        { invoiceId: invoice.id, amount: 60000, paymentMethod: 'CASH', approverName: 'Dr. Adaeze' },
+        {
+          invoiceId: invoice.id,
+          amount: 60000,
+          paymentMethod: 'CASH',
+          approverName: 'Dr. Adaeze',
+          cashReceivedByName: 'Chidinma Okoro',
+        },
         tenantId,
         cashierId
       );

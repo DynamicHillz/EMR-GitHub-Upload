@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { Save, Upload, Palette, DollarSign, Settings2, Building2, ShieldAlert } from 'lucide-react';
+import { Save, Upload, Palette, DollarSign, Settings2, Building2, ShieldAlert, KeyRound } from 'lucide-react';
 import { applyTheme } from '../utils/theme';
 import Dropdown from '../components/common/Dropdown';
 import { useAuth } from '../contexts/AuthContext';
+import { licenseService, LicenseStatusResult } from '../services/license.service';
 
 interface BrandingSettings {
   id: string;
@@ -35,6 +36,7 @@ interface BillingConfig {
   invoiceStartNumber: number;
   invoiceFooterText: string | null;
   termsAndConditions: string | null;
+  overstayGraceDays: number;
   bankName: string | null;
   accountNumber: string | null;
   accountName: string | null;
@@ -44,7 +46,7 @@ interface BillingConfig {
   mobileMoneyName: string | null;
 }
 
-type TabType = 'branding' | 'clinic' | 'billing' | 'fraud';
+type TabType = 'branding' | 'clinic' | 'billing' | 'fraud' | 'license';
 
 interface FraudPreventionSettings {
   cashApprovalThreshold: number;
@@ -80,7 +82,7 @@ const DEFAULT_FRAUD_SETTINGS: FraudPreventionSettings = {
   bankTransferApprovalThreshold: 100000,
   mobileMoneyApprovalThreshold: 75000,
   refundAutoApproveThreshold: null,
-  requireReceiptPhotoForCash: true,
+  requireReceiptPhotoForCash: false,
   requireReferenceForBankTransfer: true,
   requireReferenceForMobileMoney: true,
   duplicateDetectionEnabled: true,
@@ -181,6 +183,7 @@ const SettingsPage: React.FC = () => {
   const [invoiceStartNumber, setInvoiceStartNumber] = useState(1000);
   const [invoiceFooterText, setInvoiceFooterText] = useState('');
   const [termsAndConditions, setTermsAndConditions] = useState('');
+  const [overstayGraceDays, setOverstayGraceDays] = useState(2);
   const [bankName, setBankName] = useState('');
   const [accountNumber, setAccountNumber] = useState('');
   const [accountName, setAccountName] = useState('');
@@ -261,6 +264,34 @@ const SettingsPage: React.FC = () => {
     fetchSettings();
   }, []);
 
+  // License state
+  const [licenseStatus, setLicenseStatus] = useState<LicenseStatusResult | null>(null);
+  const [licenseTokenInput, setLicenseTokenInput] = useState('');
+  const [licenseSaving, setLicenseSaving] = useState(false);
+  const [licenseError, setLicenseError] = useState('');
+  const [licenseSuccess, setLicenseSuccess] = useState('');
+
+  useEffect(() => {
+    licenseService.getStatus().then(setLicenseStatus).catch(() => setLicenseStatus(null));
+  }, []);
+
+  const handleSaveLicense = async () => {
+    setLicenseSaving(true);
+    setLicenseError('');
+    setLicenseSuccess('');
+    try {
+      await licenseService.updateLicense(licenseTokenInput.trim());
+      setLicenseSuccess('License updated successfully.');
+      setLicenseTokenInput('');
+      const status = await licenseService.getStatus();
+      setLicenseStatus(status);
+    } catch (err: any) {
+      setLicenseError(err.response?.data?.message || 'Failed to update license.');
+    } finally {
+      setLicenseSaving(false);
+    }
+  };
+
   const fetchSettings = async () => {
     try {
       const token = localStorage.getItem('token');
@@ -309,6 +340,7 @@ const SettingsPage: React.FC = () => {
         setInvoiceStartNumber(config.invoiceStartNumber);
         setInvoiceFooterText(config.invoiceFooterText || '');
         setTermsAndConditions(config.termsAndConditions || '');
+        setOverstayGraceDays(config.overstayGraceDays ?? 2);
         setBankName(config.bankName || '');
         setAccountNumber(config.accountNumber || '');
         setAccountName(config.accountName || '');
@@ -411,6 +443,7 @@ const SettingsPage: React.FC = () => {
           invoiceStartNumber,
           invoiceFooterText: invoiceFooterText || null,
           termsAndConditions: termsAndConditions || null,
+          overstayGraceDays,
           bankName: bankName || null,
           accountNumber: accountNumber || null,
           accountName: accountName || null,
@@ -546,6 +579,18 @@ const SettingsPage: React.FC = () => {
           >
             <ShieldAlert className="w-5 h-5" />
             <span>Fraud Prevention</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('license')}
+            className={`py-4 px-1 border-b-2 font-medium text-sm flex items-center space-x-2 ${
+              activeTab === 'license'
+                ? 'border-blue-500 text-blue-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+            }`}
+          >
+            <KeyRound className="w-5 h-5" />
+            <span>License</span>
           </button>
         </nav>
       </div>
@@ -1194,6 +1239,26 @@ const SettingsPage: React.FC = () => {
               />
             </div>
           </div>
+
+          {/* Inpatient Settings */}
+          <div className="bg-white rounded-lg shadow-md p-6 space-y-4">
+            <h3 className="text-lg font-semibold text-gray-800 border-b pb-3">Inpatient Settings</h3>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Overstay Grace Period (days)</label>
+              <input
+                type="number"
+                value={overstayGraceDays}
+                onChange={(e) => setOverstayGraceDays(parseInt(e.target.value) || 0)}
+                min="0"
+                max="30"
+                className="w-full max-w-xs px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                Days after discharge before bed-space overstay charges start accruing for a patient whose bed is still being held (bill not yet settled).
+              </p>
+            </div>
+          </div>
           {/* Payment Gateway Configuration — SUPER_ADMIN only, both here and
               enforced server-side (billing-config.controller.ts). Hidden
               entirely for a plain ADMIN rather than shown-then-rejected. */}
@@ -1457,6 +1522,92 @@ const SettingsPage: React.FC = () => {
               <span>{saving ? 'Saving...' : 'Save Fraud Prevention Settings'}</span>
             </button>
           </div>
+        </div>
+      )}
+
+      {activeTab === 'license' && (
+        <div className="space-y-6">
+          <div className="bg-white rounded-lg shadow-md p-6 space-y-4">
+            <h3 className="text-lg font-semibold text-gray-800 border-b pb-3">Current Status</h3>
+            {!licenseStatus ? (
+              <p className="text-sm text-gray-500">Loading...</p>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="text-sm text-gray-600">Status</label>
+                  <p className={`font-medium ${
+                    licenseStatus.status === 'ACTIVE' ? 'text-green-700'
+                    : licenseStatus.status === 'GRACE' ? 'text-amber-700'
+                    : 'text-red-700'
+                  }`}>
+                    {licenseStatus.status}
+                  </p>
+                </div>
+                {licenseStatus.claims && (
+                  <>
+                    <div>
+                      <label className="text-sm text-gray-600">Clinic Name (on license)</label>
+                      <p className="font-medium">{licenseStatus.claims.clinicName}</p>
+                    </div>
+                    <div>
+                      <label className="text-sm text-gray-600">License Issued</label>
+                      <p className="font-medium">{licenseStatus.claims.licenseIssuedAt}</p>
+                    </div>
+                    <div>
+                      <label className="text-sm text-gray-600">Maintenance Valid Until</label>
+                      <p className="font-medium">
+                        {licenseStatus.claims.maintenanceExpiresAt}
+                        {licenseStatus.daysRemaining !== null && (
+                          <span className="text-gray-500 text-sm">
+                            {' '}({licenseStatus.daysRemaining >= 0
+                              ? `${licenseStatus.daysRemaining} day(s) remaining`
+                              : `${Math.abs(licenseStatus.daysRemaining)} day(s) overdue`})
+                          </span>
+                        )}
+                      </p>
+                    </div>
+                  </>
+                )}
+                {(licenseStatus.status === 'MISSING' || licenseStatus.status === 'INVALID') && (
+                  <p className="md:col-span-2 text-sm text-red-700">
+                    {licenseStatus.status === 'MISSING'
+                      ? 'No license has been entered for this installation yet.'
+                      : 'The stored license token could not be verified — it may be corrupted or tampered with.'}
+                  </p>
+                )}
+              </div>
+            )}
+            <p className="text-xs text-gray-500">
+              Clinical and billing features are never affected by license status — this is informational only.
+            </p>
+          </div>
+
+          {isSuperAdmin && (
+            <div className="bg-white rounded-lg shadow-md p-6 space-y-4">
+              <h3 className="text-lg font-semibold text-gray-800 border-b pb-3">Enter / Renew License</h3>
+              {licenseError && (
+                <div className="p-3 rounded-lg bg-red-50 text-red-800 text-sm border border-red-200">{licenseError}</div>
+              )}
+              {licenseSuccess && (
+                <div className="p-3 rounded-lg bg-green-50 text-green-800 text-sm border border-green-200">{licenseSuccess}</div>
+              )}
+              <textarea
+                value={licenseTokenInput}
+                onChange={(e) => setLicenseTokenInput(e.target.value)}
+                placeholder="Paste the license token provided by your vendor..."
+                rows={4}
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-mono text-xs"
+              />
+              <button
+                onClick={handleSaveLicense}
+                disabled={licenseSaving || !licenseTokenInput.trim()}
+                className="w-full md:w-auto px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center justify-center space-x-2"
+              >
+                <Save className="w-5 h-5" />
+                <span>{licenseSaving ? 'Saving...' : 'Save License'}</span>
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>

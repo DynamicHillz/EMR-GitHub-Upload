@@ -16,6 +16,7 @@ import { GetRevenueReportUseCase } from '../../application/use-cases/reports/get
 import { GetAppointmentNoShowReportUseCase } from '../../application/use-cases/reports/get-appointment-noshow-report.use-case';
 import { GetDiagnosisTrendsReportUseCase } from '../../application/use-cases/reports/get-diagnosis-trends-report.use-case';
 import { GetStockTurnoverReportUseCase } from '../../application/use-cases/reports/get-stock-turnover-report.use-case';
+import { GetNhmisMonthlyReturnReportUseCase } from '../../application/use-cases/reports/get-nhmis-monthly-return-report.use-case';
 import { getSafeErrorMessage } from '../../shared/utils/error-message.util';
 
 const getPatientVolumeReportUseCase = new GetPatientVolumeReportUseCase(prisma);
@@ -23,6 +24,7 @@ const getRevenueReportUseCase = new GetRevenueReportUseCase(prisma);
 const getAppointmentNoShowReportUseCase = new GetAppointmentNoShowReportUseCase(prisma);
 const getDiagnosisTrendsReportUseCase = new GetDiagnosisTrendsReportUseCase(prisma);
 const getStockTurnoverReportUseCase = new GetStockTurnoverReportUseCase(prisma);
+const getNhmisMonthlyReturnReportUseCase = new GetNhmisMonthlyReturnReportUseCase(prisma);
 
 const VALID_PERIODS: ReportPeriod[] = ['day', 'week', 'month'];
 
@@ -63,6 +65,23 @@ function parseRankingFilters(req: Request): { startDate: Date; endDate: Date; li
   }
 
   return { startDate, endDate, limit };
+}
+
+// NHMIS is inherently one calendar month, not a date-range/period pick —
+// a dedicated parser rather than reusing the two above.
+function parseMonthYear(req: Request): { month: number; year: number } {
+  const now = new Date();
+  const month = req.query.month ? parseInt(req.query.month as string, 10) : now.getMonth() + 1;
+  const year = req.query.year ? parseInt(req.query.year as string, 10) : now.getFullYear();
+
+  if (isNaN(month) || month < 1 || month > 12) {
+    throw new AppError('Invalid month — must be between 1 and 12', 400);
+  }
+  if (isNaN(year) || year < 2000 || year > 2100) {
+    throw new AppError('Invalid year', 400);
+  }
+
+  return { month, year };
 }
 
 export const getPatientVolumeReport = async (req: Request, res: Response) => {
@@ -147,5 +166,23 @@ export const getStockTurnoverReport = async (req: Request, res: Response) => {
   } catch (error: any) {
     logger.error('Error fetching stock turnover report:', error);
     return res.status(error.statusCode || 500).json({ success: false, message: getSafeErrorMessage(error, 'Failed to fetch stock turnover report') });
+  }
+};
+
+export const getNhmisMonthlyReturnReport = async (req: Request, res: Response) => {
+  try {
+    const tenantId = req.user?.tenantId;
+    if (!tenantId) {
+      return res.status(401).json({ success: false, message: 'Unauthorized' });
+    }
+
+    const { month, year } = parseMonthYear(req);
+    const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : undefined;
+    const result = await getNhmisMonthlyReturnReportUseCase.execute(tenantId, month, year, limit);
+
+    return res.status(200).json({ success: true, message: 'NHMIS monthly return retrieved successfully', data: result });
+  } catch (error: any) {
+    logger.error('Error fetching NHMIS monthly return:', error);
+    return res.status(error.statusCode || 500).json({ success: false, message: getSafeErrorMessage(error, 'Failed to fetch NHMIS monthly return') });
   }
 };

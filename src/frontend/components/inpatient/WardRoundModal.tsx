@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import InpatientService from '../../services/InpatientService';
-import { Pill, Plus, X, AlertCircle } from 'lucide-react';
+import { Pill, Plus, X } from 'lucide-react';
 import MedicationAutocomplete, { Medication } from '../common/MedicationAutocomplete';
 import { DURATION_OPTIONS, mapDosageFormToRoute } from '../../utils/prescriptionHelpers';
 import Dropdown from '../common/Dropdown';
 import TypeaheadTextField from '../common/TypeaheadTextField';
+import { useToast } from '../ToastContainer';
 
 interface WardRoundModalProps {
   admissionId: string;
@@ -34,6 +35,7 @@ const getRouteLabels = (route: string) => {
 };
 
 const WardRoundModal: React.FC<WardRoundModalProps> = ({ admissionId, onClose, onSuccess }) => {
+  const toast = useToast();
   const [formData, setFormData] = useState({
     notes: '',
     plan: '',
@@ -142,18 +144,17 @@ const WardRoundModal: React.FC<WardRoundModalProps> = ({ admissionId, onClose, o
         });
       });
 
-      const promises: Promise<any>[] = [
-        InpatientService.addWardRound(admissionId, {
-          notes: formData.notes,
-          plan: formData.plan,
-          medicationChanges
-        }),
-      ];
+      const wardRoundPromise = InpatientService.addWardRound(admissionId, {
+        notes: formData.notes,
+        plan: formData.plan,
+        medicationChanges
+      });
+      const otherPromises: Promise<any>[] = [];
 
       if (hasVitalsEntered) {
         const sys = vitals.systolicBP ? parseInt(vitals.systolicBP) : undefined;
         const dia = vitals.diastolicBP ? parseInt(vitals.diastolicBP) : undefined;
-        promises.push(
+        otherPromises.push(
           InpatientService.addVitalChart(admissionId, {
             temperature: vitals.temperature ? parseFloat(vitals.temperature) : undefined,
             systolicBP: sys,
@@ -166,7 +167,19 @@ const WardRoundModal: React.FC<WardRoundModalProps> = ({ admissionId, onClose, o
         );
       }
 
-      await Promise.all(promises);
+      const [wardRound] = await Promise.all([wardRoundPromise, ...otherPromises]);
+
+      // Surface any allergy/interaction/duplicate-therapy flags on a newly
+      // added medication (REQ-CLIN-7) — informational only, the ward round
+      // is already saved by this point, this doesn't block anything.
+      wardRound.medicationWarnings?.forEach(w => {
+        const parts: string[] = [];
+        if (w.allergyWarning) parts.push(`Allergy: ${w.allergyDetails.join(', ')}`);
+        if (w.interactionWarning) parts.push(`Interaction: ${w.interactionDetails.join(', ')}`);
+        if (w.duplicateWarning) parts.push(`Duplicate therapy: ${w.duplicateDetails.join(', ')}`);
+        toast.warning(`Warning: ${w.medicationName}`, parts.join(' — '));
+      });
+
       onSuccess();
     } catch (err: any) {
       setError(err.response?.data?.message || err.message || 'Failed to save ward round');

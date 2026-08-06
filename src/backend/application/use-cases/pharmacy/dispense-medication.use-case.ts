@@ -7,7 +7,7 @@
  */
 
 import { PrismaClient } from '@prisma/client';
-import { NotFoundError, ValidationError } from '../../../shared/errors/AppError';
+import { NotFoundError, ValidationError, ConflictError } from '../../../shared/errors/AppError';
 import { matchesDrugClassGroup } from '../../../shared/constants/drug-class-groups';
 import { checkDrugInteractions } from '../../services/drug-interaction-checker.service';
 
@@ -168,9 +168,11 @@ export class DispenseMedicationUseCase {
         },
       });
 
-      // Update prescription status
-      await tx.prescription.update({
-        where: { id: dto.prescriptionId },
+      // Update prescription status — guarded so two concurrent dispense
+      // requests for the same prescription can't both pass the earlier
+      // PENDING check and both deduct stock/create a dispensing record.
+      const prescriptionUpdateResult = await tx.prescription.updateMany({
+        where: { id: dto.prescriptionId, tenantId, status: 'PENDING' },
         data: {
           status: 'DISPENSED',
           dispensedAt: new Date(),
@@ -179,6 +181,9 @@ export class DispenseMedicationUseCase {
           expiryDate: batch.expiryDate,
         },
       });
+      if (prescriptionUpdateResult.count === 0) {
+        throw new ConflictError('This prescription was already dispensed — please refresh and check its current status.');
+      }
 
       return { dispensingRecord, batch };
     });

@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import InvoiceDetail from '../../components/billing/InvoiceDetail';
 import PaymentForm from '../../components/billing/PaymentForm';
 import billingService from '../../services/billing.service';
-import { Invoice } from '../../types/billing.types';
+import { Invoice, Payment } from '../../types/billing.types';
 
 const InvoiceDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -23,10 +23,15 @@ const InvoiceDetailPage: React.FC = () => {
     }
   };
 
-  const handlePaymentSuccess = () => {
+  const handlePaymentSuccess = (payment: Payment) => {
     setShowPaymentModal(false);
     setInvoice(null);
-    window.location.reload();
+    // Same-tab navigation, not window.open: a new-tab/window request this
+    // long after the triggering click (past the async recordPayment call)
+    // is exactly what browsers' popup blockers silently swallow. Navigating
+    // the current tab is never blocked, so the receipt reliably shows up
+    // and auto-prints (see ReceiptPrintPage).
+    navigate(`/billing/payments/${payment.id}/receipt`);
   };
 
   if (!id) {
@@ -43,7 +48,7 @@ const InvoiceDetailPage: React.FC = () => {
 
       {/* Payment Modal */}
       {showPaymentModal && invoice && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4 overflow-y-auto">
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-start justify-center z-50 p-4 overflow-y-auto">
           <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full my-8">
             <div className="p-6">
               <PaymentForm

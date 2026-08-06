@@ -9,7 +9,7 @@ SSMC EMR is an Electronic Medical Records system for private clinics in emerging
 **⚠️ Electron desktop app is no longer supported (decided 2026-07-24).** Do not build new features against `src/electron/`, don't fix the broken Electron entry point (see old Known Issues), and don't route users toward `npm run dev:electron`/`build:electron`. The offline-first/local-SQLite/sync-engine framing below is legacy context explaining *why* certain backend pieces (SyncDevice, SyncQueue, the sync routes) exist — treat them as dead/deprioritized weight, not a direction to keep building in, unless the user explicitly revives that effort.
 
 **Key Characteristics**:
-- Multi-tenant SaaS supporting 100+ independent clinics
+- **Business model (corrected 2026-08-01): licensed on-premise software, not a cloud SaaS subscription.** Each clinic gets its own on-premise installation (implementation fee + license + annual maintenance fee), not a shared hosted instance — see `CLINIC_DEPLOYMENT_CHECKLIST.md`, which already walks through standing up one physical server per clinic. The multi-tenant DB schema (`tenantId` on every model) is *not* being removed for this — an on-premise install simply runs with a single tenant row. Don't propose cloud-multi-tenant-SaaS-shaped features (self-service signup, usage-based billing, a central dashboard managing many clinics from one place) unless explicitly asked.
 - Offline-first with bi-directional cloud sync (real code exists; see Known Issues — parts are broken/inactive, not just "planned")
 - PostgreSQL (cloud via Supabase) + SQLite (local, via `better-sqlite3`; SQLCipher encryption is likely non-functional — see Known Issues)
 - 8 user roles (from `UserRole` enum in `prisma/schema.prisma`): SUPER_ADMIN, ADMIN, DOCTOR, NURSE, LAB_TECH, PHARMACIST, CASHIER, RECEPTIONIST. The frontend RBAC also references a `MANAGER` role in places that isn't in this enum — treat as a possible latent bug/future addition, not a real role, until reconciled.
@@ -109,7 +109,7 @@ src/backend/
 - `billing/` — service catalog CRUD, invoicing, payments, outstanding/balance, full refund workflow (request/approve/reject/process/get-refund-requests), gateway payment initiate/verify
 - `lab/` — dictionary CRUD, test queue, results submit/review, specimen/status updates
 - `pharmacy/` — medications, batches, drug-interaction checks, dispensing, labels, stock alerts, inventory, prescription queue (fully built out, not partial)
-- `interoperability/` — FHIR patient export, DHIS2 aggregate sync
+- `interoperability/` — FHIR patient export (real, tested, read-only), DHIS2 aggregate sync (real push implementation as of 2026-08-01 — see Known Issues & Technical Debt item 7), config get/update, sync history
 - `tenant/` — billing-config, branding get/update
 - `user/` — create, update, get, list, change-password, deactivate/reactivate/suspend
 
@@ -295,7 +295,7 @@ DEFAULT_TENANT_ID="clinic-001"
 # Security
 BCRYPT_ROUNDS=12
 RATE_LIMIT_WINDOW_MS=60000
-RATE_LIMIT_MAX_REQUESTS=100
+RATE_LIMIT_MAX_REQUESTS=400
 
 # Sync
 SYNC_INTERVAL_MS=900000  # 15 minutes
@@ -475,6 +475,7 @@ Re-audited 2026-07-24 — several items below have changed status since this fil
 4. **Dependency injection**: Still direct instantiation everywhere (`new SomeUseCase(prisma)` in controllers) — no DI container. This is consistent, not itself a bug, but means the "Critical Architecture Rules" above only fully apply to the patient/appointment/consultation/user domains (see Backend Architecture section).
 5. ~~**Test coverage is narrow**~~ — **effectively closed 2026-07-27**: every backend domain now has co-located unit tests — `patient/`, `consultation/`, `appointment/` (`book`/`cancel`/`check-in`; `get-appointments`/`get-waiting-queue` are thin reads, left uncovered), `auth/` (`logout`/`refresh-token`/`forgot-password`; `login`/`reset-password` have integration coverage instead — see below), and, added in one pass on 2026-07-27, full coverage of every use-case in `pharmacy/` (19 files, 116 tests), `lab/` (9 files, 81 tests), `user/` (8 files, 45 tests), `interoperability/` (2 files) and `tenant/` (9 files) (65 tests combined) — 474 total tests across 70 suites, up from 167. Billing use-cases remain the one domain without co-located unit tests, though they have the heaviest integration coverage of anything in the codebase (payment-processing, record-payment, refund-processing, gateway-payment, generate-invoice — see the integration list below). There are 11 integration test files (`src/backend/__tests__/integration/`, verified 2026-07-27): patient-registration, login, reset-password, payment-processing, record-payment, refund-processing, gateway-payment, generate-invoice, dispense-medication, check-drug-interactions, submit-lab-results.
 6. ~~**Root directory script sprawl**~~ — **partially addressed 2026-07-30**: `old-scripts/`, `doc/`, `docs/`, and `sql/` (110 files of superseded scripts and stale planning/status docs) were removed from the repo for portfolio cleanliness. The dozens of undocumented one-off `.js`/`.ts` scripts at repo root and the untracked `scratch/` directory are unaffected by this — they were never committed in the first place (see Utility Scripts section), so they don't appear on GitHub but still clutter the local working directory.
+7. ~~**DHIS2 aggregate sync is a payload-generation mock**~~ — **fixed 2026-08-01**: DHIS2 push is now a real implementation, not a mock. `Dhis2Client` (`infrastructure/external/dhis2.client.ts`) makes a genuine `POST {baseUrl}/api/dataValueSets` with Basic Auth, and classifies every outcome (`SUCCESS`/`WARNING` from DHIS2, or `REJECTED`/`AUTH_ERROR`/`NETWORK_ERROR` for a failed attempt) rather than assuming success. Config is fully per-tenant (`Tenant.dhis2Enabled/dhis2BaseUrl/dhis2Username/dhis2Password/dhis2OrgUnitId` + one data-element-UID field per metric + a shared `dhis2CategoryOptionCombo`), editable in Settings via `GET`/`PUT /api/interoperability/dhis2/config` — `orgUnit` is a real configured DHIS2 UID now, not `tenantId` reused, and data elements are real UIDs, not placeholder strings. `dhis2Password` is encrypted at rest (`infrastructure/security/encryption.util.ts`, AES-256-GCM, key from `ENCRYPTION_KEY` env var) and never returned by the GET endpoint — deliberately not copying the payment-gateway-secret pattern, which stores those plaintext and returns them raw. Every sync attempt (including ones that never reach DHIS2, e.g. missing config) is persisted to a new `Dhis2SyncLog` model and viewable via `GET /api/interoperability/dhis2/history` and a Sync History table on `InteroperabilityPage.tsx`. The `severeMalnutrition` metric bug is also fixed: it now queries `Triage.muac` (the real field) instead of the nonexistent `Consultation.muac`. **Still v1-scoped, not gaps**: no scheduled/automatic sync — manual trigger only (`scheduler.service.ts` has no DHIS2 job); no live DHIS2 instance has been tested against yet (only DHIS2's public demo server or a real facility instance would prove this end-to-end) — don't claim a specific clinic's DHIS2 submission has been verified until that's actually been done.
 
 **No longer true — do not repeat these claims**: "Pharmacy routes temporarily disabled" (pharmacy is fully mounted and wired at `/api/pharmacy` with a complete 12-use-case module). Don't describe Electron as "not yet implemented" or "in progress" — it was implemented, then explicitly deprecated (2026-07-24); it's not a future task. Don't describe sync-conflict handling as broken or the sync worker as dead-but-present — see the corrections in the Offline Sync Strategy section above: `SyncConflict` is a real, working model, `sync.worker.ts` no longer exists in the repo at all, and the web-native offline-sync stack (`offlineQueue.ts`/`offlineCache.ts`/`offlineSync.ts`/`sync.controller.ts`) is active, maintained functionality per an explicit "work 100% offline" product direction — not legacy weight left over from the deprecated Electron story.
 
@@ -560,8 +561,36 @@ The pre-existing loose `prisma/migrations/manual_pharmacy_migration.sql` is left
 
 - Runs `pg_dump` (custom compressed format, `-F c`) against `DIRECT_URL` (a one-shot dump shouldn't compete with the app's pooled `connection_limit`, and `pg_dump` needs a direct connection anyway).
 - Writes timestamped files to `backups/` (gitignored — contains patient data) as `ssmc_emr_<ISO-timestamp>.dump`.
-- Prunes any file older than 14 days on every run (edit `RETENTION_DAYS` in the script to change this).
+- Prunes any file older than 14 days on every run (edit `RETENTION_DAYS` in the script to change this — also prunes any orphaned `.dump.enc` staging file from a failed off-site upload, see below).
 - Requires the PostgreSQL `bin/` directory (e.g. `C:\Program Files\PostgreSQL\16\bin`) on `PATH` so `pg_dump`/`pg_restore` resolve without a hardcoded path.
+
+**Off-site copy — Backblaze B2 and/or Google Drive, added 2026-08-05, Google Drive added 2026-08-06.** Local-only backups share a single point of failure with the live database (disk failure, theft, fire). After the local dump succeeds, the script encrypts it once (AES-256-GCM via Node's built-in `crypto`, key derived from a passphrase — see `scripts/lib/backup-crypto.js`) and then attempts **whichever off-site provider(s) are actually configured in `.env` — B2, Google Drive, both, or neither** — via `rclone`, verifying each upload by checking the remote object's size matches before cleaning up the local encrypted staging file. Patient data is never uploaded in plaintext to either provider. This isn't a "pick one" choice baked into the code — a clinic can run either, both (for extra redundancy), or upgrade from one to the other later just by adding/removing env vars.
+
+This step is **additive, not a hard dependency** — if no provider is configured, it's skipped with a clear warning and the local backup completes exactly as before. A local backup succeeding does NOT imply the off-site copy succeeded — check the log for `OFF-SITE BACKUP FAILED (<provider>)` separately from the main `Backup complete` line; each provider fails independently, so one being misconfigured doesn't block the other.
+
+**Option A — Backblaze B2** (static API key, simpler one-time setup):
+1. Install [rclone](https://rclone.org/downloads/) and put it on `PATH` (same treatment as the PostgreSQL `bin/` requirement above) — required for either provider.
+2. Create a Backblaze account and a bucket (e.g. `ssmc-emr-backups`), then an Application Key scoped to just that bucket (Backblaze console → App Keys → Add a New Application Key).
+3. On the bucket, add a **Lifecycle Rule** to delete files older than 90 days — off-site retention is intentionally longer than the 14-day local window (storage is a few cents/month at this volume either way). This is a one-time bucket setting, not something the script manages.
+4. Set in `.env`: `B2_BUCKET`, `B2_APPLICATION_KEY_ID`, `B2_APPLICATION_KEY`.
+
+**Option B — Google Drive** (a clinic may already have this account; OAuth2 setup, a few extra manual steps):
+
+*Corrected 2026-08-05, verified against a real setup*: an earlier version of this section said rclone's own built-in shared OAuth client was "fine... only worth revisiting if rate-limiting is ever actually hit." That was wrong — setting this up for real, `rclone` printed an explicit warning that the shared client_id **is being retired and will stop working during 2026**. A dedicated OAuth client is the real requirement, not an optional upgrade. Steps below reflect that.
+
+1. Install rclone (as above) if not already done.
+2. **Create a dedicated OAuth client** (Google Cloud Console, https://console.cloud.google.com/):
+   - Create a project (any name, e.g. "SSMC EMR Backups").
+   - APIs & Services → Library → enable the **Google Drive API**.
+   - APIs & Services → OAuth consent screen → User type **External** (or **Internal** for a Google Workspace account) → fill in the required fields → leave publishing status as **Testing** (no need to submit for Google's verification) → under **Test users**, add the Google account that will own the backups — apps in Testing mode reject sign-in from any email not explicitly listed here, and this is the step most likely to get missed (it did, the first time, here).
+   - APIs & Services → Credentials → Create Credentials → OAuth client ID → Application type **Desktop app** → Create. Copy the **Client ID** and **Client Secret** it shows.
+3. Set `GDRIVE_CLIENT_ID` and `GDRIVE_CLIENT_SECRET` in `.env` to those two values.
+4. Run `rclone authorize "drive" "<client id>" "<client secret>"` **on the clinic server**, following the browser prompt to sign into the Google account added as a test user above. It prints a JSON blob to the terminal — this is a real login token; it cannot be generated by a script, and it's tied to the client used to request it (re-running a bare `rclone authorize "drive"` later would silently go back to the shared client).
+5. Set `GDRIVE_RCLONE_TOKEN` in `.env` to that exact JSON blob (single line, keep the quotes).
+6. Optional: create a "SSMC EMR Backups" folder in Drive, open it, copy the folder ID out of the URL, and set `GDRIVE_FOLDER_ID` — otherwise backups land in Drive root.
+7. Unlike B2, plain Google Drive has no server-side "delete after N days" setting — the script prunes Drive backups older than 90 days itself, after each successful upload (`rclone delete --min-age 90d`), rather than relying on a platform feature that doesn't exist here.
+
+**Either way**, also set `BACKUP_ENCRYPTION_PASSPHRASE` in `.env` (a long random passphrase — losing this makes every off-site backup permanently undecryptable, same risk profile as the license private key), then run `node scripts/backup-database.js` manually once and confirm the log shows `Off-site backup verified (<provider>): ...` before trusting the nightly schedule with it.
 
 **Manual run:**
 ```bash
@@ -581,6 +610,17 @@ Check on it periodically with `Get-ScheduledTask -TaskName "SSMC EMR Database Ba
 
 **Restore procedure:**
 ```bash
+# If restoring from an off-site copy rather than a local backups/ file,
+# download and decrypt it first — from B2:
+rclone copy ssmcb2:<bucket>/ssmc_emr_<timestamp>.dump.enc .
+# ...or from Google Drive:
+rclone copy ssmcgdrive:ssmc_emr_<timestamp>.dump.enc .
+
+node scripts/decrypt-backup.js ssmc_emr_<timestamp>.dump.enc ssmc_emr_<timestamp>.dump
+# (needs BACKUP_ENCRYPTION_PASSPHRASE in .env and the same RCLONE_CONFIG_*
+# env vars backup-database.js uses for whichever provider you're restoring
+# from — see backupToB2()/backupToGoogleDrive() in that script.)
+
 # List contents of a backup without restoring anything (sanity check):
 pg_restore --list backups/ssmc_emr_<timestamp>.dump
 
@@ -630,7 +670,8 @@ Re-verified against code 2026-07-24 (previous version of this section was signif
 - ✅ Pharmacy — fully wired (medications, batches, drug-interaction checks, dispensing, stock alerts, inventory), not partial
 - ✅ Inpatient/Ward management (admissions, bed transfers, discharge summaries, vital/fluid/transfusion/blood-sugar charts)
 - ✅ Triage, ANC/immunization (MCH), audit log viewer, tenant branding/billing-config
-- ✅ Interoperability (FHIR patient export, DHIS2 aggregate sync)
+- ✅ Maternity/newborn continuity (added 2026-08-06, closing gaps found in an obstetrician-positioning audit): on a live birth, `record-delivery-outcome.use-case.ts` optionally registers the newborn as their own `Patient` (synthetic placeholder phone/name — `Patient.phone` is required+unique and a newborn has none — plus a `motherPatientId` self-relation and a `NextOfKin` row pointing at the mother), which the existing "Immunizations Due" worklist now picks up same-day via a computed-on-read diff against `ImmunizationSchedule` (no placeholder `PatientImmunization` rows — that model requires `administeredById`/`administeredAt`, i.e. it represents a dose actually given). A new `PostnatalVisit` model + `/api/postnatal` (labor-style use-cases, not ANC's raw-controller pattern) covers the WHO/Nigeria 4-contact PNC schedule (24h/day3/week1/week6), with its own computed-on-read "Postnatal Care Due" worklist. Danger-sign staff notifications (`NotificationService.notifyRole(['DOCTOR','NURSE'])`, same pattern `record-partograph-observation.use-case.ts` already used) now also fire from delivery outcomes (possible PPH/stillbirth/low APGAR/resuscitation) and ANC visits (BP/proteinuria/FHR) — previously only the partograph fired one; the on-screen banners in those forms were informational-only and reached nobody not looking at that screen. `DischargeSummary` gained nullable maternity fields (breastfeeding/family-planning/newborn-danger-sign counseling, postnatal follow-up date, maternal/newborn condition), shown in `DischargeModal`/`DischargeSummaryPrintPage` only when the admission has a linked `LaborRecord`. **Scoped to singleton births** — `LaborRecord`'s baby fields are single-valued; twin/multiple-gestation delivery outcomes would need a one-row-per-baby redesign, not done here.
+- ✅ Interoperability — FHIR patient export (real, tested, read-only) and DHIS2 aggregate sync (real push, per-tenant config, encrypted credentials, sync history — fixed 2026-08-01, see Known Issues & Technical Debt item 7). DHIS2 is manual-trigger-only for now (no scheduled auto-sync) and hasn't been proven against a live DHIS2 instance yet.
 - ✅ Fraud prevention checks on payments
 - ✅ Web-native offline-first sync (2026-07-27 correction — previously miscategorized as deprecated below): IndexedDB write queue + encrypted read cache on the frontend, `SyncDevice`/`SyncQueue`/`SyncConflict` + optimistic-concurrency on the backend. Actively maintained per an explicit "work 100% offline, network optional" product direction — not legacy weight.
 
@@ -642,6 +683,7 @@ Re-verified against code 2026-07-24 (previous version of this section was signif
 - ⏳ Reporting & analytics
 - ⏳ API documentation (Swagger)
 - ⏳ Test coverage — thin outside patient/consultation unit tests and the 11 integration tests (see Known Issues & Technical Debt above for the current list)
+- ⏳ DHIS2 aggregate sync — currently a mock with no real HTTP push (see Known Issues & Technical Debt item 7); a real implementation needs DHIS2 credentials/config, real data-element/org-unit UID mapping, error handling for rejected/partial submissions, and a fix for the broken `severeMalnutrition` metric before it can be called working.
 
 ## Important Files to Reference
 
@@ -653,3 +695,4 @@ Re-verified against code 2026-07-24 (previous version of this section was signif
 - Setup guide: `README.md` (rewritten 2026-07-30 to reflect actual current state — the old version described a fictional Electron/Supabase/Zustand stack that never matched reality; `docs/`, `doc/`, and `sql/` — all stale planning/status docs and superseded manual-SQL setup scripts — were removed from the repo in the same pass, for portfolio cleanliness. `SUPABASE_CHECKLIST.md`/`INSTALL_POSTGRESQL.md` no longer exist; if you need the old Supabase-era history, it's in git history, not the working tree.)
 - **New clinic server setup**: `CLINIC_DEPLOYMENT_CHECKLIST.md` (added 2026-07-27) — the ordered, copy-pasteable checklist for standing up a brand-new physical machine as the real server (TLS certs, PM2 boot recovery, backups, workstation trust distribution, reboot test). Everything up to this point in the engagement was proven on a developer's PC, not the real target — use this doc, not ad-hoc memory of those steps, when the real machine is actually set up.
 - **Production incident response**: `INCIDENT_RUNBOOK.md` (added 2026-07-31) — the five most likely live-clinic failure modes (app down, login/network errors, reboot didn't recover, database down, data loss), each with tested diagnosis/fix steps. Two corrections already baked in from live testing, not just written from assumption: (1) PM2's `autorestart` self-heals a hard crash in seconds with zero manual action — a manual `pm2 restart` is only needed for a hang (process alive but unresponsive), not a crash; (2) once a stopped PostgreSQL service is restarted, the app reconnects on its own — no app restart needed. Also covers the update/rollback procedure for pushing changes to a live clinic. `SUPPORT_TERMS.md` (same date) is the companion business-terms draft — response times, support scope, and what the clinic is responsible for in return — explicitly flagged as needing real legal review before use, not a finished contract.
+- **Licensing** (added 2026-08-01): `LICENSING.md` — vendor-facing (not clinic-facing) doc covering the one-time RSA keypair setup, how to issue/renew a clinic's license via `scripts/generate-license.ts`, and what to do if the private key is ever lost. A license is an RS256-signed JWT stored in `Tenant.licenseToken`, verified against the committed `config/license-public-key.pem` (the private half is gitignored, never committed — see `.gitignore`). Enforcement is deliberately soft everywhere: a missing/invalid/lapsed license only ever shows a banner to SUPER_ADMIN/ADMIN (`MainLayout.tsx`, driven by `GET /api/license/status`) — no clinical or billing feature is ever blocked for a licensing reason. Renewal/status editing lives at Settings > License, SUPER_ADMIN-only for writes.

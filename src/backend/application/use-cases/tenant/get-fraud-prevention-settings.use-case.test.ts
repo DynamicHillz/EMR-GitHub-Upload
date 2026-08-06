@@ -77,7 +77,7 @@ describe('GetFraudPreventionSettingsUseCase', () => {
       bankTransferApprovalThreshold: 100000,
       mobileMoneyApprovalThreshold: 75000,
       refundAutoApproveThreshold: null,
-      requireReceiptPhotoForCash: true,
+      requireReceiptPhotoForCash: false,
       requireReferenceForBankTransfer: true,
       requireReferenceForMobileMoney: true,
       duplicateDetectionEnabled: true,

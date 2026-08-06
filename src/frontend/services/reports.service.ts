@@ -13,6 +13,8 @@ import {
   DiagnosisTrendsReport,
   StockTurnoverReport,
   NoShowReport,
+  NhmisMonthlyReturnParams,
+  NhmisMonthlyReturnReport,
 } from '../types/reports.types';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || `${window.location.protocol}//${window.location.hostname}:3000/api`;
@@ -75,6 +77,12 @@ class ReportsService {
   async getNoShowRate(params: ReportDateParams): Promise<NoShowReport> {
     const { data } = await this.api.get<ApiResponse<NoShowReport>>('/no-shows', { params });
     if (!data.data) throw new Error('Failed to fetch no-show report');
+    return data.data;
+  }
+
+  async getNhmisMonthlyReturn(params: NhmisMonthlyReturnParams): Promise<NhmisMonthlyReturnReport> {
+    const { data } = await this.api.get<ApiResponse<NhmisMonthlyReturnReport>>('/nhmis-monthly-return', { params });
+    if (!data.data) throw new Error('Failed to fetch NHMIS monthly return');
     return data.data;
   }
 }

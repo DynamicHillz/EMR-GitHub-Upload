@@ -31,8 +31,23 @@ export const immunizationService = {
     return response.data;
   },
 
-  getOverdue: async (withinDays: number = 7): Promise<any[]> => {
-    const response = await axios.get(`${API_URL}/immunization/overdue?withinDays=${withinDays}`, getAuthHeaders());
-    return response.data.data || [];
+  getOverdue: async (
+    withinDays: number = 7,
+    page: number = 1,
+    limit: number = 50
+  ): Promise<{ doses: any[]; page: number; totalPages: number }> => {
+    const response = await axios.get(
+      `${API_URL}/immunization/overdue?withinDays=${withinDays}&page=${page}&limit=${limit}`,
+      getAuthHeaders()
+    );
+    return {
+      doses: response.data.data || [],
+      page: response.data.page || 1,
+      totalPages: response.data.totalPages || 1,
+    };
+  },
+
+  dismissDue: async (patientId: string, scheduleId: string, data: { reason: string; reasonNotes?: string }): Promise<void> => {
+    await axios.post(`${API_URL}/immunization/due/${patientId}/${scheduleId}/dismiss`, data, getAuthHeaders());
   }
 };

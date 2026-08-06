@@ -10,6 +10,7 @@
  */
 
 import { PrismaClient } from '@prisma/client';
+import { NotFoundError } from '../../../shared/errors/AppError';
 
 export interface ActiveMedicationDto {
   medicationName: string;
@@ -34,6 +35,23 @@ export class GetPatientClinicalSummaryUseCase {
   constructor(private prisma: PrismaClient) {}
 
   async execute(patientId: string, tenantId: string): Promise<PatientClinicalSummaryDto> {
+    // A nonexistent or wrong-tenant id previously fell straight through to
+    // the queries below and came back as an empty (but 200 OK) summary —
+    // indistinguishable from "this real patient just has no active meds or
+    // diagnoses yet". A genuine 404 is what a bad id should actually produce.
+    const patient = await this.prisma.patient.findFirst({
+      where: {
+        id: patientId,
+        tenantId,
+        // @ts-ignore - Temporary fix for schema alignment
+        isDeleted: false,
+      },
+      select: { id: true },
+    });
+    if (!patient) {
+      throw new NotFoundError('Patient', patientId);
+    }
+
     const [prescriptions, diagnoses] = await Promise.all([
       this.prisma.prescription.findMany({
         where: {

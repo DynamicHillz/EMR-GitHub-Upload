@@ -20,6 +20,7 @@ describe('CreateLabDictionaryItemUseCase', () => {
       },
       labParameter: {
         create: jest.fn(),
+        findFirst: jest.fn().mockResolvedValue({ id: 'existing-param', tenantId }),
       },
       labTestParameter: {
         create: jest.fn(),
@@ -115,6 +116,20 @@ describe('CreateLabDictionaryItemUseCase', () => {
     expect(mockPrisma.labTestParameter.create).toHaveBeenCalledWith({
       data: { testId: createdTest.id, parameterId: 'existing-param', displayOrder: 3 },
     });
+  });
+
+  it('should reject linking an existing parameter id that does not belong to this tenant', async () => {
+    mockPrisma.labParameter.findFirst.mockResolvedValue(null);
+
+    await expect(
+      useCase.execute(tenantId, {
+        name: 'CBC',
+        category: 'Hematology',
+        price: 500,
+        parameters: [{ id: 'someone-elses-param' }],
+      })
+    ).rejects.toThrow('Lab parameter not found or unauthorized');
+    expect(mockPrisma.labTestParameter.create).not.toHaveBeenCalled();
   });
 
   it('should fall back to array index for displayOrder when not provided', async () => {

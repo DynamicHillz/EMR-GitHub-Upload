@@ -43,6 +43,9 @@ export class GetBillingConfigUseCase {
         invoiceFooterText: true,
         termsAndConditions: true,
 
+        // Inpatient Settings
+        overstayGraceDays: true,
+
         // Bank Details
         bankName: true,
         accountNumber: true,

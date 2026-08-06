@@ -7,7 +7,8 @@ const inpatientService = new InpatientService();
 export class InpatientController {
   async getWards(req: Request, res: Response) {
     try {
-      const wards = await inpatientService.getWards(req.user!.tenantId);
+      const status = req.query.status as string | undefined;
+      const wards = await inpatientService.getWards(req.user!.tenantId, status);
       res.json(wards);
     } catch (error: any) {
       res.status(500).json({ message: getSafeErrorMessage(error, 'Error fetching wards') });
@@ -39,6 +40,15 @@ export class InpatientController {
       res.status(204).send();
     } catch (error: any) {
       res.status(400).json({ message: getSafeErrorMessage(error, 'Error deleting ward') });
+    }
+  }
+
+  async reactivateWard(req: Request, res: Response) {
+    try {
+      const ward = await inpatientService.reactivateWard(req.user!.tenantId, req.params.id);
+      res.json(ward);
+    } catch (error: any) {
+      res.status(400).json({ message: getSafeErrorMessage(error, 'Error reactivating ward') });
     }
   }
 
@@ -122,6 +132,27 @@ export class InpatientController {
       res.json(admission);
     } catch (error: any) {
       res.status(400).json({ message: getSafeErrorMessage(error, 'Error discharging patient') });
+    }
+  }
+
+  async confirmBedVacated(req: Request, res: Response) {
+    try {
+      const admission = await inpatientService.confirmBedVacated(
+        req.user!.tenantId,
+        req.params.id
+      );
+      res.json(admission);
+    } catch (error: any) {
+      res.status(400).json({ message: getSafeErrorMessage(error, 'Error confirming bed vacated') });
+    }
+  }
+
+  async getOverstayStatus(req: Request, res: Response) {
+    try {
+      const items = await inpatientService.getOverstayStatus(req.user!.tenantId);
+      res.json(items);
+    } catch (error: any) {
+      res.status(500).json({ message: getSafeErrorMessage(error, 'Error fetching overstay status') });
     }
   }
 

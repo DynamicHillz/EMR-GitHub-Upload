@@ -29,6 +29,9 @@ export interface UpdateBillingConfigDto {
   invoiceFooterText?: string;
   termsAndConditions?: string;
 
+  // Inpatient Settings
+  overstayGraceDays?: number; // Days after discharge before bed-space overstay charges start accruing
+
   // Bank Details
   bankName?: string;
   accountNumber?: string;

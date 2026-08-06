@@ -92,6 +92,7 @@ export class GetPatientUseCase {
       nhisNumber: patient.nhisNumber,
       patientType: patient.patientType,
       hmoProvider: patient.hmoProvider,
+      hmoProviderId: patient.hmoProviderId,
       hmoNumber: patient.hmoNumber,
       photoUrl: patient.photoUrl,
       status: patient.status,
@@ -101,6 +102,9 @@ export class GetPatientUseCase {
       consentVersion: patient.consentVersion || null,
       createdAt: patient.createdAt.toISOString(),
       updatedAt: patient.updatedAt.toISOString(),
+      motherPatientId: patient.motherPatientId ?? null,
+      mother: patient.mother ?? null,
+      newbornChildren: patient.newbornChildren ?? [],
     };
   }
 }

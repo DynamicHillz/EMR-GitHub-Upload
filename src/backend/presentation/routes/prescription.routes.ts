@@ -24,14 +24,23 @@ router.get('/patient/:patientId', CAN_VIEW_PRESCRIPTIONS, asyncHandler(async (re
     return;
   }
 
-  const prescriptions = await prisma.prescription.findMany({
-    where: { patientId, tenantId },
-    orderBy: { createdAt: 'desc' }
-  });
+  const limit = req.query.limit ? parseInt(req.query.limit as string) : undefined;
+  const skip = req.query.offset ? parseInt(req.query.offset as string) : undefined;
+
+  const [prescriptions, total] = await Promise.all([
+    prisma.prescription.findMany({
+      where: { patientId, tenantId },
+      orderBy: { createdAt: 'desc' },
+      take: limit,
+      skip,
+    }),
+    prisma.prescription.count({ where: { patientId, tenantId } }),
+  ]);
 
   res.json({
     message: 'Prescriptions fetched successfully',
-    data: prescriptions
+    data: prescriptions,
+    total,
   });
 }));
 

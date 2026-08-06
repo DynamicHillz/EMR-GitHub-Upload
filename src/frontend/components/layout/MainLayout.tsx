@@ -31,6 +31,7 @@ import ConfirmDialog from '../common/ConfirmDialog';
 import { useConfirm } from '../../hooks/useConfirm';
 import NetworkStatusIndicator, { SyncStatusIndicator } from '../NetworkStatusIndicator';
 import NotificationBell from '../common/NotificationBell';
+import { licenseService, LicenseStatusResult } from '../../services/license.service';
 
 // Permission matrix per role — matches USER_MANAGEMENT_IMPLEMENTATION_PLAN.md
 const navigation = [
@@ -99,6 +100,18 @@ const navigation = [
     path: '/immunizations/due',
     icon: Syringe,
     requiredRoles: ['SUPER_ADMIN', 'ADMIN', 'DOCTOR', 'NURSE'],
+  },
+  {
+    name: 'Postnatal Care Due',
+    path: '/postnatal/due',
+    icon: Baby,
+    requiredRoles: ['SUPER_ADMIN', 'ADMIN', 'DOCTOR', 'NURSE'],
+  },
+  {
+    name: 'Unnamed Newborns',
+    path: '/newborns/unnamed',
+    icon: Baby,
+    requiredRoles: ['SUPER_ADMIN', 'ADMIN', 'DOCTOR', 'NURSE', 'RECEPTIONIST'],
   },
   {
     name: 'Laboratory',
@@ -173,6 +186,7 @@ const MainLayout: React.FC = () => {
   const { user, logout, hasRole } = useAuth();
   const { confirm, isOpen, options, loading: confirmLoading, handleConfirm, handleCancel } = useConfirm();
   const [branding, setBranding] = useState<any>(null);
+  const [licenseStatus, setLicenseStatus] = useState<LicenseStatusResult | null>(null);
 
   useEffect(() => {
     const token = localStorage.getItem('token');
@@ -180,6 +194,26 @@ const MainLayout: React.FC = () => {
       loadAndApplyBranding(token).then(setBranding);
     }
   }, []);
+
+  // Licensing enforcement is deliberately soft (see LICENSING.md) — this
+  // banner is the only place it ever surfaces, and only to the roles who
+  // can actually do something about it. Fetched once per session load, not
+  // polled — a lapsed license doesn't need second-by-second freshness.
+  useEffect(() => {
+    if (!hasRole(['SUPER_ADMIN', 'ADMIN'])) return;
+    licenseService.getStatus().then(setLicenseStatus).catch(() => setLicenseStatus(null));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const licenseBannerText = (() => {
+    if (!licenseStatus || licenseStatus.status === 'ACTIVE') return null;
+    if (licenseStatus.status === 'MISSING' || licenseStatus.status === 'INVALID') {
+      return 'This installation is not licensed. Contact your vendor to activate it.';
+    }
+    const expiry = licenseStatus.claims?.maintenanceExpiresAt || 'an earlier date';
+    const severity = licenseStatus.status === 'EXPIRED' ? 'Maintenance expired' : 'Maintenance is about to lapse';
+    return `${severity} (${expiry}) — contact your vendor to renew. All clinical features remain fully available.`;
+  })();
 
   const handleLogout = async () => {
     const confirmed = await confirm({
@@ -292,6 +326,15 @@ const MainLayout: React.FC = () => {
             </div>
           </div>
         </header>
+
+        {licenseBannerText && (
+          <div className="bg-amber-50 border-b border-amber-200 text-amber-800 text-sm px-8 py-2 flex items-center justify-between">
+            <span>⚠️ {licenseBannerText}</span>
+            <Link to="/settings" className="font-medium underline hover:text-amber-900 whitespace-nowrap ml-4">
+              Go to Settings
+            </Link>
+          </div>
+        )}
 
         <div className="p-8">
           <Outlet />

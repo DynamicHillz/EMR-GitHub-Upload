@@ -7,7 +7,7 @@
 
 import { PrismaClient } from '@prisma/client';
 import { IPatientRepository } from '../../../domain/interfaces/IPatientRepository';
-import { NotFoundError } from '../../../shared/errors/AppError';
+import { NotFoundError, ValidationError } from '../../../shared/errors/AppError';
 
 export interface OrderLabTestDto {
   consultationId?: string;
@@ -53,6 +53,22 @@ export class OrderLabTestUseCase {
 
     if (!patient) {
       throw new NotFoundError('Patient', dto.patientId);
+    }
+
+    // 1.5 Verify the consultation (when linked) actually belongs to this
+    // tenant and this patient — the FK alone only proves the row exists
+    // somewhere, not that it's the right one.
+    if (dto.consultationId) {
+      const consultation = await this.prisma.consultation.findFirst({
+        where: { id: dto.consultationId, tenantId, isDeleted: false },
+        select: { id: true, patientId: true },
+      });
+      if (!consultation) {
+        throw new NotFoundError('Consultation', dto.consultationId);
+      }
+      if (consultation.patientId !== dto.patientId) {
+        throw new ValidationError('Consultation does not belong to the specified patient');
+      }
     }
 
     // 2. Find Lab Test — prefer the real catalog row by ID (set when the

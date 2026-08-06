@@ -41,6 +41,10 @@ export class PatientRepository implements IPatientRepository {
       },
       include: {
         PatientAllergy: true,
+        // Newborn linkage (see record-delivery-outcome.use-case.ts) — lets
+        // PatientDetailView.tsx cross-link mother <-> newborn charts.
+        mother: { select: { id: true, patientId: true, firstName: true, lastName: true } },
+        newbornChildren: { select: { id: true, patientId: true, firstName: true, lastName: true } },
       }
     });
 
@@ -241,6 +245,7 @@ export class PatientRepository implements IPatientRepository {
         chronicConditions: data.chronicConditions || [], // Default to empty array
         patientType: data.patientType || 'PRIVATE',
         hmoProvider: data.hmoProvider,
+        hmoProviderId: data.hmoProviderId,
         hmoNumber: data.hmoNumber,
         nhisNumber: data.nhisNumber,
         emergencyContact: data.emergencyContact ? (data.emergencyContact as any) : undefined,
@@ -320,6 +325,7 @@ export class PatientRepository implements IPatientRepository {
           ...(data.emergencyContact && { emergencyContact: data.emergencyContact as any }),
           ...(data.patientType !== undefined && { patientType: data.patientType }),
           ...(data.hmoProvider !== undefined && { hmoProvider: data.hmoProvider }),
+          ...(data.hmoProviderId !== undefined && { hmoProviderId: data.hmoProviderId }),
           ...(data.hmoNumber !== undefined && { hmoNumber: data.hmoNumber }),
           ...(data.nhisNumber !== undefined && { nhisNumber: data.nhisNumber }),
           updatedAt: new Date(),
@@ -360,12 +366,20 @@ export class PatientRepository implements IPatientRepository {
    * @param tenantId - Tenant ID for multi-tenancy
    */
   async delete(id: string, tenantId: string, userId?: string): Promise<void> {
-    // Verify patient belongs to tenant before deleting
-    await this.findById(id, tenantId);
+    // Verify patient belongs to tenant before deleting — same reasoning as
+    // update() above: the return value was previously discarded (a null
+    // here fell through to the write below, which was itself only scoped
+    // by {id}, not {id, tenantId} — no tenant isolation on the actual
+    // write, only on this check, which wasn't even being checked).
+    const existing = await this.findById(id, tenantId);
+    if (!existing) {
+      throw new NotFoundError('Patient', id);
+    }
 
-    // Soft delete - set deletedAt timestamp and isDeleted flag
-    await this.prisma.patient.update({
-      where: { id },
+    // updateMany (not update) so this write itself is tenant-scoped, not
+    // just the pre-check above.
+    await this.prisma.patient.updateMany({
+      where: { id, tenantId },
       data: {
         // @ts-ignore - Temporary fix for schema alignment
         isDeleted: true,

@@ -27,7 +27,6 @@ const emptyForm = {
   assistants: '',
   anaesthetics: '',
   anaesthetist: '',
-  anaesthesis: '',
   incision: '',
   findings: '',
   procedure: '',
@@ -111,7 +110,6 @@ const OperationNoteTab: React.FC<Props> = ({ admissionId, patient, isReadonly = 
     { key: 'assistants', label: 'Assistant(s)' },
     { key: 'anaesthetics', label: 'Anaesthetics' },
     { key: 'anaesthetist', label: 'Anaesthetist' },
-    { key: 'anaesthesis', label: 'Anaesthesis' },
     { key: 'incision', label: 'Incision' },
     { key: 'findings', label: 'Findings', textarea: true },
     { key: 'procedure', label: 'Procedure', textarea: true },
@@ -180,7 +178,6 @@ const OperationNoteTab: React.FC<Props> = ({ admissionId, patient, isReadonly = 
                 {note.assistants && <div><dt className="inline font-medium text-gray-600">Assistant(s): </dt><dd className="inline text-gray-800">{note.assistants}</dd></div>}
                 {note.anaesthetics && <div><dt className="inline font-medium text-gray-600">Anaesthetics: </dt><dd className="inline text-gray-800">{note.anaesthetics}</dd></div>}
                 {note.anaesthetist && <div><dt className="inline font-medium text-gray-600">Anaesthetist: </dt><dd className="inline text-gray-800">{note.anaesthetist}</dd></div>}
-                {note.anaesthesis && <div><dt className="inline font-medium text-gray-600">Anaesthesis: </dt><dd className="inline text-gray-800">{note.anaesthesis}</dd></div>}
                 {note.incision && <div><dt className="inline font-medium text-gray-600">Incision: </dt><dd className="inline text-gray-800">{note.incision}</dd></div>}
                 {note.findings && <div className="md:col-span-2"><dt className="inline font-medium text-gray-600">Findings: </dt><dd className="inline text-gray-800">{note.findings}</dd></div>}
                 {note.procedure && <div className="md:col-span-2"><dt className="inline font-medium text-gray-600">Procedure: </dt><dd className="inline text-gray-800">{note.procedure}</dd></div>}

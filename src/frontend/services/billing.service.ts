@@ -100,12 +100,15 @@ class BillingService {
 
   // ==================== INVOICES ====================
 
-  async getInvoices(filters?: InvoiceFilters): Promise<Invoice[]> {
-    const { data } = await this.api.get<ApiResponse<any>>('/invoices', {
+  async getInvoices(filters?: InvoiceFilters): Promise<{ invoices: Invoice[]; total: number }> {
+    const { data } = await this.api.get<ApiResponse<any> & { total?: number }>('/invoices', {
       params: filters,
     });
-    const invoices = data.data?.invoices || data.data;
-    return Array.isArray(invoices) ? invoices : [];
+    const invoicesRaw = data.data?.invoices || data.data;
+    return {
+      invoices: Array.isArray(invoicesRaw) ? invoicesRaw : [],
+      total: data.total ?? 0,
+    };
   }
 
   async getInvoiceById(id: string): Promise<Invoice> {
@@ -130,6 +133,7 @@ class BillingService {
     transfusionChartIds?: string[];
     operationNoteIds?: string[];
     laborRecordIds?: string[];
+    postnatalVisitIds?: string[];
     additionalItems?: {
       serviceName: string;
       quantity: number;
@@ -200,8 +204,15 @@ class BillingService {
     return data.data || [];
   }
 
-  async recordPayment(paymentData: RecordPaymentDto): Promise<Payment> {
-    const { data } = await this.api.post<ApiResponse<Payment>>('/payments', paymentData);
+  // The API returns { payment, invoice, fraudPrevention } — not the payment
+  // record alone — since callers need the fraud-prevention outcome (and the
+  // payment's id, to open its receipt) right after recording it.
+  async recordPayment(paymentData: RecordPaymentDto): Promise<{
+    payment: Payment;
+    invoice: Invoice;
+    fraudPrevention: { requiresApproval: boolean; flaggedForReview: boolean; flagReason?: string };
+  }> {
+    const { data } = await this.api.post<ApiResponse<any>>('/payments', paymentData);
     if (!data.data) throw new Error('Failed to record payment');
     return data.data;
   }
@@ -253,10 +264,14 @@ class BillingService {
 
   // ==================== OUTSTANDING BALANCES ====================
 
-  async getOutstandingInvoices(): Promise<any[]> {
-    const { data } = await this.api.get<ApiResponse<any>>('/outstanding');
-    // Backend returns { invoices: [], summary: { totalOutstanding, totalInvoices, aging } }
-    return data.data?.invoices || [];
+  async getOutstandingInvoices(params: { page?: number; limit?: number } = {}): Promise<{ invoices: any[]; page: number; totalPages: number }> {
+    const { data } = await this.api.get<ApiResponse<any>>('/outstanding', { params });
+    // Backend returns { invoices: [], page, totalPages, summary: { totalOutstanding, totalInvoices, aging } }
+    return {
+      invoices: data.data?.invoices || [],
+      page: data.data?.page || 1,
+      totalPages: data.data?.totalPages || 1,
+    };
   }
 
   async getPatientBalance(patientId: string): Promise<PatientBalance> {
@@ -272,39 +287,22 @@ class BillingService {
 
   async getAgingAnalysis(): Promise<AgingAnalysis> {
     const { data } = await this.api.get<ApiResponse<any>>('/outstanding');
-    // Backend returns { invoices: [], summary: { totalOutstanding, totalInvoices, aging } }
+    // Backend returns { invoices: [] (one page only), summary: { totalOutstanding, totalInvoices, aging } }.
+    // aging.* bucket counts/totals come pre-computed from the backend over
+    // the FULL matching set (see get-outstanding-invoices.use-case.ts) — the
+    // invoices array itself is now just one page, so it can no longer be
+    // filtered/counted here the way it used to be.
     const summary = data.data?.summary;
     if (!summary) throw new Error('Aging analysis not found');
 
-    // Transform backend aging format to frontend format
     const aging = summary.aging;
     return {
       buckets: [
-        {
-          period: 'Current',
-          totalAmount: aging.current || 0,
-          invoiceCount: data.data?.invoices.filter((inv: any) => inv.daysOverdue === 0).length || 0
-        },
-        {
-          period: '1-30 Days',
-          totalAmount: aging.days1_30 || 0,
-          invoiceCount: data.data?.invoices.filter((inv: any) => inv.daysOverdue >= 1 && inv.daysOverdue <= 30).length || 0
-        },
-        {
-          period: '31-60 Days',
-          totalAmount: aging.days31_60 || 0,
-          invoiceCount: data.data?.invoices.filter((inv: any) => inv.daysOverdue >= 31 && inv.daysOverdue <= 60).length || 0
-        },
-        {
-          period: '61-90 Days',
-          totalAmount: aging.days61_90 || 0,
-          invoiceCount: data.data?.invoices.filter((inv: any) => inv.daysOverdue >= 61 && inv.daysOverdue <= 90).length || 0
-        },
-        {
-          period: '90+ Days',
-          totalAmount: aging.days90Plus || 0,
-          invoiceCount: data.data?.invoices.filter((inv: any) => inv.daysOverdue > 90).length || 0
-        }
+        { period: 'Current', totalAmount: aging.current?.totalAmount || 0, invoiceCount: aging.current?.invoiceCount || 0 },
+        { period: '1-30 Days', totalAmount: aging.days1_30?.totalAmount || 0, invoiceCount: aging.days1_30?.invoiceCount || 0 },
+        { period: '31-60 Days', totalAmount: aging.days31_60?.totalAmount || 0, invoiceCount: aging.days31_60?.invoiceCount || 0 },
+        { period: '61-90 Days', totalAmount: aging.days61_90?.totalAmount || 0, invoiceCount: aging.days61_90?.invoiceCount || 0 },
+        { period: '90+ Days', totalAmount: aging.days90Plus?.totalAmount || 0, invoiceCount: aging.days90Plus?.invoiceCount || 0 }
       ],
       totalOutstanding: summary.totalOutstanding || 0
     };

@@ -1,23 +1,36 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Bell } from 'lucide-react';
+import { Bell, ShieldAlert } from 'lucide-react';
+
+type NotificationSeverity = 'INFO' | 'WARNING' | 'CRITICAL';
 
 interface Notification {
   id: string;
   type: string;
+  severity: NotificationSeverity;
   title: string;
   message: string;
   entityType?: string;
   entityId?: string;
   isRead: boolean;
+  acknowledgedAt?: string | null;
   createdAt: string;
 }
 
 const getApiBaseUrl = () => import.meta.env.VITE_API_URL || `${window.location.protocol}//${window.location.hostname}:3000`;
 
+// Left-border treatment per severity — deliberately not a full reorder of
+// the list (chronological order stays predictable), just a scannable cue.
+const SEVERITY_BORDER: Record<NotificationSeverity, string> = {
+  CRITICAL: 'border-l-4 border-red-500',
+  WARNING: 'border-l-4 border-amber-400',
+  INFO: 'border-l-4 border-gray-200',
+};
+
 const NotificationBell: React.FC = () => {
   const navigate = useNavigate();
   const [unreadCount, setUnreadCount] = useState(0);
+  const [needsAckCount, setNeedsAckCount] = useState(0);
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [isOpen, setIsOpen] = useState(false);
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -26,11 +39,12 @@ const NotificationBell: React.FC = () => {
 
   const fetchUnreadCount = async () => {
     try {
-      const res = await fetch(`${getApiBaseUrl()}/api/notifications/unread-count`, { headers: authHeaders() });
-      if (res.ok) {
-        const result = await res.json();
-        setUnreadCount(result.count || 0);
-      }
+      const [unreadRes, ackRes] = await Promise.all([
+        fetch(`${getApiBaseUrl()}/api/notifications/unread-count`, { headers: authHeaders() }),
+        fetch(`${getApiBaseUrl()}/api/notifications/unread-count?needsAcknowledgment=true`, { headers: authHeaders() }),
+      ]);
+      if (unreadRes.ok) setUnreadCount((await unreadRes.json()).count || 0);
+      if (ackRes.ok) setNeedsAckCount((await ackRes.json()).count || 0);
     } catch (error) {
       console.error('Failed to fetch unread notification count:', error);
     }
@@ -69,6 +83,19 @@ const NotificationBell: React.FC = () => {
     setIsOpen((prev) => !prev);
   };
 
+  const navigateForNotification = (notification: Notification) => {
+    if (notification.type === 'STOCK_ALERT') {
+      navigate('/pharmacy');
+    } else if (notification.type === 'CRITICAL_LAB_RESULT' || notification.type === 'LAB_RESULT_READY') {
+      navigate('/lab');
+    } else if (notification.type === 'MEDICATION_CHANGE' && notification.entityId) {
+      // entityId is the admissionId for this type (see inpatient.service.ts's
+      // addWardRound) — unlike CRITICAL_VITAL_SIGN, whose entityId points at
+      // the VitalChart record itself, not the admission.
+      navigate(`/inpatient/${notification.entityId}`);
+    }
+  };
+
   const handleNotificationClick = async (notification: Notification) => {
     try {
       await fetch(`${getApiBaseUrl()}/api/notifications/${notification.id}/read`, {
@@ -82,15 +109,24 @@ const NotificationBell: React.FC = () => {
     }
 
     setIsOpen(false);
-    if (notification.type === 'STOCK_ALERT') {
-      navigate('/pharmacy');
-    } else if (notification.type === 'CRITICAL_LAB_RESULT' || notification.type === 'LAB_RESULT_READY') {
-      navigate('/lab');
-    } else if (notification.type === 'MEDICATION_CHANGE' && notification.entityId) {
-      // entityId is the admissionId for this type (see inpatient.service.ts's
-      // addWardRound) — unlike CRITICAL_VITAL_SIGN, whose entityId points at
-      // the VitalChart record itself, not the admission.
-      navigate(`/inpatient/${notification.entityId}`);
+    navigateForNotification(notification);
+  };
+
+  // Distinct from mark-read — confirms a clinician is acting on a CRITICAL
+  // alert. Stops the row's persistent "needs attention" highlight.
+  const handleAcknowledge = async (e: React.MouseEvent, notification: Notification) => {
+    e.stopPropagation();
+    try {
+      await fetch(`${getApiBaseUrl()}/api/notifications/${notification.id}/acknowledge`, {
+        method: 'PATCH',
+        headers: authHeaders(),
+      });
+      const now = new Date().toISOString();
+      setNotifications((prev) => prev.map((n) => (n.id === notification.id ? { ...n, acknowledgedAt: now, isRead: true } : n)));
+      setNeedsAckCount((prev) => Math.max(0, prev - 1));
+      setUnreadCount((prev) => Math.max(0, prev - (notification.isRead ? 0 : 1)));
+    } catch (error) {
+      console.error('Failed to acknowledge notification:', error);
     }
   };
 
@@ -113,6 +149,11 @@ const NotificationBell: React.FC = () => {
             {unreadCount > 9 ? '9+' : unreadCount}
           </span>
         )}
+        {needsAckCount > 0 && (
+          <span className="absolute -bottom-0.5 -right-0.5 bg-white rounded-full">
+            <ShieldAlert className="w-3.5 h-3.5 text-red-600" />
+          </span>
+        )}
       </button>
 
       {isOpen && (
@@ -128,22 +169,38 @@ const NotificationBell: React.FC = () => {
           {notifications.length === 0 ? (
             <p className="text-sm text-gray-500 text-center py-6">No notifications yet.</p>
           ) : (
-            notifications.map((notification) => (
-              <button
-                key={notification.id}
-                onClick={() => handleNotificationClick(notification)}
-                className={`w-full text-left px-4 py-3 border-b border-gray-50 last:border-b-0 hover:bg-gray-50 ${!notification.isRead ? 'bg-blue-50/60' : ''}`}
-              >
-                <div className="flex items-start gap-2">
-                  {!notification.isRead && <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-primary-600 flex-shrink-0" />}
-                  <div className={notification.isRead ? 'ml-3.5' : ''}>
-                    <p className="text-sm font-medium text-gray-900">{notification.title}</p>
-                    <p className="text-xs text-gray-600 mt-0.5">{notification.message}</p>
-                    <p className="text-[11px] text-gray-400 mt-1">{new Date(notification.createdAt).toLocaleString()}</p>
-                  </div>
+            notifications.map((notification) => {
+              const needsAck = notification.severity === 'CRITICAL' && !notification.acknowledgedAt;
+              return (
+                <div
+                  key={notification.id}
+                  className={`border-b border-gray-50 last:border-b-0 ${SEVERITY_BORDER[notification.severity] || SEVERITY_BORDER.INFO} ${
+                    needsAck ? 'bg-red-50' : !notification.isRead ? 'bg-blue-50/60' : ''
+                  }`}
+                >
+                  <button onClick={() => handleNotificationClick(notification)} className="w-full text-left px-4 py-3 hover:bg-gray-50">
+                    <div className="flex items-start gap-2">
+                      {!notification.isRead && <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-primary-600 flex-shrink-0" />}
+                      <div className={notification.isRead ? 'ml-3.5' : ''}>
+                        <p className="text-sm font-medium text-gray-900">{notification.title}</p>
+                        <p className="text-xs text-gray-600 mt-0.5">{notification.message}</p>
+                        <p className="text-[11px] text-gray-400 mt-1">{new Date(notification.createdAt).toLocaleString()}</p>
+                      </div>
+                    </div>
+                  </button>
+                  {needsAck && (
+                    <div className="px-4 pb-3 -mt-1">
+                      <button
+                        onClick={(e) => handleAcknowledge(e, notification)}
+                        className="text-xs font-semibold text-red-700 bg-red-100 hover:bg-red-200 px-2.5 py-1 rounded-md"
+                      >
+                        Acknowledge
+                      </button>
+                    </div>
+                  )}
                 </div>
-              </button>
-            ))
+              );
+            })
           )}
         </div>
       )}

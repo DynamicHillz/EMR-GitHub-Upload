@@ -15,8 +15,8 @@ export interface AuditLog {
   userName?: string;
   action: string;
   entityType: string;
-  entityId: string;
-  entityName?: string;
+  entityId: string | null;
+  entityName?: string | null;
   oldValues: string;
   newValues: string;
   ipAddress: string;
@@ -30,6 +30,29 @@ export interface AuditLogsResponse {
   total: number;
   page: number;
   totalPages: number;
+}
+
+export interface InvoiceAuditLogEntry {
+  id: string;
+  invoiceId: string;
+  userId: string;
+  action: string;
+  previousValues: any;
+  newValues: any;
+  notes: string | null;
+  createdAt: string;
+}
+
+export interface PaymentAuditLogEntry {
+  id: string;
+  paymentId: string;
+  userId: string;
+  action: string;
+  previousValues: any;
+  newValues: any;
+  changesSummary: string | null;
+  notes: string | null;
+  createdAt: string;
 }
 
 class AuditService {
@@ -59,10 +82,38 @@ class AuditService {
   }
 
   /**
-   * Fetch archived (soft-deleted) records for an entity
+   * Fetch archived (soft-deleted) records for an entity. Defaults to the
+   * last 90 days server-side — pass sinceDate (ISO string) to widen the
+   * window when looking for something older.
    */
-  async getArchivedRecords(entityType: string): Promise<any[]> {
-    const response = await this.api.get(`/audit/archive/${entityType}`);
+  async getArchivedRecords(
+    entityType: string,
+    params: { page?: number; limit?: number; sinceDate?: string } = {}
+  ): Promise<{ records: any[]; total: number; page: number; totalPages: number }> {
+    const response = await this.api.get(`/audit/archive/${entityType}`, { params });
+    return {
+      records: response.data.data,
+      total: response.data.total,
+      page: response.data.page,
+      totalPages: response.data.totalPages,
+    };
+  }
+
+  /**
+   * Fetch the full InvoiceAuditLog trail for one invoice — richer detail
+   * (previous/new values, notes) than the generic AuditLog entry.
+   */
+  async getInvoiceAuditTrail(invoiceId: string): Promise<InvoiceAuditLogEntry[]> {
+    const response = await this.api.get(`/audit/invoice-logs/${invoiceId}`);
+    return response.data.data;
+  }
+
+  /**
+   * Fetch the full PaymentAuditLog trail for one payment — fraud-prevention
+   * detail (flag reasons, approver names) never shown elsewhere.
+   */
+  async getPaymentAuditTrail(paymentId: string): Promise<PaymentAuditLogEntry[]> {
+    const response = await this.api.get(`/audit/payment-logs/${paymentId}`);
     return response.data.data;
   }
 

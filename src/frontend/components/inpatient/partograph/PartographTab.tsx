@@ -1,10 +1,11 @@
 import React, { useEffect, useState } from 'react';
-import { Plus, Heart, Baby } from 'lucide-react';
+import { Plus, Heart, Baby, LogOut } from 'lucide-react';
 import laborService from '../../../services/labor.service';
 import { LaborRecord } from '../../../types/labor';
 import StartLaborModal from './StartLaborModal';
 import ObservationEntryModal from './ObservationEntryModal';
 import DeliveryOutcomeModal from './DeliveryOutcomeModal';
+import DiscontinueLaborModal from './DiscontinueLaborModal';
 import DilationChart from './DilationChart';
 import FetalHeartRateChart from './FetalHeartRateChart';
 import ObservationsTable from './ObservationsTable';
@@ -22,6 +23,7 @@ const PartographTab: React.FC<PartographTabProps> = ({ admissionId, isReadonly }
   const [showStartModal, setShowStartModal] = useState(false);
   const [showObservationModal, setShowObservationModal] = useState(false);
   const [showDeliveryModal, setShowDeliveryModal] = useState(false);
+  const [showDiscontinueModal, setShowDiscontinueModal] = useState(false);
 
   const loadLaborRecord = async () => {
     try {
@@ -99,9 +101,21 @@ const PartographTab: React.FC<PartographTabProps> = ({ admissionId, isReadonly }
             <button onClick={() => setShowDeliveryModal(true)} className="btn btn-primary flex items-center gap-2">
               <Baby className="w-4 h-4" /> Record Delivery Outcome
             </button>
+            <button onClick={() => setShowDiscontinueModal(true)} className="btn btn-secondary flex items-center gap-2 text-amber-700">
+              <LogOut className="w-4 h-4" /> Mark Transferred/Discontinued
+            </button>
           </div>
         )}
       </div>
+
+      {(laborRecord.status === 'TRANSFERRED' || laborRecord.status === 'DISCONTINUED') && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-5">
+          <h3 className="font-semibold text-amber-900 mb-1 flex items-center gap-2">
+            <LogOut className="w-5 h-5" /> Labor {laborRecord.status === 'TRANSFERRED' ? 'Transferred' : 'Discontinued'}
+          </h3>
+          {laborRecord.deliveryNotes && <p className="text-sm text-amber-800 mt-2">{laborRecord.deliveryNotes}</p>}
+        </div>
+      )}
 
       {laborRecord.status === 'DELIVERED' && (
         <div className="bg-green-50 border border-green-200 rounded-xl p-5">
@@ -140,9 +154,21 @@ const PartographTab: React.FC<PartographTabProps> = ({ admissionId, isReadonly }
       {showDeliveryModal && (
         <DeliveryOutcomeModal
           laborRecordId={laborRecord.id}
+          admissionId={admissionId}
           onClose={() => setShowDeliveryModal(false)}
           onSuccess={() => {
             setShowDeliveryModal(false);
+            loadLaborRecord();
+          }}
+        />
+      )}
+
+      {showDiscontinueModal && (
+        <DiscontinueLaborModal
+          laborRecordId={laborRecord.id}
+          onClose={() => setShowDiscontinueModal(false)}
+          onSuccess={() => {
+            setShowDiscontinueModal(false);
             loadLaborRecord();
           }}
         />

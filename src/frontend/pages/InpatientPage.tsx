@@ -1,18 +1,20 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Plus, Bed as BedIcon, Activity, Edit, AlertTriangle, Search } from 'lucide-react';
-import { Ward, Admission } from '../types/inpatient';
+import { Plus, Bed as BedIcon, Activity, Edit, AlertTriangle, Search, Clock, CheckCircle } from 'lucide-react';
+import { Ward, Admission, OverstayStatus } from '../types/inpatient';
 import InpatientService from '../services/InpatientService';
 import AdmissionModal from '../components/inpatient/AdmissionModal';
 import EditBedModal from '../components/inpatient/EditBedModal';
 import { useAuth } from '../contexts/AuthContext';
-import { formatDate } from '../utils/formatters';
+import { formatDate, formatCurrency } from '../utils/formatters';
 import Dropdown from '../components/common/Dropdown';
 
 const InpatientPage: React.FC = () => {
   const [wards, setWards] = useState<Ward[]>([]);
   const [admissions, setAdmissions] = useState<Admission[]>([]);
   const [allAdmissions, setAllAdmissions] = useState<Admission[]>([]);
+  const [overstayStatus, setOverstayStatus] = useState<OverstayStatus[]>([]);
+  const [confirmingBedVacatedId, setConfirmingBedVacatedId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'active' | 'history'>('active');
   const [loading, setLoading] = useState(true);
   const [isAdmitting, setIsAdmitting] = useState(false);
@@ -43,18 +45,33 @@ const InpatientPage: React.FC = () => {
   const loadData = async () => {
     try {
       setLoading(true);
-      const [wardsData, admissionsData, allAdmissionsData] = await Promise.all([
+      const [wardsData, admissionsData, allAdmissionsData, overstayData] = await Promise.all([
         InpatientService.getWards(),
         InpatientService.getAdmissions('ADMITTED'),
-        InpatientService.getAdmissions()
+        InpatientService.getAdmissions(),
+        InpatientService.getOverstayStatus()
       ]);
       setWards(wardsData);
       setAdmissions(admissionsData);
       setAllAdmissions(allAdmissionsData);
+      setOverstayStatus(overstayData);
     } catch (error) {
       console.error('Failed to load inpatient data:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleConfirmBedVacated = async (admissionId: string) => {
+    try {
+      setConfirmingBedVacatedId(admissionId);
+      await InpatientService.confirmBedVacated(admissionId);
+      await loadData();
+    } catch (error) {
+      console.error('Failed to confirm bed vacated:', error);
+      alert('Failed to confirm bed vacated. Please try again.');
+    } finally {
+      setConfirmingBedVacatedId(null);
     }
   };
 
@@ -170,6 +187,61 @@ const InpatientPage: React.FC = () => {
 
           {activeTab === 'active' ? (
             <div className="space-y-8">
+          {overstayStatus.length > 0 && (
+            <div className="bg-white rounded-xl shadow-sm border border-amber-200 overflow-hidden">
+              <div className="px-6 py-4 border-b bg-amber-50 flex items-center">
+                <Clock className="w-5 h-5 text-amber-600 mr-2" />
+                <h2 className="text-lg font-semibold text-gray-800">Awaiting Bed Clearance</h2>
+                <span className="ml-3 px-2 py-1 text-xs font-medium bg-amber-200 text-amber-900 rounded-full">
+                  {overstayStatus.length}
+                </span>
+              </div>
+              <div className="divide-y divide-gray-100">
+                {overstayStatus.map((item) => (
+                  <div
+                    key={item.admissionId}
+                    className="px-6 py-4 flex flex-wrap items-center justify-between gap-3"
+                  >
+                    <div
+                      className="min-w-0 flex-1 cursor-pointer"
+                      onClick={() => navigate(`/inpatient/${item.admissionId}`)}
+                    >
+                      <p className="font-medium text-gray-900 truncate">
+                        {item.patient?.firstName} {item.patient?.lastName}
+                        <span className="ml-2 text-xs text-gray-500 font-normal">
+                          {item.bed?.ward?.name} (Bed: {item.bed?.bedNumber})
+                        </span>
+                      </p>
+                      <p className="text-xs text-gray-500">
+                        Discharged {formatDate(item.dischargeDate)} — bill {item.billingStatus === 'BILLED' ? 'outstanding' : 'not yet generated'}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      {item.isOverstay ? (
+                        <span className="px-3 py-1 text-xs font-semibold rounded-full bg-red-100 text-red-800">
+                          Overstay: Day {item.overstayDays} — est. +{formatCurrency(item.estimatedExtraCharge)}
+                        </span>
+                      ) : (
+                        <span className="px-3 py-1 text-xs font-semibold rounded-full bg-amber-100 text-amber-800">
+                          Grace period: {item.graceDaysRemaining} day(s) left
+                        </span>
+                      )}
+                      {hasRole(['DOCTOR', 'NURSE']) && (
+                        <button
+                          onClick={() => handleConfirmBedVacated(item.admissionId)}
+                          disabled={confirmingBedVacatedId === item.admissionId}
+                          className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          <CheckCircle className="w-3.5 h-3.5" />
+                          {confirmingBedVacatedId === item.admissionId ? 'Confirming...' : 'Confirm Bed Vacated'}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
           <div className="relative max-w-sm">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
             <input

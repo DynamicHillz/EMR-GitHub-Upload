@@ -1,7 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-import { PrismaClient } from '@prisma/client';
-
-const prisma = new PrismaClient();
+import { prisma } from '../../infrastructure/database/prisma.client';
 
 export class ExemptionController {
   async getPolicies(req: Request, res: Response, next: NextFunction) {

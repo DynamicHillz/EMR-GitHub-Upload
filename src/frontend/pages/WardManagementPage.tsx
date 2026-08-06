@@ -18,15 +18,18 @@ const WardManagementPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedWard, setSelectedWard] = useState<Ward | null>(null);
-  
+  // Deleted wards used to vanish permanently with no way to see or restore
+  // them — this toggle is the missing other half of deleteWard's soft delete.
+  const [showInactive, setShowInactive] = useState(false);
+
   // For deletion confirm
   const [isConfirmOpen, setIsConfirmOpen] = useState(false);
   const [wardToDelete, setWardToDelete] = useState<Ward | null>(null);
 
-  const fetchWards = async () => {
+  const fetchWards = async (inactive: boolean) => {
     try {
       setLoading(true);
-      const data = await InpatientService.getWards();
+      const data = await InpatientService.getWards(inactive ? 'INACTIVE' : 'ACTIVE');
       setWards(data);
     } catch (error) {
       toast.error('Failed to load wards');
@@ -36,8 +39,19 @@ const WardManagementPage: React.FC = () => {
   };
 
   useEffect(() => {
-    fetchWards();
-  }, []);
+    fetchWards(showInactive);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showInactive]);
+
+  const handleReactivate = async (ward: Ward) => {
+    try {
+      await InpatientService.reactivateWard(ward.id);
+      toast.success(`${ward.name} reactivated`);
+      fetchWards(showInactive);
+    } catch (error: any) {
+      toast.error(error.response?.data?.message || 'Failed to reactivate ward');
+    }
+  };
 
   const handleAdd = () => {
     setSelectedWard(null);
@@ -59,7 +73,7 @@ const WardManagementPage: React.FC = () => {
     try {
       await InpatientService.deleteWard(wardToDelete.id);
       toast.success('Ward deleted successfully');
-      fetchWards();
+      fetchWards(showInactive);
     } catch (error: any) {
       toast.error(error.response?.data?.message || 'Failed to delete ward. Ensure it has no occupied beds.');
     } finally {
@@ -75,12 +89,22 @@ const WardManagementPage: React.FC = () => {
           <h1 className="text-2xl font-bold text-gray-800">Ward Management</h1>
           <p className="text-gray-600">Manage hospital wards, room types, and pricing</p>
         </div>
-        {canManageWards && (
-          <button onClick={handleAdd} className="btn btn-primary flex items-center">
-            <Plus className="w-5 h-5 mr-2" />
-            Add Ward
-          </button>
-        )}
+        <div className="flex items-center gap-4">
+          {canManageWards && (
+            <button
+              onClick={() => setShowInactive(!showInactive)}
+              className={`text-sm font-medium px-3 py-1.5 rounded-md border ${showInactive ? 'bg-gray-800 text-white border-gray-800' : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'}`}
+            >
+              {showInactive ? 'Showing Deleted Wards' : 'Show Deleted Wards'}
+            </button>
+          )}
+          {canManageWards && !showInactive && (
+            <button onClick={handleAdd} className="btn btn-primary flex items-center">
+              <Plus className="w-5 h-5 mr-2" />
+              Add Ward
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="bg-white rounded-lg shadow overflow-hidden">
@@ -89,7 +113,7 @@ const WardManagementPage: React.FC = () => {
         ) : wards.length === 0 ? (
           <div className="p-8 text-center text-gray-500">
             <Bed className="w-12 h-12 mx-auto text-gray-400 mb-3" />
-            <p>No wards configured yet.</p>
+            <p>{showInactive ? 'No deleted wards.' : 'No wards configured yet.'}</p>
           </div>
         ) : (
           <table className="min-w-full divide-y divide-gray-200">
@@ -131,27 +155,40 @@ const WardManagementPage: React.FC = () => {
                       {formatCurrency(ward.dailyCost || 0)} / day
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                      <button
-                        onClick={() => navigate(`/inpatient?ward=${ward.id}`)}
-                        className="text-gray-500 hover:text-primary-700 mx-2"
-                        title="View Beds"
-                      >
-                        <Eye className="w-5 h-5 inline" />
-                      </button>
-                      {canManageWards && (
+                      {showInactive ? (
+                        canManageWards && (
+                          <button
+                            onClick={() => handleReactivate(ward)}
+                            className="text-green-600 hover:text-green-900 mx-2 font-medium"
+                          >
+                            Reactivate
+                          </button>
+                        )
+                      ) : (
                         <>
                           <button
-                            onClick={() => handleEdit(ward)}
-                            className="text-primary-600 hover:text-primary-900 mx-2"
+                            onClick={() => navigate(`/inpatient?ward=${ward.id}`)}
+                            className="text-gray-500 hover:text-primary-700 mx-2"
+                            title="View Beds"
                           >
-                            <Edit2 className="w-5 h-5 inline" />
+                            <Eye className="w-5 h-5 inline" />
                           </button>
-                          <button
-                            onClick={() => handleDeleteClick(ward)}
-                            className="text-red-600 hover:text-red-900 mx-2"
-                          >
-                            <Trash2 className="w-5 h-5 inline" />
-                          </button>
+                          {canManageWards && (
+                            <>
+                              <button
+                                onClick={() => handleEdit(ward)}
+                                className="text-primary-600 hover:text-primary-900 mx-2"
+                              >
+                                <Edit2 className="w-5 h-5 inline" />
+                              </button>
+                              <button
+                                onClick={() => handleDeleteClick(ward)}
+                                className="text-red-600 hover:text-red-900 mx-2"
+                              >
+                                <Trash2 className="w-5 h-5 inline" />
+                              </button>
+                            </>
+                          )}
                         </>
                       )}
                     </td>
@@ -169,7 +206,7 @@ const WardManagementPage: React.FC = () => {
           onClose={() => setIsModalOpen(false)}
           onSuccess={() => {
             setIsModalOpen(false);
-            fetchWards();
+            fetchWards(showInactive);
           }}
         />
       )}

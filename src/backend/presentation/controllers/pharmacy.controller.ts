@@ -941,6 +941,8 @@ export const getConsumableUsage = async (req: Request, res: Response) => {
     const records = await getConsumableUsageUseCase.execute(tenantId, {
       patientId: req.query.patientId as string | undefined,
       billingStatus: req.query.billingStatus as 'UNBILLED' | 'BILLED' | undefined,
+      startDate: req.query.startDate ? new Date(req.query.startDate as string) : undefined,
+      endDate: req.query.endDate ? new Date(req.query.endDate as string) : undefined,
     });
 
     return res.status(200).json({

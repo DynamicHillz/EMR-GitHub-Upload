@@ -1,5 +1,7 @@
 import { prisma } from '../../infrastructure/database/prisma.client';
 import { NotificationService } from '../../application/services/notification.service';
+import { checkDrugInteractions, checkDuplicateTherapy } from '../../application/services/drug-interaction-checker.service';
+import { checkForAllergies, findMatchingAllergies } from '../../application/services/allergy-checker.service';
 
 // Mirrors VitalChartTab.tsx's VITAL_THRESHOLDS — kept in sync so a value the
 // UI already flags in red also reaches an on-call notification, not just the
@@ -17,10 +19,14 @@ const VITAL_ALERT_THRESHOLDS: { label: string; test: (r: any) => boolean }[] = [
 export class InpatientService {
   private notificationService = new NotificationService(prisma);
 
-  async getWards(tenantId: string) {
+  // Defaults to ACTIVE (matches every existing caller, including the
+  // admission/transfer bed pickers) — pass status: 'INACTIVE' to list
+  // deleted wards instead, so they're not permanently invisible once
+  // deleteWard() soft-deletes them.
+  async getWards(tenantId: string, status: string = 'ACTIVE') {
     // @ts-ignore - Temporary fix for schema alignment
     return prisma.ward.findMany({
-      where: { tenantId, status: 'ACTIVE' },
+      where: { tenantId, status },
       include: {
         beds: {
           include: {
@@ -33,6 +39,22 @@ export class InpatientService {
           }
         }
       }
+    });
+  }
+
+  // Inverse of deleteWard — the missing half of that soft delete. Without
+  // this, an INACTIVE ward had no path back to ACTIVE anywhere in the app.
+  async reactivateWard(tenantId: string, wardId: string) {
+    // @ts-ignore - Temporary fix for schema alignment
+    const ward = await prisma.ward.findFirst({ where: { tenantId, id: wardId } });
+    if (!ward) throw new Error('Ward not found');
+    // @ts-ignore - Temporary fix for schema alignment
+    if (ward.status !== 'INACTIVE') throw new Error('Only a deleted (inactive) ward can be reactivated');
+
+    // @ts-ignore - Temporary fix for schema alignment
+    return prisma.ward.update({
+      where: { id: wardId },
+      data: { status: 'ACTIVE' }
     });
   }
 
@@ -75,8 +97,27 @@ export class InpatientService {
           for (const b of bedsToDelete) {
             if (b.status === 'OCCUPIED') throw new Error('Cannot reduce capacity: a bed to be removed is occupied.');
           }
+
+          // A bed can be AVAILABLE right now yet still have historical
+          // Admission/BedTransferHistory rows pointing at it — deleting it
+          // would otherwise hit an unhandled FK-constraint error instead of
+          // a clean message, since neither relation cascades on delete.
+          const bedIdsToDelete = bedsToDelete.map(b => b.id);
           // @ts-ignore - Temporary fix for schema alignment
-          await tx.bed.deleteMany({ where: { id: { in: bedsToDelete.map(b => b.id) } } });
+          const admissionHistoryCount = await tx.admission.count({ where: { bedId: { in: bedIdsToDelete } } });
+          if (admissionHistoryCount > 0) {
+            throw new Error('Cannot reduce capacity: one or more beds to be removed have admission history and cannot be deleted. Mark them as MAINTENANCE instead.');
+          }
+          // @ts-ignore - Temporary fix for schema alignment
+          const transferHistoryCount = await tx.bedTransferHistory.count({
+            where: { OR: [{ fromBedId: { in: bedIdsToDelete } }, { toBedId: { in: bedIdsToDelete } }] }
+          });
+          if (transferHistoryCount > 0) {
+            throw new Error('Cannot reduce capacity: one or more beds to be removed have transfer history and cannot be deleted. Mark them as MAINTENANCE instead.');
+          }
+
+          // @ts-ignore - Temporary fix for schema alignment
+          await tx.bed.deleteMany({ where: { id: { in: bedIdsToDelete } } });
         } else {
           const diff = data.capacity - ward.capacity;
           const currentCount = ward.capacity;
@@ -123,7 +164,7 @@ export class InpatientService {
   }
 
   async getAdmissions(tenantId: string, status?: string) {
-    const where: any = { tenantId };
+    const where: any = { tenantId, isDeleted: false };
     if (status) where.status = status;
 
     // @ts-ignore - Temporary fix for schema alignment
@@ -153,7 +194,7 @@ export class InpatientService {
   async getAdmissionById(tenantId: string, admissionId: string) {
     // @ts-ignore - Temporary fix for schema alignment
     const admission = await prisma.admission.findFirst({
-      where: { tenantId, id: admissionId },
+      where: { tenantId, id: admissionId, isDeleted: false },
       include: {
         patient: true,
         bed: {
@@ -207,7 +248,7 @@ export class InpatientService {
   async getAdmissionsByPatientId(tenantId: string, patientId: string) {
     // @ts-ignore - Temporary fix for schema alignment
     return prisma.admission.findMany({
-      where: { tenantId, patientId },
+      where: { tenantId, patientId, isDeleted: false },
       include: {
         bed: {
           include: { ward: true }
@@ -284,12 +325,19 @@ export class InpatientService {
     });
     if (existing) throw new Error('Patient is already admitted to a bed');
 
-    // Check if bed is available
+    // Check if bed is available — and that its ward hasn't been deleted.
+    // Unreachable through the normal admission picker (it only ever lists
+    // ACTIVE wards' beds), but a direct API call with a stale bed ID from a
+    // deleted ward should still be rejected rather than silently admitting
+    // into it.
     // @ts-ignore - Temporary fix for schema alignment
     const bed = await prisma.bed.findFirst({
-      where: { tenantId, id: bedId }
+      where: { tenantId, id: bedId },
+      include: { ward: { select: { status: true } } }
     });
     if (!bed || bed.status !== 'AVAILABLE') throw new Error('Bed is not available');
+    // @ts-ignore - Temporary fix for schema alignment
+    if (bed.ward.status !== 'ACTIVE') throw new Error('Bed belongs to a ward that is no longer active');
 
     // Create admission transaction
     const admission = await prisma.$transaction(async (tx) => {
@@ -324,6 +372,14 @@ export class InpatientService {
       }
 
       if (primaryDiagnosisId) {
+        // Either owned by this tenant, or a shared/global reference row
+        // (tenantId: null — see seed-icd10-catalog.ts) usable by every tenant.
+        // @ts-ignore - Temporary fix for schema alignment
+        const diagnosis = await tx.diagnosisCatalog.findFirst({
+          where: { id: primaryDiagnosisId, OR: [{ tenantId }, { tenantId: null }] }
+        });
+        if (!diagnosis) throw new Error('Selected diagnosis not found');
+
         // @ts-ignore - Temporary fix for schema alignment
         await tx.admissionDiagnosis.create({
           data: {
@@ -367,9 +423,61 @@ export class InpatientService {
   async dischargePatient(tenantId: string, admissionId: string, data: any, userId: string) {
     // @ts-ignore - Temporary fix for schema alignment
     const admission = await prisma.admission.findFirst({
-      where: { tenantId, id: admissionId, status: 'ADMITTED' }
+      where: { tenantId, id: admissionId, status: 'ADMITTED' },
+      include: { patient: { select: { allergies: true } } }
     });
     if (!admission) throw new Error('Active admission not found');
+
+    // Discharging while labor is still open would silently lose the birth
+    // record — no delivery outcome would ever be recorded for this
+    // admission. If the patient was genuinely transferred out mid-labor
+    // (not delivered here), close the labor record out first via
+    // POST /api/labor/records/:laborRecordId/discontinue (TRANSFERRED or
+    // DISCONTINUED), which is the real escape hatch for that scenario.
+    const openLaborRecord = await prisma.laborRecord.findFirst({
+      where: { tenantId, admissionId, status: 'IN_LABOR', isDeleted: false }
+    });
+    if (openLaborRecord) {
+      throw new Error(
+        'Cannot discharge — labor is still in progress for this admission. Record the delivery outcome, or mark the labor record as transferred/discontinued, first.'
+      );
+    }
+
+    // Precompute allergy/interaction/duplicate-therapy warnings for every TTO
+    // (to-take-out) medication before opening the transaction — same
+    // REQ-CLIN-7 checks CreatePrescriptionUseCase and addWardRound's
+    // medication-ADD path already enforce; discharge prescriptions were
+    // previously the one remaining place a Prescription got created with
+    // none of these checks at all.
+    const ttoPrescriptions: any[] = Array.isArray(data.prescriptions) ? data.prescriptions : [];
+    const patientAllergies = admission.patient.allergies || [];
+    const ttoWarnings: Array<{
+      medicationName: string;
+      allergyWarning: boolean;
+      allergyDetails: string[];
+      interactionWarning: boolean;
+      interactionDetails: string[];
+      duplicateWarning: boolean;
+      duplicateDetails: string[];
+    }> = [];
+
+    for (const p of ttoPrescriptions) {
+      if (!p.medicationName) continue;
+      const allergyWarning = checkForAllergies(p.medicationName, patientAllergies);
+      const allergyDetails = allergyWarning ? findMatchingAllergies(p.medicationName, patientAllergies) : [];
+      const { interactionWarning, interactionDetails } = await checkDrugInteractions(prisma, tenantId, admission.patientId, p.medicationName);
+      const { duplicateWarning, duplicateDetails } = await checkDuplicateTherapy(prisma, tenantId, admission.patientId, p.medicationName);
+
+      ttoWarnings.push({
+        medicationName: p.medicationName,
+        allergyWarning,
+        allergyDetails,
+        interactionWarning,
+        interactionDetails,
+        duplicateWarning,
+        duplicateDetails,
+      });
+    }
 
     const updated = await prisma.$transaction(async (tx) => {
       // Re-check status inside the transaction — closes the race where two
@@ -399,10 +507,29 @@ export class InpatientService {
           finalNotes: data.finalNotes || data.notes || '',
           followUpPlan: data.followUpPlan || null,
           ttoMedications: data.ttoMedications ? data.ttoMedications : null,
+          // Maternity-specific — only ever populated by DischargeModal.tsx
+          // when this admission has a linked LaborRecord; null for every
+          // other discharge.
+          breastfeedingCounselingDone: data.breastfeedingCounselingDone ?? null,
+          familyPlanningMethodDiscussed: data.familyPlanningMethodDiscussed || null,
+          newbornDangerSignsCounseled: data.newbornDangerSignsCounseled ?? null,
+          postnatalFollowUpDate: data.postnatalFollowUpDate ? new Date(data.postnatalFollowUpDate) : null,
+          maternalConditionAtDischarge: data.maternalConditionAtDischarge || null,
+          maternalConditionNotes: data.maternalConditionNotes || null,
+          newbornConditionAtDischarge: data.newbornConditionAtDischarge || null,
+          newbornConditionNotes: data.newbornConditionNotes || null,
         }
       });
 
       if (data.finalDiagnosisId) {
+        // Either owned by this tenant, or a shared/global reference row
+        // (tenantId: null — see seed-icd10-catalog.ts) usable by every tenant.
+        // @ts-ignore - Temporary fix for schema alignment
+        const diagnosis = await tx.diagnosisCatalog.findFirst({
+          where: { id: data.finalDiagnosisId, OR: [{ tenantId }, { tenantId: null }] }
+        });
+        if (!diagnosis) throw new Error('Selected diagnosis not found');
+
         // @ts-ignore - Temporary fix for schema alignment
         await tx.admissionDiagnosis.create({
           data: {
@@ -415,14 +542,45 @@ export class InpatientService {
         });
       }
 
-      // @ts-ignore - Temporary fix for schema alignment
-      await tx.bed.updateMany({
-        where: { id: admission.bedId, tenantId },
-        data: { status: 'AVAILABLE' }
-      });
+      // Only free the bed immediately if this admission has actually been
+      // billed AND that invoice is fully paid. Otherwise the bed is held —
+      // see Admission.bedClearedAt — until someone explicitly confirms via
+      // "Confirm Bed Vacated", since in practice a discharged patient often
+      // stays in the bed for days while settling an outstanding balance.
+      let bedCleared = false;
+      if (admission.billingStatus === 'BILLED') {
+        // @ts-ignore - Temporary fix for schema alignment
+        const lineItems = await tx.invoiceLineItem.findMany({
+          where: { admissionId, isDeleted: false },
+          select: { invoiceId: true }
+        });
+        const invoiceIds = [...new Set(lineItems.map((li: any) => li.invoiceId))];
+        if (invoiceIds.length > 0) {
+          const invoices = await tx.invoice.findMany({
+            where: { id: { in: invoiceIds }, isDeleted: false }
+          });
+          bedCleared = invoices.length > 0 && invoices.every((inv: any) => Number(inv.balance) === 0);
+        }
+      }
 
-      if (data.prescriptions && Array.isArray(data.prescriptions) && data.prescriptions.length > 0) {
-        for (const p of data.prescriptions) {
+      let bedClearedAt: Date | null = null;
+      if (bedCleared) {
+        // @ts-ignore - Temporary fix for schema alignment
+        await tx.bed.updateMany({
+          where: { id: admission.bedId, tenantId },
+          data: { status: 'AVAILABLE' }
+        });
+        bedClearedAt = new Date();
+        // @ts-ignore - Temporary fix for schema alignment
+        await tx.admission.update({
+          where: { id: admissionId },
+          data: { bedClearedAt }
+        });
+      }
+
+      if (ttoPrescriptions.length > 0) {
+        for (const p of ttoPrescriptions) {
+          const warning = ttoWarnings.find(w => w.medicationName === p.medicationName);
           await tx.prescription.create({
             data: {
               tenantId,
@@ -437,16 +595,100 @@ export class InpatientService {
               duration: p.duration,
               instructions: p.instructions || '',
               quantity: p.quantity || 1,
-              status: 'PENDING'
+              status: 'PENDING',
+              allergyWarning: warning?.allergyWarning || false,
+              interactionWarning: warning?.interactionWarning || false,
             }
           });
         }
       }
 
-      return dis;
+      return { ...dis, bedCleared, bedClearedAt };
     });
 
-    return updated;
+    // Only surface medications that actually triggered a flag.
+    const flaggedWarnings = ttoWarnings.filter(
+      w => w.allergyWarning || w.interactionWarning || w.duplicateWarning
+    );
+
+    return { ...updated, medicationWarnings: flaggedWarnings };
+  }
+
+  // Explicitly frees a held bed after discharge, regardless of payment
+  // status — staff may choose to let someone go despite an unpaid balance,
+  // that's their call, not the system's to block. Available any time after
+  // discharge; a no-op guard prevents double-clearing.
+  async confirmBedVacated(tenantId: string, admissionId: string) {
+    // @ts-ignore - Temporary fix for schema alignment
+    const admission = await prisma.admission.findFirst({
+      where: { tenantId, id: admissionId, status: 'DISCHARGED' }
+    });
+    if (!admission) throw new Error('Discharged admission not found');
+    if (admission.bedClearedAt) throw new Error('Bed has already been marked as vacated');
+
+    return prisma.$transaction(async (tx) => {
+      // @ts-ignore - Temporary fix for schema alignment
+      const updated = await tx.admission.update({
+        where: { id: admissionId },
+        data: { bedClearedAt: new Date() }
+      });
+      // @ts-ignore - Temporary fix for schema alignment
+      await tx.bed.updateMany({
+        where: { id: admission.bedId, tenantId },
+        data: { status: 'AVAILABLE' }
+      });
+      return updated;
+    });
+  }
+
+  // Powers the "Awaiting Bed Clearance" countdown: for every discharged
+  // admission whose bed is still being held, computes how much grace-period
+  // time is left (or how far into overstay it already is) and the estimated
+  // extra accommodation charge that would result from generating an invoice
+  // right now — mirrors the day-count/rate logic in
+  // generate-invoice.use-case.ts's ACCOMMODATION overstay line item.
+  async getOverstayStatus(tenantId: string) {
+    // @ts-ignore - Temporary fix for schema alignment
+    const tenant = await prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { overstayGraceDays: true }
+    });
+    const graceDays = tenant?.overstayGraceDays ?? 2;
+
+    // @ts-ignore - Temporary fix for schema alignment
+    const admissions = await prisma.admission.findMany({
+      where: { tenantId, status: 'DISCHARGED', bedClearedAt: null },
+      include: {
+        patient: true,
+        bed: { include: { ward: true } }
+      },
+      orderBy: { dischargeDate: 'asc' }
+    });
+
+    const msPerDay = 1000 * 60 * 60 * 24;
+    const now = Date.now();
+
+    return admissions.map((admission: any) => {
+      const dischargeTime = new Date(admission.dischargeDate).getTime();
+      const daysSinceDischarge = Math.max(0, Math.floor((now - dischargeTime) / msPerDay));
+      const graceDaysRemaining = Math.max(0, graceDays - daysSinceDischarge);
+      const overstayDays = Math.max(0, daysSinceDischarge - graceDays);
+      const dailyCost = admission.bed?.ward?.dailyCost || 0;
+      const estimatedExtraCharge = overstayDays * dailyCost;
+
+      return {
+        admissionId: admission.id,
+        patient: admission.patient,
+        bed: admission.bed,
+        dischargeDate: admission.dischargeDate,
+        billingStatus: admission.billingStatus,
+        daysSinceDischarge,
+        graceDaysRemaining,
+        overstayDays,
+        estimatedExtraCharge,
+        isOverstay: overstayDays > 0
+      };
+    });
   }
 
   async transferPatient(tenantId: string, admissionId: string, data: any, userId: string) {
@@ -462,9 +704,12 @@ export class InpatientService {
 
     // @ts-ignore - Temporary fix for schema alignment
     const newBed = await prisma.bed.findFirst({
-      where: { tenantId, id: toBedId }
+      where: { tenantId, id: toBedId },
+      include: { ward: { select: { status: true } } }
     });
     if (!newBed || newBed.status !== 'AVAILABLE') throw new Error('Target bed is not available');
+    // @ts-ignore - Temporary fix for schema alignment
+    if (newBed.ward.status !== 'ACTIVE') throw new Error('Target bed belongs to a ward that is no longer active');
 
     const transfer = await prisma.$transaction(async (tx) => {
       const fromBedId = admission.bedId;
@@ -511,6 +756,59 @@ export class InpatientService {
   }
 
   async addWardRound(tenantId: string, admissionId: string, data: any, userId: string) {
+    // Fetch the admission (and patient allergies) up front — needed both to
+    // confirm the admission belongs to this tenant and, for any new
+    // medication below, to run the same allergy/interaction/duplicate-therapy
+    // checks CreatePrescriptionUseCase already enforces (REQ-CLIN-7).
+    // Previously this was fetched inside the transaction, after already
+    // creating the WardRound row (safe, since a throw rolls the whole
+    // transaction back, but there was no allergy checking here at all).
+    // @ts-ignore - Temporary fix for schema alignment
+    const admission = await prisma.admission.findFirst({
+      where: { id: admissionId, tenantId },
+      include: { patient: { select: { firstName: true, lastName: true, allergies: true } } }
+    });
+
+    if (!admission) {
+      throw new Error('Admission not found');
+    }
+
+    const changes: any[] = Array.isArray(data.medicationChanges) ? data.medicationChanges : [];
+    const patientAllergies = admission.patient.allergies || [];
+
+    // Precompute warnings for every new medication before opening the
+    // transaction — these are read-only checks against tenant data, not
+    // part of the write itself, mirroring how CreatePrescriptionUseCase
+    // orders checks before create rather than inside a transaction.
+    const medicationWarnings: Array<{
+      medicationName: string;
+      allergyWarning: boolean;
+      allergyDetails: string[];
+      interactionWarning: boolean;
+      interactionDetails: string[];
+      duplicateWarning: boolean;
+      duplicateDetails: string[];
+    }> = [];
+
+    for (const change of changes) {
+      if (change.action === 'ADD' && change.medicationName) {
+        const allergyWarning = checkForAllergies(change.medicationName, patientAllergies);
+        const allergyDetails = allergyWarning ? findMatchingAllergies(change.medicationName, patientAllergies) : [];
+        const { interactionWarning, interactionDetails } = await checkDrugInteractions(prisma, tenantId, admission.patientId, change.medicationName);
+        const { duplicateWarning, duplicateDetails } = await checkDuplicateTherapy(prisma, tenantId, admission.patientId, change.medicationName);
+
+        medicationWarnings.push({
+          medicationName: change.medicationName,
+          allergyWarning,
+          allergyDetails,
+          interactionWarning,
+          interactionDetails,
+          duplicateWarning,
+          duplicateDetails,
+        });
+      }
+    }
+
     const result = await prisma.$transaction(async (tx) => {
       // 1. Create the ward round
       // @ts-ignore - Temporary fix for schema alignment
@@ -525,70 +823,64 @@ export class InpatientService {
         }
       });
 
-      // 2. Fetch the admission to get patientId
-      // @ts-ignore - Temporary fix for schema alignment
-      const admission = await tx.admission.findFirst({
-        where: { id: admissionId, tenantId },
-        include: { patient: { select: { firstName: true, lastName: true } } }
-      });
-
-      if (!admission) {
-        throw new Error('Admission not found');
-      }
-
-      // 3. Process Medication Changes — tracked so a single role-wide
+      // 2. Process Medication Changes — tracked so a single role-wide
       // notification can be sent after commit (REQ: a medication add/stop
       // during a ward round must be impossible to miss, not just visible to
       // whoever happens to open the Medication chart tab later).
       const started: string[] = [];
       const discontinued: string[] = [];
 
-      if (data.medicationChanges && Array.isArray(data.medicationChanges)) {
-        for (const change of data.medicationChanges) {
-          if (change.action === 'DISCONTINUE' && change.prescriptionId) {
-            const updateResult = await tx.prescription.updateMany({
-              where: { id: change.prescriptionId, tenantId },
-              data: {
-                status: 'CANCELLED', // We use CANCELLED to denote discontinued
-                // Link to this admission even if the prescription predates it
-                // (e.g. started during an earlier consultation) — both
-                // getCharts' activePrescriptions and getAdmissionById's
-                // prescriptions include filter on admissionId, and a
-                // cancelled prescription also fails the PENDING/DISPENSED
-                // status fallback, so without this it silently disappears
-                // from the chart/banner the moment it's discontinued.
-                admissionId: admissionId,
-                updatedAt: new Date()
-              }
-            });
-            if (updateResult.count > 0) {
-              discontinued.push(change.medicationName || 'a medication');
+      for (const change of changes) {
+        if (change.action === 'DISCONTINUE' && change.prescriptionId) {
+          // Scoped to this admission's own patient, not just the tenant —
+          // otherwise any prescriptionId in the same tenant could be
+          // discontinued (and silently reassigned to this admission below)
+          // regardless of which patient it actually belongs to.
+          const updateResult = await tx.prescription.updateMany({
+            where: { id: change.prescriptionId, tenantId, patientId: admission.patientId },
+            data: {
+              status: 'CANCELLED', // We use CANCELLED to denote discontinued
+              // Link to this admission even if the prescription predates it
+              // (e.g. started during an earlier consultation) — both
+              // getCharts' activePrescriptions and getAdmissionById's
+              // prescriptions include filter on admissionId, and a
+              // cancelled prescription also fails the PENDING/DISPENSED
+              // status fallback, so without this it silently disappears
+              // from the chart/banner the moment it's discontinued.
+              admissionId: admissionId,
+              updatedAt: new Date()
             }
-          } else if (change.action === 'ADD' && change.medicationName) {
-            await tx.prescription.create({
-              data: {
-                tenantId,
-                patientId: admission.patientId,
-                // @ts-ignore - Temporary fix for schema alignment
-                admissionId: admissionId,
-                doctorId: userId,
-                medicationId: change.medicationId || null,
-                medicationName: change.medicationName,
-                route: change.route || 'ORAL',
-                dosage: change.dosage,
-                frequency: change.frequency || 'As directed',
-                duration: change.duration || 'Until discontinued',
-                instructions: change.instructions || 'Added during ward round',
-                type: 'INPATIENT',
-                status: 'PENDING'
-              }
-            });
-            started.push(change.medicationName);
+          });
+          if (updateResult.count > 0) {
+            discontinued.push(change.medicationName || 'a medication');
           }
+        } else if (change.action === 'ADD' && change.medicationName) {
+          const warning = medicationWarnings.find(w => w.medicationName === change.medicationName);
+          await tx.prescription.create({
+            data: {
+              tenantId,
+              patientId: admission.patientId,
+              // @ts-ignore - Temporary fix for schema alignment
+              admissionId: admissionId,
+              doctorId: userId,
+              medicationId: change.medicationId || null,
+              medicationName: change.medicationName,
+              route: change.route || 'ORAL',
+              dosage: change.dosage,
+              frequency: change.frequency || 'As directed',
+              duration: change.duration || 'Until discontinued',
+              instructions: change.instructions || 'Added during ward round',
+              type: 'INPATIENT',
+              status: 'PENDING',
+              allergyWarning: warning?.allergyWarning || false,
+              interactionWarning: warning?.interactionWarning || false,
+            }
+          });
+          started.push(change.medicationName);
         }
       }
 
-      return { wardRound, started, discontinued, patientName: `${admission.patient.firstName} ${admission.patient.lastName}` };
+      return { wardRound, started, discontinued };
     });
 
     // Outside the transaction — only notify once the change is actually
@@ -599,16 +891,26 @@ export class InpatientService {
       if (result.started.length > 0) parts.push(`Started ${result.started.join(', ')}`);
       if (result.discontinued.length > 0) parts.push(`Discontinued ${result.discontinued.join(', ')}`);
 
-      await this.notificationService.notifyRole(tenantId, ['DOCTOR', 'NURSE'], {
+      // Ward rounds happen a few times a day — a 15-minute cooldown only
+      // catches the pathological case of rapid duplicate submissions, not
+      // legitimate distinct rounds later the same day.
+      await this.notificationService.notifyRoleWithCooldown(tenantId, ['DOCTOR', 'NURSE'], {
         type: 'MEDICATION_CHANGE',
+        severity: 'INFO',
         title: 'Medication Order Changed',
-        message: `${result.patientName} — ${parts.join('; ')}`,
+        message: `${admission.patient.firstName} ${admission.patient.lastName} — ${parts.join('; ')}`,
         entityType: 'Admission',
         entityId: admissionId,
-      });
+      }, 15);
     }
 
-    return result.wardRound;
+    // Only surface medications that actually triggered a flag — an empty
+    // array means nothing to warn about, so the caller can key off length.
+    const flaggedWarnings = medicationWarnings.filter(
+      w => w.allergyWarning || w.interactionWarning || w.duplicateWarning
+    );
+
+    return { ...result.wardRound, medicationWarnings: flaggedWarnings };
   }
 
   async addMedicationAdministration(tenantId: string, admissionId: string, data: any, userId: string) {
@@ -625,8 +927,10 @@ export class InpatientService {
       // Only a COMPLETED dose actually leaves the shelf — MISSED/REFUSED
       // doses record why nothing was given, with no stock impact.
       if (status === 'COMPLETED' && data.prescriptionId) {
+        // Scoped to this admission's own patient — a prescriptionId from a
+        // different patient in the same tenant must not be usable here.
         const prescription = await tx.prescription.findFirst({
-          where: { id: data.prescriptionId, tenantId }
+          where: { id: data.prescriptionId, tenantId, patientId: admission.patientId }
         });
 
         if (prescription?.medicationId) {
@@ -681,7 +985,8 @@ export class InpatientService {
       where: {
         tenantId,
         patientId,
-        billingStatus: 'UNBILLED'
+        billingStatus: 'UNBILLED',
+        isDeleted: false
       },
       include: {
         bed: {
@@ -753,6 +1058,12 @@ export class InpatientService {
     });
     const catalogPrice = serviceCatalog.find(s => s.serviceName.toLowerCase().includes('blood transfusion'));
     const unitPrice = Number(catalogPrice?.basePrice || 15000);
+    // Tax must be included here too — generate-invoice.use-case.ts adds
+    // (unitPrice * taxRate/100) on top of unitPrice for the same matched
+    // catalog entry, so a preview total that omits it would understate
+    // what actually lands on the invoice whenever taxRate > 0.
+    const taxRate = Number(catalogPrice?.taxRate || 0);
+    const tax = unitPrice * (taxRate / 100);
 
     // @ts-ignore - Temporary fix for schema alignment
     const transfusions = await prisma.transfusionChart.findMany({
@@ -766,7 +1077,8 @@ export class InpatientService {
         detail: new Date(t.startTime).toLocaleDateString(),
         quantity: 1,
         unitPrice,
-        total: unitPrice
+        tax,
+        total: unitPrice + tax
       }))
     };
   }
@@ -785,13 +1097,20 @@ export class InpatientService {
       data: operations.map((op: any) => {
         const catalogPrice = serviceCatalog.find(s => s.serviceName.toLowerCase().includes(op.surgicalProcedure.toLowerCase()));
         const unitPrice = Number(catalogPrice?.basePrice || 50000);
+        // Tax must be included here too — generate-invoice.use-case.ts adds
+        // (unitPrice * taxRate/100) on top of unitPrice for the same matched
+        // catalog entry, so a preview total that omits it would understate
+        // what actually lands on the invoice whenever taxRate > 0.
+        const taxRate = Number(catalogPrice?.taxRate || 0);
+        const tax = unitPrice * (taxRate / 100);
         return {
           id: op.id,
           description: `Surgery: ${op.surgicalProcedure}`,
           detail: new Date(op.operationDate).toLocaleDateString(),
           quantity: 1,
           unitPrice,
-          total: unitPrice
+          tax,
+          total: unitPrice + tax
         };
       })
     };
@@ -868,13 +1187,20 @@ export class InpatientService {
     const breachedLabels = VITAL_ALERT_THRESHOLDS.filter(t => t.test(chartData)).map(t => t.label);
     if (breachedLabels.length > 0) {
       const patientName = `${admission.patient.firstName} ${admission.patient.lastName}`;
-      await this.notificationService.notifyRole(tenantId, ['DOCTOR', 'NURSE'], {
+      // Keyed on admissionId, not vitalChart.id — every vitals recording
+      // creates a fresh VitalChart row, so keying on that would never
+      // actually dedupe anything. A 30-minute cooldown covers the typical
+      // vitals-recording cadence for an unstable patient without missing a
+      // genuinely new breach for long. No notification click-through
+      // navigates by entityId today, so this is a pure improvement.
+      await this.notificationService.notifyRoleWithCooldown(tenantId, ['DOCTOR', 'NURSE'], {
         type: 'CRITICAL_VITAL_SIGN',
+        severity: 'CRITICAL',
         title: 'Critical Vital Sign',
         message: `${patientName} — ${breachedLabels.join(', ')}`,
-        entityType: 'VitalChart',
-        entityId: vitalChart.id
-      });
+        entityType: 'Admission',
+        entityId: admissionId
+      }, 30);
     }
 
     return vitalChart;
@@ -973,7 +1299,6 @@ export class InpatientService {
         assistants: data.assistants,
         anaesthetics: data.anaesthetics,
         anaesthetist: data.anaesthetist,
-        anaesthesis: data.anaesthesis,
         incision: data.incision,
         findings: data.findings,
         procedure: data.procedure,

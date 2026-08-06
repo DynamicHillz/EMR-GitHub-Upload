@@ -68,6 +68,7 @@ export class UpdatePatientUseCase {
       ...(dto.emergencyContact && { emergencyContact: dto.emergencyContact }),
       ...(dto.patientType && { patientType: dto.patientType }),
       ...(dto.hmoProvider !== undefined && { hmoProvider: dto.hmoProvider }),
+      ...(dto.hmoProviderId !== undefined && { hmoProviderId: dto.hmoProviderId }),
       ...(dto.hmoNumber !== undefined && { hmoNumber: dto.hmoNumber }),
       ...(dto.nhisNumber !== undefined && { nhisNumber: dto.nhisNumber }),
     };
@@ -115,6 +116,7 @@ export class UpdatePatientUseCase {
       nhisNumber: patient.nhisNumber,
       patientType: patient.patientType,
       hmoProvider: patient.hmoProvider,
+      hmoProviderId: patient.hmoProviderId,
       hmoNumber: patient.hmoNumber,
       photoUrl: patient.photoUrl,
       status: patient.status,
@@ -124,6 +126,9 @@ export class UpdatePatientUseCase {
       consentVersion: patient.consentVersion || null,
       createdAt: patient.createdAt.toISOString(),
       updatedAt: patient.updatedAt.toISOString(),
+      motherPatientId: patient.motherPatientId ?? null,
+      mother: patient.mother ?? null,
+      newbornChildren: patient.newbornChildren ?? [],
     };
   }
 }

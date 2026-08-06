@@ -57,6 +57,8 @@ export interface LaborRecord {
   apgarScore5Min?: number;
   resuscitationRequired?: boolean;
   deliveryNotes?: string;
+  newbornPatientId?: string;
+  newbornPatient?: NewbornPatientSummary;
 
   pregnancy?: { id: string; gravidity: number; parity: number; lmp?: string; edd?: string };
   startedBy?: { firstName: string; lastName: string };
@@ -116,4 +118,15 @@ export interface RecordDeliveryOutcomeDto {
   apgarScore5Min?: number;
   resuscitationRequired?: boolean;
   deliveryNotes?: string;
+  registerNewbornAsPatient?: boolean;
+}
+
+export interface NewbornPatientSummary {
+  id: string;
+  patientId: string;
+}
+
+export interface DiscontinueLaborDto {
+  status: 'TRANSFERRED' | 'DISCONTINUED';
+  reason: string;
 }

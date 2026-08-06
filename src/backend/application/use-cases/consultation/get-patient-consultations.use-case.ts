@@ -33,17 +33,18 @@ export class GetPatientConsultationsUseCase {
   async execute(
     patientId: string,
     tenantId: string,
-    options?: { limit?: number }
+    options?: { limit?: number; skip?: number }
   ): Promise<PatientConsultationSummary[]> {
     const consultations = await this.prisma.consultation.findMany({
-      where: { patientId, tenantId },
+      where: { patientId, tenantId, isDeleted: false },
       include: {
         patient: { select: { firstName: true, lastName: true } },
         doctor: { select: { firstName: true, lastName: true } },
         prescriptions: true
       },
       orderBy: { consultationDate: 'desc' },
-      take: options?.limit
+      take: options?.limit,
+      skip: options?.skip
     });
 
     return consultations.map(c => ({

@@ -25,7 +25,8 @@ export interface RegisterPatientDto {
   emergencyContact?: EmergencyContact;
   nhisNumber?: string;
   patientType?: 'PRIVATE' | 'HMO';
-  hmoProvider?: string;
+  hmoProvider?: string; // legacy free-text — kept for backward-compat display/fallback only
+  hmoProviderId?: string; // real FK, drives billing coverage — see generate-invoice.use-case.ts
   hmoNumber?: string;
   photoUrl?: string;
   consentGiven?: boolean; // US-PAT-006: Data processing consent
@@ -60,6 +61,7 @@ export interface PatientResponseDto {
   nhisNumber: string | null;
   patientType: 'PRIVATE' | 'HMO';
   hmoProvider: string | null;
+  hmoProviderId: string | null;
   hmoNumber: string | null;
   photoUrl: string | null;
   status: string;
@@ -69,6 +71,11 @@ export interface PatientResponseDto {
   consentVersion: string | null;
   createdAt: string;
   updatedAt: string;
+  // Newborn linkage (see record-delivery-outcome.use-case.ts) — lets the
+  // frontend cross-link a mother's and newborn's own charts.
+  motherPatientId: string | null;
+  mother: { id: string; patientId: string; firstName: string; lastName: string } | null;
+  newbornChildren: Array<{ id: string; patientId: string; firstName: string; lastName: string }>;
 }
 
 export interface UpdatePatientDto {
@@ -96,6 +103,7 @@ export interface UpdatePatientDto {
   nhisNumber?: string;
   patientType?: 'PRIVATE' | 'HMO';
   hmoProvider?: string;
+  hmoProviderId?: string;
   hmoNumber?: string;
   photoUrl?: string;
   status?: string;

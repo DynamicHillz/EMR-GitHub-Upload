@@ -50,7 +50,7 @@ export const getLabTestQueue = async (req: Request, res: Response) => {
       });
     }
 
-    const { status, urgency, limit, patientId, billingStatus } = req.query;
+    const { status, urgency, limit, offset, patientId, billingStatus } = req.query;
 
     const filters: any = {};
 
@@ -64,6 +64,10 @@ export const getLabTestQueue = async (req: Request, res: Response) => {
 
     if (limit) {
       filters.limit = parseInt(limit as string);
+    }
+
+    if (offset) {
+      filters.skip = parseInt(offset as string);
     }
 
     if (patientId) {

@@ -23,12 +23,13 @@ export class CancelInvoiceUseCase {
       throw new NotFoundError('Invoice', invoiceId);
     }
 
-    // Cannot cancel an invoice with any money already collected on it — used
-    // to only block fully PAID, so a PARTIALLY_PAID invoice could be
-    // cancelled (soft-deleted, dropping out of the default invoice list)
-    // while its Payment row(s) — real collected money — were left stranded
-    // with no compensating refund and no forced reconciliation step.
-    if (existing.paymentStatus !== 'UNPAID') {
+    // Cannot cancel an invoice with any money already collected FROM THE
+    // PATIENT on it. Checked against paidAmount, not paymentStatus — a fully
+    // HMO/exemption-covered invoice reads paymentStatus 'PAID' immediately at
+    // generation (see generate-invoice.use-case.ts) even though the patient
+    // paid nothing, and paymentStatus alone would wrongly block cancelling a
+    // mis-billed HMO invoice with no real payment to refund.
+    if (Number(existing.paidAmount) > 0) {
       throw new ValidationError('Cannot cancel an invoice with payments recorded against it. Request a refund instead.');
     }
 
@@ -37,7 +38,27 @@ export class CancelInvoiceUseCase {
       throw new ValidationError('Invoice is already cancelled');
     }
 
+    // An auto-created InsuranceClaim (see generate-invoice.use-case.ts) is
+    // tied 1:1 to this invoice. If the HMO has already paid it, cancelling
+    // here would silently orphan real settled money — block it and require
+    // sorting that out with the provider first. Any earlier-stage claim
+    // (DRAFT/SUBMITTED/APPROVED/etc.) is safe to cancel automatically below,
+    // since nothing has actually been paid out on it yet.
+    const existingClaim = await this.prisma.insuranceClaim.findUnique({ where: { invoiceId } });
+    if (existingClaim?.status === 'PAID') {
+      throw new ValidationError(
+        'Cannot cancel an invoice with a PAID insurance claim against it. Settle this with the provider before cancelling.'
+      );
+    }
+
     const invoice = await this.prisma.$transaction(async (tx) => {
+      if (existingClaim) {
+        await tx.insuranceClaim.update({
+          where: { id: existingClaim.id },
+          data: { status: 'CANCELLED' }
+        });
+      }
+
       const invoiceToCancel = await tx.invoice.findUnique({
         where: { id: invoiceId },
         include: { items: true }
@@ -65,10 +86,18 @@ export class CancelInvoiceUseCase {
         include: { items: true }
       });
 
-      // Unbill clinical items so they can be re-billed
+      // Unbill clinical items so they can be re-billed — every source type
+      // generate-invoice.use-case.ts can pull a line item from must be
+      // reversed here, or a cancelled invoice permanently strands that
+      // item at billingStatus 'BILLED' with no way to ever bill it again.
       const consultationIds = invoiceToCancel?.items.map(i => i.consultationId).filter(id => id) as string[];
       const labOrderIds = invoiceToCancel?.items.map(i => i.labOrderId).filter(id => id) as string[];
       const prescriptionIds = invoiceToCancel?.items.map(i => i.prescriptionId).filter(id => id) as string[];
+      const consumableUsageIds = invoiceToCancel?.items.map(i => i.consumableUsageId).filter(id => id) as string[];
+      const admissionIds = invoiceToCancel?.items.map(i => i.admissionId).filter(id => id) as string[];
+      const transfusionChartIds = invoiceToCancel?.items.map(i => i.transfusionChartId).filter(id => id) as string[];
+      const operationNoteIds = invoiceToCancel?.items.map(i => i.operationNoteId).filter(id => id) as string[];
+      const laborRecordIds = invoiceToCancel?.items.map(i => i.laborRecordId).filter(id => id) as string[];
 
       if (consultationIds && consultationIds.length > 0) {
         await tx.consultation.updateMany({
@@ -85,6 +114,36 @@ export class CancelInvoiceUseCase {
       if (prescriptionIds && prescriptionIds.length > 0) {
         await tx.prescription.updateMany({
           where: { id: { in: prescriptionIds } },
+          data: { billingStatus: 'UNBILLED' }
+        });
+      }
+      if (consumableUsageIds && consumableUsageIds.length > 0) {
+        await tx.consumableUsage.updateMany({
+          where: { id: { in: consumableUsageIds } },
+          data: { billingStatus: 'UNBILLED' }
+        });
+      }
+      if (admissionIds && admissionIds.length > 0) {
+        await tx.admission.updateMany({
+          where: { id: { in: admissionIds } },
+          data: { billingStatus: 'UNBILLED' }
+        });
+      }
+      if (transfusionChartIds && transfusionChartIds.length > 0) {
+        await tx.transfusionChart.updateMany({
+          where: { id: { in: transfusionChartIds } },
+          data: { billingStatus: 'UNBILLED' }
+        });
+      }
+      if (operationNoteIds && operationNoteIds.length > 0) {
+        await tx.operationNote.updateMany({
+          where: { id: { in: operationNoteIds } },
+          data: { billingStatus: 'UNBILLED' }
+        });
+      }
+      if (laborRecordIds && laborRecordIds.length > 0) {
+        await tx.laborRecord.updateMany({
+          where: { id: { in: laborRecordIds } },
           data: { billingStatus: 'UNBILLED' }
         });
       }

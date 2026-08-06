@@ -5,6 +5,21 @@
 import { Router } from 'express';
 import { asyncHandler } from '../middleware/errorHandler';
 import { requireRole } from '../middleware/auth';
+import { validateRequest } from '../middleware/validation';
+import {
+  addMedicationSchema,
+  updateMedicationSchema,
+  createInventoryCategorySchema,
+  updateInventoryCategorySchema,
+  addMedicationBatchSchema,
+  dispenseMedicationSchema,
+  checkDrugInteractionsSchema,
+  generateMedicationLabelSchema,
+  addConsumableSchema,
+  updateConsumableSchema,
+  addConsumableBatchSchema,
+  recordConsumableUsageSchema,
+} from '../../application/validators/pharmacy.validator';
 import {
   getPrescriptionQueue,
   dispenseMedication,
@@ -56,28 +71,28 @@ router.get('/batches', CAN_VIEW, asyncHandler(getMedicationBatches));
 router.get('/inventory', CAN_VIEW, asyncHandler(getInventory));
 router.get('/alerts', CAN_VIEW, asyncHandler(getStockAlerts));
 
-router.post('/medications', requireRole(['SUPER_ADMIN', 'ADMIN', 'PHARMACIST']), asyncHandler(addMedication));
-router.put('/medications/:id', requireRole(['SUPER_ADMIN', 'ADMIN', 'PHARMACIST']), asyncHandler(updateMedication));
+router.post('/medications', requireRole(['SUPER_ADMIN', 'ADMIN', 'PHARMACIST']), validateRequest(addMedicationSchema, 'body'), asyncHandler(addMedication));
+router.put('/medications/:id', requireRole(['SUPER_ADMIN', 'ADMIN', 'PHARMACIST']), validateRequest(updateMedicationSchema, 'body'), asyncHandler(updateMedication));
 
 // Category management (Super Admin / Admin only)
 router.get('/categories', requireRole(['SUPER_ADMIN', 'ADMIN', 'PHARMACIST', 'DOCTOR', 'NURSE']), asyncHandler(getInventoryCategories));
-router.post('/categories', requireRole(['SUPER_ADMIN', 'ADMIN']), asyncHandler(createInventoryCategory));
-router.put('/categories/:id', requireRole(['SUPER_ADMIN', 'ADMIN']), asyncHandler(updateInventoryCategory));
+router.post('/categories', requireRole(['SUPER_ADMIN', 'ADMIN']), validateRequest(createInventoryCategorySchema, 'body'), asyncHandler(createInventoryCategory));
+router.put('/categories/:id', requireRole(['SUPER_ADMIN', 'ADMIN']), validateRequest(updateInventoryCategorySchema, 'body'), asyncHandler(updateInventoryCategory));
 router.delete('/categories/:id', requireRole(['SUPER_ADMIN', 'ADMIN']), asyncHandler(deleteInventoryCategory));
 
-router.post('/inventory/batches', CAN_MANAGE_INVENTORY, asyncHandler(addMedicationBatch));
+router.post('/inventory/batches', CAN_MANAGE_INVENTORY, validateRequest(addMedicationBatchSchema, 'body'), asyncHandler(addMedicationBatch));
 router.post('/alerts/generate', CAN_MANAGE_INVENTORY, asyncHandler(generateStockAlerts));
-router.post('/dispense', CAN_DISPENSE, asyncHandler(dispenseMedication));
-router.post('/interactions/check', CAN_VIEW, asyncHandler(checkDrugInteractions));
-router.post('/labels/generate', CAN_VIEW, asyncHandler(generateMedicationLabel));
+router.post('/dispense', CAN_DISPENSE, validateRequest(dispenseMedicationSchema, 'body'), asyncHandler(dispenseMedication));
+router.post('/interactions/check', CAN_VIEW, validateRequest(checkDrugInteractionsSchema, 'body'), asyncHandler(checkDrugInteractions));
+router.post('/labels/generate', CAN_VIEW, validateRequest(generateMedicationLabelSchema, 'body'), asyncHandler(generateMedicationLabel));
 
 // Consumables (non-drug supplies: syringes, gloves, gauze, cannula, etc.)
 router.get('/consumables', CAN_VIEW, asyncHandler(getConsumables));
-router.post('/consumables', CAN_MANAGE_INVENTORY, asyncHandler(addConsumable));
-router.put('/consumables/:id', CAN_MANAGE_INVENTORY, asyncHandler(updateConsumable));
+router.post('/consumables', CAN_MANAGE_INVENTORY, validateRequest(addConsumableSchema, 'body'), asyncHandler(addConsumable));
+router.put('/consumables/:id', CAN_MANAGE_INVENTORY, validateRequest(updateConsumableSchema, 'body'), asyncHandler(updateConsumable));
 router.get('/consumables/inventory', CAN_VIEW, asyncHandler(getConsumableInventory));
-router.post('/consumables/batches', CAN_MANAGE_INVENTORY, asyncHandler(addConsumableBatch));
+router.post('/consumables/batches', CAN_MANAGE_INVENTORY, validateRequest(addConsumableBatchSchema, 'body'), asyncHandler(addConsumableBatch));
 router.get('/consumables/usage', CAN_VIEW, asyncHandler(getConsumableUsage));
-router.post('/consumables/usage', CAN_RECORD_CONSUMABLE_USAGE, asyncHandler(recordConsumableUsage));
+router.post('/consumables/usage', CAN_RECORD_CONSUMABLE_USAGE, validateRequest(recordConsumableUsageSchema, 'body'), asyncHandler(recordConsumableUsage));
 
 export default router;

@@ -20,7 +20,7 @@ import {
   OverlappingAppointmentQuery,
 } from '../../../domain/interfaces/IAppointmentRepository';
 import { Appointment, AppointmentStatus } from '../../../domain/entities/Appointment';
-import { ConflictError } from '../../../shared/errors/AppError';
+import { ConflictError, NotFoundError } from '../../../shared/errors/AppError';
 
 export class AppointmentRepository implements IAppointmentRepository {
   constructor(private prisma: PrismaClient) {}
@@ -276,23 +276,15 @@ export class AppointmentRepository implements IAppointmentRepository {
    * Update an appointment
    */
   async update(id: string, tenantId: string, data: AppointmentUpdateData, expectedVersion?: number): Promise<Appointment> {
-    // Verify appointment belongs to tenant
-    await this.findById(id, tenantId);
-
-    if (expectedVersion !== undefined) {
-      const versionCheck = await this.prisma.appointment.updateMany({
-        where: { id, tenantId, version: expectedVersion },
-        data: { version: { increment: 1 } },
-      });
-      if (versionCheck.count === 0) {
-        throw new ConflictError('This appointment was changed by someone else. Please reload and try again.');
-      }
-    } else {
-      await this.prisma.appointment.update({ where: { id }, data: { version: { increment: 1 } } });
-    }
-
-    const appointment = await this.prisma.appointment.update({
-      where: { id },
+    // Tenant-scoped in the SAME atomic call as the write — a prior version
+    // fetched via findById(id, tenantId) to "verify" ownership but discarded
+    // the result, then updated by raw id with no tenantId filter at all,
+    // letting any caller mutate another tenant's appointment by guessing
+    // its UUID.
+    const result = await this.prisma.appointment.updateMany({
+      where: expectedVersion !== undefined
+        ? { id, tenantId, version: expectedVersion }
+        : { id, tenantId },
       data: {
         ...(data.appointmentDate && { appointmentDate: data.appointmentDate }),
         ...(data.appointmentTime && { appointmentTime: data.appointmentTime }),
@@ -301,21 +293,30 @@ export class AppointmentRepository implements IAppointmentRepository {
         ...(data.duration && { duration: data.duration }),
         ...(data.status && { status: data.status }),
         updatedAt: new Date(),
+        version: { increment: 1 },
       },
     });
 
-    return this.mapToEntity(appointment);
+    if (result.count === 0) {
+      // updateMany's count alone can't tell "doesn't exist / wrong tenant"
+      // (404) apart from "existed but the version we were given is stale"
+      // (409) — disambiguate with a tenant-scoped read.
+      const existing = await this.findById(id, tenantId);
+      if (!existing) {
+        throw new NotFoundError('Appointment', id);
+      }
+      throw new ConflictError('This appointment was changed by someone else. Please reload and try again.');
+    }
+
+    return (await this.findById(id, tenantId))!;
   }
 
   /**
    * Check in a patient
    */
   async checkIn(id: string, tenantId: string): Promise<Appointment> {
-    // Verify appointment belongs to tenant
-    await this.findById(id, tenantId);
-
-    const appointment = await this.prisma.appointment.update({
-      where: { id },
+    const result = await this.prisma.appointment.updateMany({
+      where: { id, tenantId },
       data: {
         status: 'CHECKED_IN',
         checkedInAt: new Date(),
@@ -323,18 +324,19 @@ export class AppointmentRepository implements IAppointmentRepository {
       },
     });
 
-    return this.mapToEntity(appointment);
+    if (result.count === 0) {
+      throw new NotFoundError('Appointment', id);
+    }
+
+    return (await this.findById(id, tenantId))!;
   }
 
   /**
    * Cancel an appointment
    */
   async cancel(id: string, tenantId: string, reason: string): Promise<Appointment> {
-    // Verify appointment belongs to tenant
-    await this.findById(id, tenantId);
-
-    const appointment = await this.prisma.appointment.update({
-      where: { id },
+    const result = await this.prisma.appointment.updateMany({
+      where: { id, tenantId },
       data: {
         status: 'CANCELLED',
         cancelledAt: new Date(),
@@ -343,19 +345,20 @@ export class AppointmentRepository implements IAppointmentRepository {
       },
     });
 
-    return this.mapToEntity(appointment);
+    if (result.count === 0) {
+      throw new NotFoundError('Appointment', id);
+    }
+
+    return (await this.findById(id, tenantId))!;
   }
 
   /**
    * Delete an appointment (soft delete - set to cancelled)
    */
   async delete(id: string, tenantId: string, userId?: string): Promise<void> {
-    // Verify appointment belongs to tenant
-    await this.findById(id, tenantId);
-
-    // Soft delete
-    await this.prisma.appointment.update({
-      where: { id },
+    // Soft delete — tenant-scoped in the same atomic call as the write.
+    const result = await this.prisma.appointment.updateMany({
+      where: { id, tenantId },
       data: {
         isDeleted: true,
         deletedAt: new Date(),
@@ -366,12 +369,19 @@ export class AppointmentRepository implements IAppointmentRepository {
         updatedAt: new Date(),
       },
     });
+
+    if (result.count === 0) {
+      throw new NotFoundError('Appointment', id);
+    }
   }
 
   /**
-   * Get appointments needing reminders
+   * Get appointments needing reminders for one tenant — the scheduler loops
+   * over tenants and calls this per-tenant (see scheduler.service.ts),
+   * mirroring the pattern runStockAlerts already uses, rather than this
+   * query scanning every tenant's appointments in one shot.
    */
-  async findNeedingReminder(hours: number): Promise<Appointment[]> {
+  async findNeedingReminder(hours: number, tenantId: string): Promise<Appointment[]> {
     const now = new Date();
     const targetTime = new Date(now.getTime() + hours * 60 * 60 * 1000);
 
@@ -379,6 +389,8 @@ export class AppointmentRepository implements IAppointmentRepository {
 
     const appointments = await this.prisma.appointment.findMany({
       where: {
+        tenantId,
+        isDeleted: false,
         status: 'SCHEDULED',
         [reminderField]: false,
         appointmentDate: {

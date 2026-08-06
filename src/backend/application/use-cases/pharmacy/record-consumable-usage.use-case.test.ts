@@ -45,6 +45,8 @@ describe('RecordConsumableUsageUseCase', () => {
 
     mockPrisma = {
       patient: { findFirst: jest.fn() },
+      admission: { findFirst: jest.fn() },
+      consultation: { findFirst: jest.fn() },
       consumableBatch: { findFirst: jest.fn() },
       $transaction: jest.fn((cb: any) => cb(mockTx)),
     };
@@ -211,6 +213,42 @@ describe('RecordConsumableUsageUseCase', () => {
       'Insufficient stock. Available: 1, Required: 2'
     );
     expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('should throw NotFoundError when admissionId does not belong to this patient/tenant', async () => {
+    mockPrisma.patient.findFirst.mockResolvedValue(patient);
+    mockPrisma.admission.findFirst.mockResolvedValue(null);
+
+    await expect(
+      useCase.execute({ ...dto, admissionId: 'someone-elses-admission' }, recordedById, tenantId)
+    ).rejects.toThrow(NotFoundError);
+    expect(mockPrisma.admission.findFirst).toHaveBeenCalledWith({
+      where: { id: 'someone-elses-admission', tenantId, patientId: dto.patientId },
+    });
+    expect(mockPrisma.consumableBatch.findFirst).not.toHaveBeenCalled();
+  });
+
+  it('should throw NotFoundError when consultationId does not belong to this patient/tenant', async () => {
+    mockPrisma.patient.findFirst.mockResolvedValue(patient);
+    mockPrisma.consultation.findFirst.mockResolvedValue(null);
+
+    await expect(
+      useCase.execute({ ...dto, consultationId: 'someone-elses-consultation' }, recordedById, tenantId)
+    ).rejects.toThrow(NotFoundError);
+    expect(mockPrisma.consultation.findFirst).toHaveBeenCalledWith({
+      where: { id: 'someone-elses-consultation', tenantId, patientId: dto.patientId },
+    });
+    expect(mockPrisma.consumableBatch.findFirst).not.toHaveBeenCalled();
+  });
+
+  it('should proceed when a valid admissionId/consultationId is provided', async () => {
+    setupHappyPath();
+    mockPrisma.admission.findFirst.mockResolvedValue({ id: 'adm-1', tenantId, patientId: dto.patientId });
+    mockPrisma.consultation.findFirst.mockResolvedValue({ id: 'cons-visit-1', tenantId, patientId: dto.patientId });
+
+    await expect(
+      useCase.execute({ ...dto, admissionId: 'adm-1', consultationId: 'cons-visit-1' }, recordedById, tenantId)
+    ).resolves.toBeDefined();
   });
 
   it('should reject inside the transaction when a concurrent usage record already consumed the stock', async () => {

@@ -11,6 +11,7 @@ import { logger } from '../../config/logger';
 import { StartLaborUseCase } from '../../application/use-cases/labor/start-labor.use-case';
 import { RecordPartographObservationUseCase } from '../../application/use-cases/labor/record-partograph-observation.use-case';
 import { RecordDeliveryOutcomeUseCase } from '../../application/use-cases/labor/record-delivery-outcome.use-case';
+import { DiscontinueLaborUseCase } from '../../application/use-cases/labor/discontinue-labor.use-case';
 import { GetLaborRecordUseCase } from '../../application/use-cases/labor/get-labor-record.use-case';
 import { GetActiveLaborsUseCase } from '../../application/use-cases/labor/get-active-labors.use-case';
 import { GetBillableLaborRecordsUseCase } from '../../application/use-cases/labor/get-billable-labor-records.use-case';
@@ -19,6 +20,7 @@ import { getSafeErrorMessage } from '../../shared/utils/error-message.util';
 const startLaborUseCase = new StartLaborUseCase(prisma);
 const recordPartographObservationUseCase = new RecordPartographObservationUseCase(prisma);
 const recordDeliveryOutcomeUseCase = new RecordDeliveryOutcomeUseCase(prisma);
+const discontinueLaborUseCase = new DiscontinueLaborUseCase(prisma);
 const getLaborRecordUseCase = new GetLaborRecordUseCase(prisma);
 const getActiveLaborsUseCase = new GetActiveLaborsUseCase(prisma);
 const getBillableLaborRecordsUseCase = new GetBillableLaborRecordsUseCase(prisma);
@@ -110,6 +112,24 @@ export const recordDeliveryOutcome = async (req: Request, res: Response) => {
   } catch (error: any) {
     logger.error('Error recording delivery outcome:', error);
     return res.status(error.statusCode || 500).json({ success: false, message: getSafeErrorMessage(error, 'Failed to record delivery outcome') });
+  }
+};
+
+export const discontinueLabor = async (req: Request, res: Response) => {
+  try {
+    const tenantId = req.user?.tenantId;
+    const userId = req.user?.id;
+    if (!tenantId || !userId) {
+      return res.status(401).json({ success: false, message: 'Unauthorized' });
+    }
+
+    const { laborRecordId } = req.params;
+    const laborRecord = await discontinueLaborUseCase.execute(tenantId, laborRecordId, req.body, userId);
+
+    return res.status(200).json({ success: true, message: 'Labor record closed out successfully', data: laborRecord });
+  } catch (error: any) {
+    logger.error('Error discontinuing labor record:', error);
+    return res.status(error.statusCode || 500).json({ success: false, message: getSafeErrorMessage(error, 'Failed to close out labor record') });
   }
 };
 

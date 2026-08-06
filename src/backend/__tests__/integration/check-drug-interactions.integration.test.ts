@@ -67,7 +67,7 @@ describe('Check Drug Interactions Integration', () => {
     expect(result.interactions.some((i) => i.severity === 'CRITICAL')).toBe(true);
   });
 
-  it('should not flag an interaction for a prescription dispensed more than 30 days ago', async () => {
+  it('should still flag an interaction for a prescription dispensed more than 30 days ago (matches the shared, no-time-bound check that actually gates dispensing)', async () => {
     const patient = await createTestPatient(prisma, tenantId, { phone: '+2348022220003' } as any);
 
     await createTestPrescription(prisma, tenantId, patient.id, doctorId, {
@@ -78,10 +78,10 @@ describe('Check Drug Interactions Integration', () => {
 
     const result = await useCase.execute({ patientId: patient.id, medicationName: 'Aspirin' }, tenantId);
 
-    expect(result.hasInteractions).toBe(false);
+    expect(result.hasInteractions).toBe(true);
   });
 
-  it('should not flag an interaction for a PENDING (not yet dispensed) prescription', async () => {
+  it('should flag an interaction for a PENDING (not yet dispensed) prescription (matches the shared check)', async () => {
     const patient = await createTestPatient(prisma, tenantId, { phone: '+2348022220004' } as any);
 
     await createTestPrescription(prisma, tenantId, patient.id, doctorId, {
@@ -91,7 +91,7 @@ describe('Check Drug Interactions Integration', () => {
 
     const result = await useCase.execute({ patientId: patient.id, medicationName: 'Aspirin' }, tenantId);
 
-    expect(result.hasInteractions).toBe(false);
+    expect(result.hasInteractions).toBe(true);
   });
 
   it('should check interactions in both directions (new drug as drug1 or drug2 in the reference row)', async () => {

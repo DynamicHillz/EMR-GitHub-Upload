@@ -53,7 +53,17 @@ export class UpdateLabDictionaryItemUseCase {
           });
           parameterId = newParam.id;
         } else {
-          // Optionally update existing parameter details if provided
+          // parameterId comes straight from the request body — without
+          // this check, any tenant's LAB_TECH/ADMIN could silently
+          // overwrite another tenant's reference ranges just by
+          // guessing/knowing a LabParameter id.
+          const existingParam = await this.prisma.labParameter.findFirst({
+            where: { id: parameterId, tenantId }
+          });
+          if (!existingParam) {
+            throw new Error('Lab parameter not found or unauthorized');
+          }
+
           await this.prisma.labParameter.update({
             where: { id: parameterId },
             data: {

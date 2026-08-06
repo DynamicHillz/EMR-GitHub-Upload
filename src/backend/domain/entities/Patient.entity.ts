@@ -36,6 +36,7 @@ export class PatientEntity {
     public readonly nhisNumber: string | null,
     public readonly patientType: 'PRIVATE' | 'HMO',
     public readonly hmoProvider: string | null,
+    public readonly hmoProviderId: string | null,
     public readonly hmoNumber: string | null,
     public readonly photoUrl: string | null,
     public readonly consentGiven: boolean, // US-PAT-006: Consent tracking
@@ -45,7 +46,15 @@ export class PatientEntity {
     public readonly createdAt: Date,
     public readonly updatedAt: Date,
     public readonly deletedAt: Date | null,
-    public readonly version: number = 1
+    public readonly version: number = 1,
+    // Newborn linkage (see record-delivery-outcome.use-case.ts) — set on a
+    // newborn's own record, or lists the newborns this patient is the
+    // mother of. Declared optional (not just default-valued) so existing
+    // plain-object test mocks of this structurally-typed class don't need
+    // to name every field just to satisfy the type.
+    public readonly motherPatientId?: string | null,
+    public readonly mother?: { id: string; patientId: string; firstName: string; lastName: string } | null,
+    public readonly newbornChildren?: Array<{ id: string; patientId: string; firstName: string; lastName: string }>
   ) {}
 
   /**
@@ -179,6 +188,7 @@ export class PatientEntity {
       data.nhisNumber,
       data.patientType || 'PRIVATE',
       data.hmoProvider || null,
+      data.hmoProviderId || null,
       data.hmoNumber || null,
       data.photoUrl,
       data.consentGiven || false, // US-PAT-006: Default to false if not provided
@@ -188,7 +198,10 @@ export class PatientEntity {
       data.createdAt,
       data.updatedAt,
       data.deletedAt,
-      data.version ?? 1
+      data.version ?? 1,
+      data.motherPatientId ?? null,
+      data.mother ?? null,
+      data.newbornChildren ?? []
     );
   }
 }

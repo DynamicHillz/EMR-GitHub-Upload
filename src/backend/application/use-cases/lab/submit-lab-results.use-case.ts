@@ -208,6 +208,7 @@ export class SubmitLabResultsUseCase {
       if (hasCritical) {
         await this.notificationService.notify(tenantId, labTestRecord.order.orderedById, {
           type: 'CRITICAL_LAB_RESULT',
+          severity: 'CRITICAL',
           title: 'Critical Lab Result',
           message: `${patientName} — ${testName} has a critical result`,
           entityType: 'LabOrder',
@@ -216,6 +217,7 @@ export class SubmitLabResultsUseCase {
       } else {
         await this.notificationService.notify(tenantId, labTestRecord.order.orderedById, {
           type: 'LAB_RESULT_READY',
+          severity: 'INFO',
           title: 'Lab Result Ready',
           message: `${patientName} — ${testName} results are ready for review`,
           entityType: 'LabOrder',

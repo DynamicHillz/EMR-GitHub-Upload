@@ -6,9 +6,10 @@ import RevenueTab from '../components/reports/RevenueTab';
 import DiagnosisTrendsTab from '../components/reports/DiagnosisTrendsTab';
 import StockTurnoverTab from '../components/reports/StockTurnoverTab';
 import NoShowRateTab from '../components/reports/NoShowRateTab';
+import NhmisMonthlyReturnTab from '../components/reports/NhmisMonthlyReturnTab';
 import Dropdown from '../components/common/Dropdown';
 
-type ReportTab = 'volume' | 'revenue' | 'diagnoses' | 'stock' | 'noshows';
+type ReportTab = 'volume' | 'revenue' | 'diagnoses' | 'stock' | 'noshows' | 'nhmis';
 
 const TABS: Array<{ id: ReportTab; label: string }> = [
   { id: 'volume', label: 'Patient Volume' },
@@ -16,6 +17,7 @@ const TABS: Array<{ id: ReportTab; label: string }> = [
   { id: 'diagnoses', label: 'Diagnoses' },
   { id: 'stock', label: 'Stock Turnover' },
   { id: 'noshows', label: 'No-Shows' },
+  { id: 'nhmis', label: 'NHMIS Return' },
 ];
 
 const toDateInputValue = (date: Date) => date.toISOString().slice(0, 10);
@@ -42,6 +44,7 @@ const ReportsPage: React.FC = () => {
         <p className="text-gray-600 mt-1">Patient volume, revenue, diagnosis trends, stock turnover, and no-show rate</p>
       </div>
 
+      {activeTab !== 'nhmis' && (
       <div className="bg-white rounded-lg shadow p-4 flex flex-wrap gap-4 items-end">
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">Start Date</label>
@@ -83,6 +86,7 @@ const ReportsPage: React.FC = () => {
           <p className="text-xs text-gray-400 pb-2">Grouping doesn't apply to ranked reports — this tab shows totals for the selected range.</p>
         )}
       </div>
+      )}
 
       <div className="border-b border-gray-200">
         <nav className="-mb-px flex space-x-8">
@@ -107,6 +111,7 @@ const ReportsPage: React.FC = () => {
       {activeTab === 'diagnoses' && <DiagnosisTrendsTab startDate={startDate} endDate={endDate} period={period} />}
       {activeTab === 'stock' && <StockTurnoverTab startDate={startDate} endDate={endDate} period={period} />}
       {activeTab === 'noshows' && <NoShowRateTab startDate={startDate} endDate={endDate} period={period} />}
+      {activeTab === 'nhmis' && <NhmisMonthlyReturnTab />}
     </div>
   );
 };

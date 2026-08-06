@@ -67,7 +67,7 @@ describe('DispenseMedicationUseCase', () => {
       dispensingRecord: { create: jest.fn() },
       medicationBatch: { updateMany: jest.fn() },
       medication: { update: jest.fn() },
-      prescription: { update: jest.fn() },
+      prescription: { updateMany: jest.fn() },
     };
 
     mockPrisma = {
@@ -90,6 +90,7 @@ describe('DispenseMedicationUseCase', () => {
       labelUrl: null,
     });
     mockTx.medicationBatch.updateMany.mockResolvedValue({ count: 1 });
+    mockTx.prescription.updateMany.mockResolvedValue({ count: 1 });
   }
 
   it('should dispense medication, deduct stock, and update the prescription on the happy path', async () => {
@@ -120,8 +121,8 @@ describe('DispenseMedicationUseCase', () => {
       where: { id: batch.medicationId },
       data: { stockLevel: { decrement: dto.quantityDispensed } },
     });
-    expect(mockTx.prescription.update).toHaveBeenCalledWith({
-      where: { id: dto.prescriptionId },
+    expect(mockTx.prescription.updateMany).toHaveBeenCalledWith({
+      where: { id: dto.prescriptionId, tenantId, status: 'PENDING' },
       data: {
         status: 'DISPENSED',
         dispensedAt: expect.any(Date),
@@ -260,6 +261,15 @@ describe('DispenseMedicationUseCase', () => {
       'Insufficient stock — it may have just been dispensed by another pharmacist'
     );
     expect(mockTx.medication.update).not.toHaveBeenCalled();
-    expect(mockTx.prescription.update).not.toHaveBeenCalled();
+    expect(mockTx.prescription.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('throws ConflictError when a concurrent request already dispensed this prescription', async () => {
+    setupHappyPath();
+    mockTx.prescription.updateMany.mockResolvedValue({ count: 0 });
+
+    await expect(useCase.execute(dto, pharmacistId, tenantId)).rejects.toThrow(
+      'This prescription was already dispensed — please refresh and check its current status.'
+    );
   });
 });

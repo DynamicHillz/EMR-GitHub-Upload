@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import InvoiceList from '../../components/billing/InvoiceList';
 import InvoiceDetail from '../../components/billing/InvoiceDetail';
 import PaymentForm from '../../components/billing/PaymentForm';
-import { Invoice } from '../../types/billing.types';
+import { Invoice, Payment } from '../../types/billing.types';
 
 const InvoiceListPage: React.FC = () => {
   const navigate = useNavigate();
@@ -21,11 +21,15 @@ const InvoiceListPage: React.FC = () => {
     setShowPaymentModal(true);
   };
 
-  const handlePaymentSuccess = () => {
+  const handlePaymentSuccess = (payment: Payment) => {
     setShowPaymentModal(false);
     setSelectedInvoice(null);
-    // Trigger reload by navigating to the same route
-    window.location.reload();
+    // Same-tab navigation, not window.open: a new-tab/window request this
+    // long after the triggering click (past the async recordPayment call)
+    // is exactly what browsers' popup blockers silently swallow. Navigating
+    // the current tab is never blocked, so the receipt reliably shows up
+    // and auto-prints (see ReceiptPrintPage).
+    navigate(`/billing/payments/${payment.id}/receipt`);
   };
 
   return (
@@ -65,7 +69,7 @@ const InvoiceListPage: React.FC = () => {
 
       {/* Invoice Detail Modal */}
       {showDetailModal && selectedInvoice && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4 overflow-y-auto">
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-start justify-center z-50 p-4 overflow-y-auto">
           <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full my-8">
             <div className="p-6">
               <InvoiceDetail
@@ -86,7 +90,7 @@ const InvoiceListPage: React.FC = () => {
 
       {/* Payment Modal */}
       {showPaymentModal && selectedInvoice && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4 overflow-y-auto">
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-start justify-center z-50 p-4 overflow-y-auto">
           <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full my-8">
             <div className="p-6">
               <PaymentForm

@@ -9,6 +9,8 @@ import { requireRole } from '../middleware/auth';
 import {
   createConsultationSchema,
   updateConsultationSchema,
+  createPrescriptionSchema,
+  orderLabTestSchema,
 } from '../../application/validators/consultation.validator';
 import {
   createConsultation,
@@ -56,6 +58,7 @@ router.delete('/:id', ADMIN_ONLY, asyncHandler(deleteConsultation));
 router.post(
   '/:id/prescriptions',
   requireRole(['DOCTOR']),
+  validateRequest(createPrescriptionSchema, 'body'),
   asyncHandler(createPrescription)
 );
 
@@ -63,6 +66,7 @@ router.post(
 router.post(
   '/:id/lab-tests',
   requireRole(['DOCTOR']),
+  validateRequest(orderLabTestSchema, 'body'),
   asyncHandler(orderLabTest)
 );
 

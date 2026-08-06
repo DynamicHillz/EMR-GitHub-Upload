@@ -42,15 +42,25 @@ const orderLabTestUseCase = new OrderLabTestUseCase(prisma, patientRepository);
 export const createConsultation = async (req: Request, res: Response) => {
   try {
     const tenantId = req.user?.tenantId;
+    const doctorId = req.user?.id;
 
-    if (!tenantId) {
+    if (!tenantId || !doctorId) {
       return res.status(401).json({
         success: false,
-        message: 'Unauthorized: No tenant ID found',
+        message: 'Unauthorized: No tenant ID or doctor ID found',
       });
     }
 
-    const consultation = await createConsultationUseCase.execute(req.body, tenantId, req.user);
+    // doctorId is always the authenticated caller, never trusted from the
+    // request body — this route is DOCTOR-only and records who actually
+    // authored the SOAP note, unlike prescriptions/lab-tests below (which
+    // already derive doctorId this same way) a client-supplied value here
+    // would let any caller attribute a consultation to an arbitrary user.
+    const consultation = await createConsultationUseCase.execute(
+      { ...req.body, doctorId },
+      tenantId,
+      req.user
+    );
 
     return res.status(201).json({
       success: true,
@@ -230,16 +240,16 @@ export const getPatientConsultations = async (req: Request, res: Response) => {
 
     const { patientId } = req.params;
     const limit = req.query.limit ? parseInt(req.query.limit as string) : undefined;
-    const consultations = await getPatientConsultationsUseCase.execute(
-      patientId,
-      tenantId,
-      { limit }
-    );
+    const skip = req.query.offset ? parseInt(req.query.offset as string) : undefined;
+    const [consultations, total] = await Promise.all([
+      getPatientConsultationsUseCase.execute(patientId, tenantId, { limit, skip }),
+      prisma.consultation.count({ where: { patientId, tenantId, isDeleted: false } }),
+    ]);
 
     return res.status(200).json({
       success: true,
       data: consultations,
-      total: consultations.length,
+      total,
     });
   } catch (error: any) {
     logger.error('Error getting patient consultations:', error);
@@ -341,8 +351,8 @@ export const createPrescription = async (req: Request, res: Response) => {
   } catch (error: any) {
     logger.error('Error creating prescription:', error);
 
-    if (error.message.includes('not found')) {
-      return res.status(404).json({
+    if (error.statusCode) {
+      return res.status(error.statusCode).json({
         success: false,
         message: error.message,
       });
@@ -393,8 +403,8 @@ export const orderLabTest = async (req: Request, res: Response) => {
   } catch (error: any) {
     logger.error('Error ordering lab test:', error);
 
-    if (error.message.includes('not found')) {
-      return res.status(404).json({
+    if (error.statusCode) {
+      return res.status(error.statusCode).json({
         success: false,
         message: error.message,
       });

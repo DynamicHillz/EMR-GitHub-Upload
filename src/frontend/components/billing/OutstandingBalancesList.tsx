@@ -18,46 +18,68 @@ const OutstandingBalancesList: React.FC<OutstandingBalancesListProps> = ({
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [agingAnalysis, setAgingAnalysis] = useState<AgingAnalysis | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedBucket, setSelectedBucket] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
+  // The backend now paginates this list (unbounded before) — search/bucket
+  // filtering below only applies within whatever pages have been loaded so
+  // far, not the full outstanding set.
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
 
   useEffect(() => {
     loadOutstandingBalances();
   }, []);
 
+  const transformInvoices = (outstandingInvoices: any[]) =>
+    outstandingInvoices.map((inv: any) => ({
+      id: inv.invoiceId,
+      invoiceNumber: inv.invoiceNumber,
+      invoiceDate: inv.invoiceDate,
+      dueDate: inv.daysOverdue > 0 ? new Date(new Date(inv.invoiceDate).getTime() + (inv.daysOverdue * 24 * 60 * 60 * 1000)).toISOString() : inv.invoiceDate,
+      totalAmount: inv.totalAmount,
+      paidAmount: inv.paidAmount,
+      balance: inv.balance,
+      patient: {
+        firstName: inv.patientName.split(' ')[0],
+        lastName: inv.patientName.split(' ').slice(1).join(' '),
+        phone: inv.patientPhone
+      }
+    }));
+
   const loadOutstandingBalances = async () => {
     try {
       setLoading(true);
       setError(null);
-      const [outstandingInvoices, aging] = await Promise.all([
-        billingService.getOutstandingInvoices(),
+      const [outstanding, aging] = await Promise.all([
+        billingService.getOutstandingInvoices({ page: 1 }),
         billingService.getAgingAnalysis(),
       ]);
 
-      // Transform backend data to frontend format
-      const transformedInvoices = outstandingInvoices.map((inv: any) => ({
-        id: inv.invoiceId,
-        invoiceNumber: inv.invoiceNumber,
-        invoiceDate: inv.invoiceDate,
-        dueDate: inv.daysOverdue > 0 ? new Date(new Date(inv.invoiceDate).getTime() + (inv.daysOverdue * 24 * 60 * 60 * 1000)).toISOString() : inv.invoiceDate,
-        totalAmount: inv.totalAmount,
-        paidAmount: inv.paidAmount,
-        balance: inv.balance,
-        patient: {
-          firstName: inv.patientName.split(' ')[0],
-          lastName: inv.patientName.split(' ').slice(1).join(' '),
-          phone: inv.patientPhone
-        }
-      }));
-
-      setInvoices(transformedInvoices);
+      setInvoices(transformInvoices(outstanding.invoices));
+      setPage(outstanding.page);
+      setTotalPages(outstanding.totalPages);
       setAgingAnalysis(aging);
     } catch (err: any) {
       setError(getErrorMessage(err, 'Failed to load outstanding balances'));
       console.error('Error loading outstanding balances:', err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadMore = async () => {
+    try {
+      setLoadingMore(true);
+      const outstanding = await billingService.getOutstandingInvoices({ page: page + 1 });
+      setInvoices((prev) => [...prev, ...transformInvoices(outstanding.invoices)]);
+      setPage(outstanding.page);
+      setTotalPages(outstanding.totalPages);
+    } catch (err: any) {
+      setError(getErrorMessage(err, 'Failed to load more outstanding invoices'));
+    } finally {
+      setLoadingMore(false);
     }
   };
 
@@ -390,6 +412,17 @@ const OutstandingBalancesList: React.FC<OutstandingBalancesListProps> = ({
               </tbody>
             </table>
           </div>
+          {page < totalPages && !searchTerm && !selectedBucket && (
+            <div className="p-4 text-center border-t border-gray-100">
+              <button
+                onClick={loadMore}
+                disabled={loadingMore}
+                className="px-4 py-2 text-sm font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-md disabled:opacity-50"
+              >
+                {loadingMore ? 'Loading...' : 'Load More'}
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>

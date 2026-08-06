@@ -10,6 +10,8 @@ import {
   RecordObservationDto,
   RecordDeliveryOutcomeDto,
   PartographObservation,
+  NewbornPatientSummary,
+  DiscontinueLaborDto,
 } from '../types/labor';
 
 interface ApiResponse<T> {
@@ -74,12 +76,17 @@ class LaborService {
   async recordDeliveryOutcome(
     laborRecordId: string,
     dto: RecordDeliveryOutcomeDto
-  ): Promise<{ laborRecord: LaborRecord; pregnancyClosed: boolean }> {
-    const { data } = await this.api.post<ApiResponse<{ laborRecord: LaborRecord; pregnancyClosed: boolean }>>(
-      `/records/${laborRecordId}/delivery`,
-      dto
-    );
+  ): Promise<{ laborRecord: LaborRecord; pregnancyClosed: boolean; newbornPatient?: NewbornPatientSummary }> {
+    const { data } = await this.api.post<
+      ApiResponse<{ laborRecord: LaborRecord; pregnancyClosed: boolean; newbornPatient?: NewbornPatientSummary }>
+    >(`/records/${laborRecordId}/delivery`, dto);
     if (!data.data) throw new Error('Failed to record delivery outcome');
+    return data.data;
+  }
+
+  async discontinueLabor(laborRecordId: string, dto: DiscontinueLaborDto): Promise<LaborRecord> {
+    const { data } = await this.api.post<ApiResponse<LaborRecord>>(`/records/${laborRecordId}/discontinue`, dto);
+    if (!data.data) throw new Error('Failed to close out labor record');
     return data.data;
   }
 }

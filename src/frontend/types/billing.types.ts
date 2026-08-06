@@ -194,6 +194,7 @@ export interface Payment {
   cardBrand?: string;
   mobileProvider?: string;
   mobileNumber?: string;
+  cashReceivedByName?: string;
   gatewayProvider?: string;
   gatewayRef?: string;
   gatewayData?: any;
@@ -222,6 +223,9 @@ export interface RecordPaymentDto {
   cardBrand?: string;
   mobileProvider?: string;
   mobileNumber?: string;
+
+  // Cash payments only: the staff member who physically received the cash.
+  cashReceivedByName?: string;
 
   // Fraud prevention fields
   receiptPhotoUrl?: string;      // Photo of physical receipt (required for cash)
@@ -405,6 +409,8 @@ export interface InvoiceFilters {
   paymentStatus?: PaymentStatus;
   startDate?: string;
   endDate?: string;
+  limit?: number;
+  offset?: number;
 }
 
 export interface PaymentFilters {

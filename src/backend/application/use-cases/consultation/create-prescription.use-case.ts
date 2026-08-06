@@ -8,9 +8,9 @@
 
 import { PrismaClient } from '@prisma/client';
 import { IPatientRepository } from '../../../domain/interfaces/IPatientRepository';
-import { NotFoundError } from '../../../shared/errors/AppError';
+import { NotFoundError, ValidationError } from '../../../shared/errors/AppError';
 import { checkDrugInteractions, checkDuplicateTherapy } from '../../services/drug-interaction-checker.service';
-import { matchesDrugClassGroup } from '../../../shared/constants/drug-class-groups';
+import { checkForAllergies, findMatchingAllergies } from '../../services/allergy-checker.service';
 
 export interface CreatePrescriptionDto {
   consultationId?: string;
@@ -73,6 +73,22 @@ export class CreatePrescriptionUseCase {
       throw new NotFoundError('Patient', dto.patientId);
     }
 
+    // 1.2 Verify the consultation (when linked) actually belongs to this
+    // tenant and this patient — the FK alone only proves the row exists
+    // somewhere, not that it's the right one.
+    if (dto.consultationId) {
+      const consultation = await this.prisma.consultation.findFirst({
+        where: { id: dto.consultationId, tenantId, isDeleted: false },
+        select: { id: true, patientId: true },
+      });
+      if (!consultation) {
+        throw new NotFoundError('Consultation', dto.consultationId);
+      }
+      if (consultation.patientId !== dto.patientId) {
+        throw new ValidationError('Consultation does not belong to the specified patient');
+      }
+    }
+
     // 1.5 Check controlled substance duration limits (REQ-CLIN-CS)
     if (dto.isControlledSubstance) {
       const durationNum = parseInt(dto.duration.split(' ')[0]) || 0;
@@ -83,13 +99,13 @@ export class CreatePrescriptionUseCase {
 
     // 2. Check for allergies (REQ-CLIN-7)
     const patientAllergies = patient.allergies || [];
-    const allergyWarning = this.checkForAllergies(
+    const allergyWarning = checkForAllergies(
       dto.medicationName,
       patientAllergies
     );
 
     const allergyDetails = allergyWarning
-      ? this.findMatchingAllergies(dto.medicationName, patientAllergies)
+      ? findMatchingAllergies(dto.medicationName, patientAllergies)
       : [];
 
     // 2.5 Check for drug interactions and duplicate/overlapping therapy
@@ -159,48 +175,5 @@ export class CreatePrescriptionUseCase {
       duplicateDetails,
       createdAt: prescription.createdAt.toISOString(),
     };
-  }
-
-  /**
-   * Check if medication name matches any patient allergies
-   * REQ-CLIN-7: Display warnings for medication allergies
-   */
-  private checkForAllergies(medicationName: string, allergies: string[]): boolean {
-    if (!allergies || allergies.length === 0) {
-      return false;
-    }
-
-    const medLower = medicationName.toLowerCase();
-
-    return allergies.some((allergy) => {
-      const allergyLower = allergy.toLowerCase();
-
-      // Check if medication name contains the allergy or vice versa, or the
-      // two fall in the same curated drug-class group (e.g. Penicillin -> Amoxicillin)
-      return (
-        medLower.includes(allergyLower) ||
-        allergyLower.includes(medLower) ||
-        matchesDrugClassGroup(allergy, medicationName)
-      );
-    });
-  }
-
-  /**
-   * Find which specific allergies match the medication
-   */
-  private findMatchingAllergies(
-    medicationName: string,
-    allergies: string[]
-  ): string[] {
-    const medLower = medicationName.toLowerCase();
-
-    return allergies.filter((allergy) => {
-      const allergyLower = allergy.toLowerCase();
-      return (
-        medLower.includes(allergyLower) ||
-        allergyLower.includes(medLower) ||
-        matchesDrugClassGroup(allergy, medicationName)
-      );
-    });
   }
 }

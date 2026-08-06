@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import { immunizationController } from '../controllers/immunization.controller';
 import { requireRole } from '../middleware/auth';
+import { validateRequest } from '../middleware/validation';
+import { dismissImmunizationDueSchema } from '../../application/validators/worklist.validator';
 
 const router = Router();
 
@@ -17,6 +19,12 @@ router.post('/schedule', CAN_MANAGE_SCHEDULE, immunizationController.createSched
 
 // Overdue worklist
 router.get('/overdue', CAN_VIEW, immunizationController.getOverdueImmunizations);
+router.post(
+  '/due/:patientId/:scheduleId/dismiss',
+  CAN_RECORD,
+  validateRequest(dismissImmunizationDueSchema, 'body'),
+  immunizationController.dismissDueImmunization
+);
 
 // Patient Immunizations
 router.get('/patient/:patientId', CAN_VIEW, immunizationController.getPatientImmunizations);

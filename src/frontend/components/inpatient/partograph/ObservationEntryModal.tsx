@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
-import { X, AlertCircle } from 'lucide-react';
+import { X } from 'lucide-react';
 import laborService from '../../../services/labor.service';
 import { PartographObservation } from '../../../types/labor';
 import { useToast } from '../../ToastContainer';
 import Dropdown from '../../common/Dropdown';
+import DangerSignBanner from '../../common/DangerSignBanner';
 import DilationChart from './DilationChart';
 import FetalHeartRateChart from './FetalHeartRateChart';
 
@@ -148,19 +149,7 @@ const ObservationEntryModal: React.FC<ObservationEntryModalProps> = ({ laborReco
         </div>
 
         <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-6 space-y-6">
-          {dangerSigns.length > 0 && (
-            <div className="mb-4 p-3 bg-red-100 border-2 border-red-500 rounded-lg">
-              <div className="flex items-center gap-2 text-red-800 font-bold mb-1">
-                <AlertCircle className="w-5 h-5" />
-                Danger Sign(s) Detected
-              </div>
-              <ul className="list-disc list-inside text-sm text-red-700">
-                {dangerSigns.map((sign) => (
-                  <li key={sign}>{sign}</li>
-                ))}
-              </ul>
-            </div>
-          )}
+          <DangerSignBanner signs={dangerSigns} />
 
           <div>
             <div className="flex items-center gap-2 mb-3">

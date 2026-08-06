@@ -32,6 +32,19 @@ export class GenerateStockAlertsUseCase {
     const thirtyDaysFromNow = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
     const alerts: StockAlertDto[] = [];
 
+    // Collected across both loops below and fired as ONE notifyRole call
+    // per non-empty category once everything's been evaluated, instead of
+    // one call per affected medication/batch — a scheduler run that finds
+    // 30 low-stock items previously meant 30 separate notifications landing
+    // in every pharmacist's/admin's list at once. The StockAlert rows
+    // themselves (and their own per-alert dedup via the findFirst checks
+    // above) are unchanged — only how many *notifications* this fires.
+    const outOfStockNames: string[] = [];
+    const lowStockNames: string[] = [];
+    const expiredNames: string[] = [];
+    const nearExpiryNames: string[] = [];
+    let nearExpiryHasCritical = false;
+
     // Low/out-of-stock: stockLevel <= reorderPoint is a same-row column
     // comparison, which Prisma's query builder can't express — $queryRaw
     // is the only way to push this filter into the database instead of
@@ -78,13 +91,7 @@ export class GenerateStockAlertsUseCase {
             currentStock: medication.stockLevel,
           });
 
-          await this.notificationService.notifyRole(tenantId, ['PHARMACIST', 'ADMIN'], {
-            type: 'STOCK_ALERT',
-            title: 'Out of Stock',
-            message: alert.message,
-            entityType: 'StockAlert',
-            entityId: alert.id,
-          });
+          outOfStockNames.push(medication.name);
         }
       } else if (medication.stockLevel <= medication.reorderPoint) {
         const existingAlert = await this.prisma.stockAlert.findFirst({
@@ -120,13 +127,7 @@ export class GenerateStockAlertsUseCase {
             threshold: medication.reorderPoint,
           });
 
-          await this.notificationService.notifyRole(tenantId, ['PHARMACIST', 'ADMIN'], {
-            type: 'STOCK_ALERT',
-            title: 'Low Stock',
-            message: alert.message,
-            entityType: 'StockAlert',
-            entityId: alert.id,
-          });
+          lowStockNames.push(`${medication.name} (${medication.stockLevel} units remaining)`);
         }
       }
     }
@@ -186,13 +187,7 @@ export class GenerateStockAlertsUseCase {
             daysUntilExpiry,
           });
 
-          await this.notificationService.notifyRole(tenantId, ['PHARMACIST', 'ADMIN'], {
-            type: 'STOCK_ALERT',
-            title: 'Batch Expired',
-            message: alert.message,
-            entityType: 'StockAlert',
-            entityId: alert.id,
-          });
+          expiredNames.push(`${medication.name} batch ${batch.batchNumber}`);
 
           // Update batch status to EXPIRED
           await this.prisma.medicationBatch.update({
@@ -236,16 +231,50 @@ export class GenerateStockAlertsUseCase {
             daysUntilExpiry,
           });
 
-          await this.notificationService.notifyRole(tenantId, ['PHARMACIST', 'ADMIN'], {
-            type: 'STOCK_ALERT',
-            title: 'Near Expiry',
-            message: alert.message,
-            entityType: 'StockAlert',
-            entityId: alert.id,
-          });
+          nearExpiryNames.push(`${medication.name} batch ${batch.batchNumber} (${daysUntilExpiry}d)`);
+          if (daysUntilExpiry <= 7) nearExpiryHasCritical = true;
         }
       }
     }
+
+    await Promise.all([
+      outOfStockNames.length > 0 &&
+        this.notificationService.notifyRole(tenantId, ['PHARMACIST', 'ADMIN'], {
+          type: 'STOCK_ALERT',
+          severity: 'CRITICAL',
+          title: 'Out of Stock',
+          message: `${outOfStockNames.length} medication(s) out of stock: ${outOfStockNames.join(', ')}`,
+          entityType: 'Tenant',
+          entityId: tenantId,
+        }),
+      lowStockNames.length > 0 &&
+        this.notificationService.notifyRole(tenantId, ['PHARMACIST', 'ADMIN'], {
+          type: 'STOCK_ALERT',
+          severity: 'WARNING',
+          title: 'Low Stock',
+          message: `${lowStockNames.length} medication(s) low in stock: ${lowStockNames.join(', ')}`,
+          entityType: 'Tenant',
+          entityId: tenantId,
+        }),
+      expiredNames.length > 0 &&
+        this.notificationService.notifyRole(tenantId, ['PHARMACIST', 'ADMIN'], {
+          type: 'STOCK_ALERT',
+          severity: 'CRITICAL',
+          title: 'Batch Expired',
+          message: `${expiredNames.length} batch(es) expired: ${expiredNames.join(', ')}`,
+          entityType: 'Tenant',
+          entityId: tenantId,
+        }),
+      nearExpiryNames.length > 0 &&
+        this.notificationService.notifyRole(tenantId, ['PHARMACIST', 'ADMIN'], {
+          type: 'STOCK_ALERT',
+          severity: nearExpiryHasCritical ? 'CRITICAL' : 'WARNING',
+          title: 'Near Expiry',
+          message: `${nearExpiryNames.length} batch(es) near expiry: ${nearExpiryNames.join(', ')}`,
+          entityType: 'Tenant',
+          entityId: tenantId,
+        }),
+    ]);
 
     return alerts;
   }

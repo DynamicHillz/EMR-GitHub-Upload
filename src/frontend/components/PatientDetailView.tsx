@@ -39,12 +39,13 @@ import ImmunizationsTab from './mch/ImmunizationsTab';
 import { useToast } from './ToastContainer';
 import TriageAssessmentModal from './triage/TriageAssessmentModal';
 import PrescriptionModal from './consultations/PrescriptionModal';
+import PageLoader from './common/PageLoader';
 import { formatBloodGroup, formatDate } from '../utils/formatters';
 import { NIGERIA_LGA_MAP, NIGERIAN_STATES } from '../utils/nigeria-states';
-import outpatientVitalService, { OutpatientVital } from '../services/outpatient-vital.service';
 import triageService from '../services/triage.service';
 import InpatientService from '../services/InpatientService';
 import Dropdown from './common/Dropdown';
+import { useAuth } from '../contexts/AuthContext';
 
 interface Patient {
   id: string;
@@ -75,8 +76,17 @@ interface Patient {
   consentGiven: boolean;
   consentDate: string | null;
   consentVersion: string | null;
+  patientType?: 'PRIVATE' | 'HMO';
+  hmoProvider?: string | null;
+  hmoProviderId?: string | null;
+  hmoNumber?: string | null;
+  nhisNumber?: string | null;
   createdAt: string;
   updatedAt: string;
+  // Newborn linkage (see record-delivery-outcome.use-case.ts).
+  motherPatientId?: string | null;
+  mother?: { id: string; patientId: string; firstName: string; lastName: string } | null;
+  newbornChildren?: Array<{ id: string; patientId: string; firstName: string; lastName: string }>;
 }
 
 interface PatientDetailViewProps {
@@ -85,23 +95,78 @@ interface PatientDetailViewProps {
   initialTab?: TabType;
 }
 
+// Vitals shown in the "Recent Vitals" panel, merged from Triage and
+// Consultation records (both carry vitals inline — there is no separate
+// standalone outpatient-vitals table/feature).
+interface VitalEntry {
+  id: string;
+  patientId: string;
+  recordedById: string;
+  appointmentId?: string;
+  consultationId?: string;
+  bloodPressure?: string;
+  heartRate?: number;
+  respiratoryRate?: number;
+  temperature?: number;
+  weight?: number;
+  height?: number;
+  spO2?: number;
+  notes?: string;
+  recordedAt: string;
+  recordedBy?: {
+    id: string;
+    firstName: string;
+    lastName: string;
+    role: string;
+  };
+}
+
+// Legacy secondary coverage path — a genuine partial-copay private insurer,
+// distinct from the full-coverage HMO link above (Patient.hmoProviderId).
+// Never auto-applied for an HMO-covered patient; see generate-invoice.use-case.ts.
+interface PatientInsurancePolicy {
+  id: string;
+  providerId: string;
+  provider: { id: string; name: string; type: string };
+  policyNumber: string;
+  groupNumber: string | null;
+  planType: 'STANDARD' | 'COMPREHENSIVE' | 'PREMIUM';
+  copayPercentage: number;
+  validFrom: string;
+  validTo: string;
+  isActive: boolean;
+}
+
 type TabType = 'demographics' | 'medical' | 'consultations' | 'prescriptions' | 'labs' | 'timeline' | 'anc' | 'immunizations' | 'admissions';
 
 const PatientDetailView: React.FC<PatientDetailViewProps> = ({ patientId, onBack, initialTab = 'demographics' }) => {
   const navigate = useNavigate();
   const toast = useToast();
+  const { hasRole } = useAuth();
+  const canManageInsurancePolicies = hasRole(['SUPER_ADMIN', 'ADMIN', 'CASHIER']);
   const [activeTab, setActiveTab] = useState<TabType>(initialTab);
   const [patient, setPatient] = useState<Patient | null>(null);
   const [branding, setBranding] = useState<any>(null);
-  const [vitals, setVitals] = useState<OutpatientVital[]>([]);
+  const [vitals, setVitals] = useState<VitalEntry[]>([]);
   const [admissions, setAdmissions] = useState<any[]>([]);
   const [admissionsLoading, setAdmissionsLoading] = useState(false);
   const [timelineEvents, setTimelineEvents] = useState<any[]>([]);
   const [timelineLoading, setTimelineLoading] = useState(false);
   const [patientConsultations, setPatientConsultations] = useState<any[]>([]);
   const [patientPrescriptions, setPatientPrescriptions] = useState<any[]>([]);
+  // A patient with years of history previously had every consultation,
+  // prescription, and lab result ever recorded fetched in one unbounded
+  // call on every chart open. Both start at one page; "Load More" bumps the
+  // limit and refetches — a heuristic ("got a full page back, there might
+  // be more") rather than a real total count, since these endpoints don't
+  // return one.
+  const PAGE_SIZE = 50;
+  const [timelineLimit, setTimelineLimit] = useState(PAGE_SIZE);
+  const [timelineHasMore, setTimelineHasMore] = useState(false);
   const [labResults, setLabResults] = useState<any[]>([]);
   const [labResultsLoading, setLabResultsLoading] = useState(false);
+  const [labResultsLimit, setLabResultsLimit] = useState(PAGE_SIZE);
+  const [labResultsHasMore, setLabResultsHasMore] = useState(false);
   const [showPrescriptionModal, setShowPrescriptionModal] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [showEditModal, setShowEditModal] = useState(false);
@@ -130,16 +195,118 @@ const PatientDetailView: React.FC<PatientDetailViewProps> = ({ patientId, onBack
     },
     patientType: 'PRIVATE',
     hmoProvider: '',
+    hmoProviderId: '', // real InsuranceProvider id, or 'OTHER' for the free-text hmoProvider field
     hmoNumber: '',
     nhisNumber: '',
     updateReason: '',
   });
+  const [hmoProviders, setHmoProviders] = useState<{ id: string; name: string; type: string }[]>([]);
 
   useEffect(() => {
     fetchPatientDetails();
     fetchBranding();
     fetchVitals();
   }, [patientId]);
+
+  useEffect(() => {
+    const fetchHmoProviders = async () => {
+      try {
+        const token = localStorage.getItem('token');
+        const res = await fetch(`${window.location.protocol}//${window.location.hostname}:3000/api/insurance/providers`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setHmoProviders(Array.isArray(data) ? data : (data.data || []));
+        }
+      } catch (err) {
+        console.error('Failed to load HMO providers:', err);
+      }
+    };
+    fetchHmoProviders();
+  }, []);
+
+  const [insurancePolicies, setInsurancePolicies] = useState<PatientInsurancePolicy[]>([]);
+  const [showAddPolicyForm, setShowAddPolicyForm] = useState(false);
+  const [isSubmittingPolicy, setIsSubmittingPolicy] = useState(false);
+  const [policyFormData, setPolicyFormData] = useState({
+    providerId: '',
+    policyNumber: '',
+    groupNumber: '',
+    planType: 'STANDARD',
+    copayPercentage: '',
+    validFrom: '',
+    validTo: '',
+  });
+
+  const fetchInsurancePolicies = async () => {
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(`${window.location.protocol}//${window.location.hostname}:3000/api/insurance/patients/${patientId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        setInsurancePolicies(await res.json());
+      }
+    } catch (err) {
+      console.error('Failed to load patient insurance policies:', err);
+    }
+  };
+
+  useEffect(() => {
+    fetchInsurancePolicies();
+  }, [patientId]);
+
+  const handleAddPolicySubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSubmittingPolicy(true);
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(`${window.location.protocol}//${window.location.hostname}:3000/api/insurance/patients/${patientId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          providerId: policyFormData.providerId,
+          policyNumber: policyFormData.policyNumber,
+          groupNumber: policyFormData.groupNumber || undefined,
+          planType: policyFormData.planType,
+          copayPercentage: Number(policyFormData.copayPercentage) || 0,
+          validFrom: policyFormData.validFrom,
+          validTo: policyFormData.validTo,
+        }),
+      });
+      if (!res.ok) {
+        toast.error('Error', 'Failed to add insurance policy');
+        return;
+      }
+      toast.success('Policy Added', 'Private insurance enrollment saved');
+      setPolicyFormData({ providerId: '', policyNumber: '', groupNumber: '', planType: 'STANDARD', copayPercentage: '', validFrom: '', validTo: '' });
+      setShowAddPolicyForm(false);
+      fetchInsurancePolicies();
+    } catch (err) {
+      toast.error('Network Error', 'Failed to add insurance policy');
+    } finally {
+      setIsSubmittingPolicy(false);
+    }
+  };
+
+  const handleDeactivatePolicy = async (policyId: string) => {
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(`${window.location.protocol}//${window.location.hostname}:3000/api/insurance/patients/${patientId}/${policyId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ isActive: false }),
+      });
+      if (!res.ok) {
+        toast.error('Error', 'Failed to deactivate policy');
+        return;
+      }
+      fetchInsurancePolicies();
+    } catch (err) {
+      toast.error('Network Error', 'Failed to deactivate policy');
+    }
+  };
 
   const fetchAdmissions = async () => {
     try {
@@ -163,15 +330,17 @@ const PatientDetailView: React.FC<PatientDetailViewProps> = ({ patientId, onBack
     }
   }, [activeTab, patientId]);
 
-  const fetchLabResults = async () => {
+  const fetchLabResults = async (limit: number = labResultsLimit) => {
     setLabResultsLoading(true);
     try {
       const token = localStorage.getItem('token');
       const apiBaseUrl = import.meta.env.VITE_API_URL || `${window.location.protocol}//${window.location.hostname}:3000`;
       const headers = { Authorization: `Bearer ${token}` };
-      const res = await fetch(`${apiBaseUrl}/api/lab/tests?patientId=${patientId}`, { headers });
+      const res = await fetch(`${apiBaseUrl}/api/lab/tests?patientId=${patientId}&limit=${limit}`, { headers });
       const data = res.ok ? await res.json() : { data: [] };
-      setLabResults(data.data || []);
+      const results = data.data || [];
+      setLabResults(results);
+      setLabResultsHasMore(results.length >= limit);
     } catch (error) {
       console.error('Failed to fetch lab results', error);
     } finally {
@@ -179,24 +348,31 @@ const PatientDetailView: React.FC<PatientDetailViewProps> = ({ patientId, onBack
     }
   };
 
-  const fetchTimelineEvents = async () => {
+  const loadMoreLabResults = () => {
+    const nextLimit = labResultsLimit + PAGE_SIZE;
+    setLabResultsLimit(nextLimit);
+    fetchLabResults(nextLimit);
+  };
+
+  const fetchTimelineEvents = async (limit: number = timelineLimit) => {
     if (!patient) return;
     setTimelineLoading(true);
     try {
       const token = localStorage.getItem('token');
       const apiBaseUrl = import.meta.env.VITE_API_URL || `${window.location.protocol}//${window.location.hostname}:3000`;
       const headers = { Authorization: `Bearer ${token}` };
-      
+
       // 1. Get Consultations
-      const consRes = await fetch(`${apiBaseUrl}/api/consultations/patient/${patientId}`, { headers });
+      const consRes = await fetch(`${apiBaseUrl}/api/consultations/patient/${patientId}?limit=${limit}`, { headers });
       const consData = consRes.ok ? await consRes.json() : { data: [] };
       const consultations = consData.data || [];
       setPatientConsultations(consultations);
 
       // 1b. Get Prescriptions
-      const presRes = await fetch(`${apiBaseUrl}/api/prescriptions/patient/${patientId}`, { headers });
+      const presRes = await fetch(`${apiBaseUrl}/api/prescriptions/patient/${patientId}?limit=${limit}`, { headers });
       const presData = presRes.ok ? await presRes.json() : { data: [] };
       setPatientPrescriptions(presData.data || []);
+      setTimelineHasMore(consultations.length >= limit || (presData.data || []).length >= limit);
 
       // 2. Get Admissions
       let admissionEvents = admissions;
@@ -301,14 +477,18 @@ const PatientDetailView: React.FC<PatientDetailViewProps> = ({ patientId, onBack
     }
   }, [activeTab, patientId, patient]);
 
+  const loadMoreTimeline = () => {
+    const nextLimit = timelineLimit + PAGE_SIZE;
+    setTimelineLimit(nextLimit);
+    fetchTimelineEvents(nextLimit);
+  };
+
   const fetchVitals = async () => {
     try {
       const token = localStorage.getItem('token');
       const apiBaseUrl = import.meta.env.VITE_API_URL || `${window.location.protocol}//${window.location.hostname}:3000`;
 
-      // Fetch outpatient/triage vitals
-      const outpatientData = await outpatientVitalService.getPatientVitals(patientId);
-      let allVitals: OutpatientVital[] = outpatientData || [];
+      let allVitals: VitalEntry[] = [];
 
       // Fetch triage vitals
       try {
@@ -331,14 +511,16 @@ const PatientDetailView: React.FC<PatientDetailViewProps> = ({ patientId, onBack
             lastName: t.triageNurse.lastName,
             role: 'NURSE'
           } : undefined
-        } as OutpatientVital));
+        } as VitalEntry));
         allVitals = [...allVitals, ...mappedTriageVitals];
       } catch (err) {
         console.error('Error fetching triage vitals:', err);
       }
 
-      // Fetch consultation vitals
-      const consResponse = await fetch(`${apiBaseUrl}/api/consultations/patient/${patientId}`, {
+      // Fetch consultation vitals — bounded to a recent-trend window (a
+      // chart doesn't need every consultation ever recorded, and this call
+      // previously had no limit at all).
+      const consResponse = await fetch(`${apiBaseUrl}/api/consultations/patient/${patientId}?limit=100`, {
         headers: { Authorization: `Bearer ${token}` }
       });
 
@@ -367,7 +549,7 @@ const PatientDetailView: React.FC<PatientDetailViewProps> = ({ patientId, onBack
               lastName: c.doctor.lastName,
               role: 'DOCTOR'
             } : undefined
-          } as OutpatientVital));
+          } as VitalEntry));
 
         allVitals = [...allVitals, ...consVitals];
       }
@@ -776,6 +958,7 @@ const PatientDetailView: React.FC<PatientDetailViewProps> = ({ patientId, onBack
       },
       patientType: patient.patientType || 'PRIVATE',
       hmoProvider: patient.hmoProvider || '',
+      hmoProviderId: patient.hmoProviderId || (patient.hmoProvider ? 'OTHER' : ''),
       hmoNumber: patient.hmoNumber || '',
       nhisNumber: patient.nhisNumber || '',
       updateReason: '',
@@ -860,7 +1043,17 @@ const PatientDetailView: React.FC<PatientDetailViewProps> = ({ patientId, onBack
         chronicConditions: editFormData.chronicConditions,
         emergencyContact: editFormData.emergencyContact,
         patientType: editFormData.patientType as 'PRIVATE' | 'HMO',
-        hmoProvider: editFormData.patientType === 'HMO' ? editFormData.hmoProvider : undefined,
+        // hmoProviderId holds a real InsuranceProvider id, the 'OTHER' sentinel
+        // for free-text, or '' — resolve the legacy display name accordingly,
+        // and send a real FK (or null, to clear a stale link) alongside it.
+        hmoProvider: editFormData.patientType === 'HMO'
+          ? (editFormData.hmoProviderId && editFormData.hmoProviderId !== 'OTHER'
+              ? hmoProviders.find(p => p.id === editFormData.hmoProviderId)?.name
+              : editFormData.hmoProvider)
+          : undefined,
+        hmoProviderId: editFormData.patientType === 'HMO'
+          ? (editFormData.hmoProviderId && editFormData.hmoProviderId !== 'OTHER' ? editFormData.hmoProviderId : null)
+          : undefined,
         hmoNumber: editFormData.patientType === 'HMO' ? editFormData.hmoNumber : undefined,
         nhisNumber: editFormData.nhisNumber || undefined,
         updateReason: editFormData.updateReason || undefined,
@@ -922,9 +1115,7 @@ const PatientDetailView: React.FC<PatientDetailViewProps> = ({ patientId, onBack
   if (isLoading) {
     return (
       <div className="card">
-        <div className="flex items-center justify-center py-12">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
-        </div>
+        <PageLoader />
       </div>
     );
   }
@@ -1111,7 +1302,14 @@ const PatientDetailView: React.FC<PatientDetailViewProps> = ({ patientId, onBack
                 <>
                   <div>
                     <label className="text-sm text-gray-600">HMO Provider</label>
-                    <p className="font-medium">{patient.hmoProvider || 'N/A'}</p>
+                    <p className="font-medium">
+                      {(patient.hmoProviderId && hmoProviders.find(p => p.id === patient.hmoProviderId)?.name)
+                        || patient.hmoProvider
+                        || 'N/A'}
+                    </p>
+                    {!patient.hmoProviderId && patient.hmoProvider && (
+                      <p className="text-xs text-amber-600 mt-0.5">Not linked to a billing provider record — edit to link it.</p>
+                    )}
                   </div>
                   <div>
                     <label className="text-sm text-gray-600">HMO Number</label>
@@ -1124,6 +1322,173 @@ const PatientDetailView: React.FC<PatientDetailViewProps> = ({ patientId, onBack
                 <p className="font-medium">{patient.nhisNumber || 'Not provided'}</p>
               </div>
             </div>
+
+            <div className="flex items-center justify-between border-b pb-2 mt-8">
+              <h3 className="text-lg font-semibold">Private Insurance (Copay)</h3>
+              {canManageInsurancePolicies && !showAddPolicyForm && (
+                <button
+                  onClick={() => setShowAddPolicyForm(true)}
+                  className="text-sm text-primary-600 hover:text-primary-700 font-medium"
+                >
+                  + Enroll Policy
+                </button>
+              )}
+            </div>
+            <p className="text-xs text-gray-500 mt-1">
+              A secondary path for a genuine partial-copay private insurer — distinct from full HMO coverage above,
+              which the HMO always covers 100%.
+            </p>
+
+            {showAddPolicyForm && (
+              <form onSubmit={handleAddPolicySubmit} className="mt-4 p-4 border rounded-lg bg-gray-50 grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
+                  <label className="block text-sm font-medium mb-1">Provider *</label>
+                  <Dropdown
+                    value={policyFormData.providerId}
+                    onChange={(e) => setPolicyFormData(prev => ({ ...prev, providerId: e.target.value }))}
+                    className="input w-full"
+                    required
+                  >
+                    <option value="">Select provider...</option>
+                    {hmoProviders.filter(p => p.type === 'PRIVATE').map(p => (
+                      <option key={p.id} value={p.id}>{p.name}</option>
+                    ))}
+                  </Dropdown>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1">Policy Number *</label>
+                  <input
+                    type="text"
+                    value={policyFormData.policyNumber}
+                    onChange={(e) => setPolicyFormData(prev => ({ ...prev, policyNumber: e.target.value }))}
+                    className="input w-full"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1">Group Number</label>
+                  <input
+                    type="text"
+                    value={policyFormData.groupNumber}
+                    onChange={(e) => setPolicyFormData(prev => ({ ...prev, groupNumber: e.target.value }))}
+                    className="input w-full"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1">Plan Type *</label>
+                  <Dropdown
+                    value={policyFormData.planType}
+                    onChange={(e) => setPolicyFormData(prev => ({ ...prev, planType: e.target.value }))}
+                    className="input w-full"
+                    required
+                  >
+                    <option value="STANDARD">Standard</option>
+                    <option value="COMPREHENSIVE">Comprehensive</option>
+                    <option value="PREMIUM">Premium</option>
+                  </Dropdown>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1">Patient Copay % *</label>
+                  <input
+                    type="number"
+                    min="0"
+                    max="100"
+                    step="0.01"
+                    value={policyFormData.copayPercentage}
+                    onChange={(e) => setPolicyFormData(prev => ({ ...prev, copayPercentage: e.target.value }))}
+                    className="input w-full"
+                    placeholder="e.g. 20"
+                    required
+                  />
+                  <p className="text-xs text-gray-500 mt-0.5">% the patient pays — insurer covers the rest.</p>
+                </div>
+                <div />
+                <div>
+                  <label className="block text-sm font-medium mb-1">Valid From *</label>
+                  <input
+                    type="date"
+                    value={policyFormData.validFrom}
+                    onChange={(e) => setPolicyFormData(prev => ({ ...prev, validFrom: e.target.value }))}
+                    className="input w-full"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1">Valid To *</label>
+                  <input
+                    type="date"
+                    value={policyFormData.validTo}
+                    onChange={(e) => setPolicyFormData(prev => ({ ...prev, validTo: e.target.value }))}
+                    className="input w-full"
+                    required
+                  />
+                </div>
+                <div className="md:col-span-3 flex justify-end gap-3 mt-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowAddPolicyForm(false)}
+                    className="px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-md"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isSubmittingPolicy}
+                    className="px-4 py-2 text-sm font-medium text-white bg-primary-600 hover:bg-primary-700 rounded-md disabled:opacity-50"
+                  >
+                    {isSubmittingPolicy ? 'Saving...' : 'Save Policy'}
+                  </button>
+                </div>
+              </form>
+            )}
+
+            {insurancePolicies.length > 0 ? (
+              <div className="mt-4 overflow-x-auto">
+                <table className="min-w-full divide-y divide-gray-200 text-sm">
+                  <thead>
+                    <tr className="text-left text-gray-500">
+                      <th className="pr-4 py-2 font-medium">Provider</th>
+                      <th className="pr-4 py-2 font-medium">Policy #</th>
+                      <th className="pr-4 py-2 font-medium">Plan</th>
+                      <th className="pr-4 py-2 font-medium">Copay</th>
+                      <th className="pr-4 py-2 font-medium">Valid Period</th>
+                      <th className="pr-4 py-2 font-medium">Status</th>
+                      {canManageInsurancePolicies && <th className="pr-4 py-2 font-medium text-right">Actions</th>}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {insurancePolicies.map(policy => (
+                      <tr key={policy.id}>
+                        <td className="pr-4 py-2">{policy.provider?.name}</td>
+                        <td className="pr-4 py-2">{policy.policyNumber}</td>
+                        <td className="pr-4 py-2">{policy.planType}</td>
+                        <td className="pr-4 py-2">{policy.copayPercentage}%</td>
+                        <td className="pr-4 py-2">{formatDate(policy.validFrom)} – {formatDate(policy.validTo)}</td>
+                        <td className="pr-4 py-2">
+                          <span className={`px-2 py-0.5 text-xs font-semibold rounded-full ${policy.isActive ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-600'}`}>
+                            {policy.isActive ? 'Active' : 'Inactive'}
+                          </span>
+                        </td>
+                        {canManageInsurancePolicies && (
+                          <td className="pr-4 py-2 text-right">
+                            {policy.isActive && (
+                              <button
+                                onClick={() => handleDeactivatePolicy(policy.id)}
+                                className="text-xs text-red-600 hover:text-red-700 font-medium"
+                              >
+                                Deactivate
+                              </button>
+                            )}
+                          </td>
+                        )}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              !showAddPolicyForm && <p className="text-sm text-gray-500 mt-3">No private insurance enrollment on file.</p>
+            )}
 
             {patient.emergencyContact && (
               <>
@@ -1143,6 +1508,39 @@ const PatientDetailView: React.FC<PatientDetailViewProps> = ({ patientId, onBack
                   </div>
                 </div>
               </>
+            )}
+
+            {(patient.mother || (patient.newbornChildren && patient.newbornChildren.length > 0)) && (
+              <div className="mt-8">
+                <h3 className="text-lg font-semibold border-b pb-2">Family Link</h3>
+                {patient.mother && (
+                  <button
+                    onClick={() => navigate(`/patients?patientId=${patient.mother!.id}`)}
+                    className="w-full flex items-center justify-between text-left mt-3 p-3 bg-pink-50 border border-pink-200 rounded-lg hover:bg-pink-100"
+                  >
+                    <div>
+                      <p className="text-sm text-gray-600">Mother</p>
+                      <p className="font-medium text-gray-900">{patient.mother.firstName} {patient.mother.lastName}</p>
+                    </div>
+                    <span className="text-xs text-gray-400 font-mono">{patient.mother.patientId}</span>
+                  </button>
+                )}
+                {patient.newbornChildren && patient.newbornChildren.length > 0 && (
+                  <div className="mt-3 space-y-2">
+                    <p className="text-sm text-gray-600">Newborn Children</p>
+                    {patient.newbornChildren.map((child) => (
+                      <button
+                        key={child.id}
+                        onClick={() => navigate(`/patients?patientId=${child.id}`)}
+                        className="w-full flex items-center justify-between text-left p-3 bg-pink-50 border border-pink-200 rounded-lg hover:bg-pink-100"
+                      >
+                        <p className="font-medium text-gray-900">{child.firstName} {child.lastName}</p>
+                        <span className="text-xs text-gray-400 font-mono">{child.patientId}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
             )}
 
             {/* Consent Information - US-PAT-006 */}
@@ -1391,6 +1789,17 @@ const PatientDetailView: React.FC<PatientDetailViewProps> = ({ patientId, onBack
                     )}
                   </div>
                 ))}
+                {timelineHasMore && (
+                  <div className="text-center pt-2">
+                    <button
+                      onClick={loadMoreTimeline}
+                      disabled={timelineLoading}
+                      className="px-4 py-2 text-sm font-medium text-primary-600 bg-primary-50 hover:bg-primary-100 rounded-md disabled:opacity-50"
+                    >
+                      {timelineLoading ? 'Loading...' : 'Load More'}
+                    </button>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -1444,6 +1853,17 @@ const PatientDetailView: React.FC<PatientDetailViewProps> = ({ patientId, onBack
                     )}
                   </div>
                 ))}
+                {timelineHasMore && (
+                  <div className="text-center pt-2">
+                    <button
+                      onClick={loadMoreTimeline}
+                      disabled={timelineLoading}
+                      className="px-4 py-2 text-sm font-medium text-primary-600 bg-primary-50 hover:bg-primary-100 rounded-md disabled:opacity-50"
+                    >
+                      {timelineLoading ? 'Loading...' : 'Load More'}
+                    </button>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -1500,6 +1920,17 @@ const PatientDetailView: React.FC<PatientDetailViewProps> = ({ patientId, onBack
                     )}
                   </div>
                 ))}
+                {labResultsHasMore && (
+                  <div className="text-center pt-2">
+                    <button
+                      onClick={loadMoreLabResults}
+                      disabled={labResultsLoading}
+                      className="px-4 py-2 text-sm font-medium text-primary-600 bg-primary-50 hover:bg-primary-100 rounded-md disabled:opacity-50"
+                    >
+                      {labResultsLoading ? 'Loading...' : 'Load More'}
+                    </button>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -2095,14 +2526,30 @@ const PatientDetailView: React.FC<PatientDetailViewProps> = ({ patientId, onBack
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
                     <div>
                       <label className="block text-sm font-medium mb-1">HMO Provider Name *</label>
-                      <input
-                        type="text"
-                        name="hmoProvider"
-                        value={editFormData.hmoProvider}
+                      <Dropdown
+                        name="hmoProviderId"
+                        value={editFormData.hmoProviderId}
                         onChange={handleEditInputChange}
                         className="input w-full"
                         required={editFormData.patientType === 'HMO'}
-                      />
+                      >
+                        <option value="">Select HMO provider...</option>
+                        {hmoProviders.filter(p => p.type === 'HMO' || p.type === 'NHIA').map(p => (
+                          <option key={p.id} value={p.id}>{p.name}</option>
+                        ))}
+                        <option value="OTHER">Other (specify)</option>
+                      </Dropdown>
+                      {editFormData.hmoProviderId === 'OTHER' && (
+                        <input
+                          type="text"
+                          name="hmoProvider"
+                          value={editFormData.hmoProvider}
+                          onChange={handleEditInputChange}
+                          className="input w-full mt-2"
+                          placeholder="Enter HMO provider name"
+                          required
+                        />
+                      )}
                     </div>
                     <div>
                       <label className="block text-sm font-medium mb-1">HMO ID / Number *</label>

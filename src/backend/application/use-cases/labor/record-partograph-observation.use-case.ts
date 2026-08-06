@@ -123,13 +123,20 @@ export class RecordPartographObservationUseCase {
       if (isAbnormalFHR) reasons.push(`fetal heart rate ${dto.fetalHeartRate}bpm is outside normal range`);
       if (isAbnormalBP) reasons.push('maternal BP is elevated');
 
-      await this.notificationService.notifyRole(tenantId, ['DOCTOR', 'NURSE'], {
+      // Partograph observations are recorded every ~30 min through an
+      // ongoing labor — a 15-minute cooldown avoids re-alerting on every
+      // observation while a danger sign persists, without a real risk of
+      // suppressing a genuinely new development between recordings.
+      await this.notificationService.notifyRoleWithCooldown(tenantId, ['DOCTOR', 'NURSE'], {
         type: 'PARTOGRAPH_ALERT',
+        // Fetal distress is acutely time-critical; an action-line breach or
+        // elevated maternal BP is urgent but not to the same degree.
+        severity: isAbnormalFHR ? 'CRITICAL' : 'WARNING',
         title: 'Partograph Alert',
         message: `${patientName} — ${reasons.join('; ')}`,
         entityType: 'LaborRecord',
         entityId: laborRecordId,
-      });
+      }, 15);
     }
 
     return observation;

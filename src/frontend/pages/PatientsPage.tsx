@@ -351,8 +351,17 @@ const PatientsPage: React.FC = () => {
           relationship: formData.emergencyContactRelationship,
         } : undefined,
         patientType: formData.patientType,
+        // formData.hmoProvider holds the selected InsuranceProvider's id (or
+        // the 'OTHER' sentinel for free-text) — resolve the display name for
+        // the legacy hmoProvider string, and send the real id separately so
+        // billing (generate-invoice.use-case.ts) has a real FK to key off.
         hmoProvider: formData.patientType === 'HMO'
-          ? (formData.hmoProvider === 'OTHER' ? formData.hmoProviderOther : formData.hmoProvider)
+          ? (formData.hmoProvider === 'OTHER'
+              ? formData.hmoProviderOther
+              : hmoProviders.find(p => p.id === formData.hmoProvider)?.name)
+          : undefined,
+        hmoProviderId: formData.patientType === 'HMO' && formData.hmoProvider !== 'OTHER'
+          ? formData.hmoProvider || undefined
           : undefined,
         hmoNumber: formData.patientType === 'HMO' ? formData.hmoNumber : undefined,
         nhisNumber: formData.nhisNumber || undefined,
@@ -750,7 +759,7 @@ const PatientsPage: React.FC = () => {
                         <Dropdown name="hmoProvider" value={formData.hmoProvider} onChange={handleInputChange} className="input w-full" required={formData.patientType === 'HMO'}>
                           <option value="">Select HMO provider...</option>
                           {hmoProviders.filter(p => p.type === 'HMO' || p.type === 'NHIA').map(p => (
-                            <option key={p.id} value={p.name}>{p.name}</option>
+                            <option key={p.id} value={p.id}>{p.name}</option>
                           ))}
                           <option value="OTHER">Other (specify)</option>
                         </Dropdown>

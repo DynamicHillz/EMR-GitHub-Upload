@@ -1,5 +1,4 @@
 import { Router, Request, Response } from 'express';
-import { PrismaClient } from '@prisma/client';
 import { authMiddleware, requireRole } from '../middleware/auth';
 import { GetFhirPatientUseCase } from '../../application/use-cases/interoperability/get-fhir-patient.use-case';
 import { GetFhirEncounterUseCase } from '../../application/use-cases/interoperability/get-fhir-encounter.use-case';
@@ -9,9 +8,13 @@ import { GetFhirMedicationRequestUseCase } from '../../application/use-cases/int
 import { GetFhirDiagnosticReportUseCase } from '../../application/use-cases/interoperability/get-fhir-diagnostic-report.use-case';
 import { GetFhirPatientEverythingUseCase } from '../../application/use-cases/interoperability/get-fhir-patient-everything.use-case';
 import { SyncDhis2AggregateUseCase } from '../../application/use-cases/interoperability/sync-dhis2-aggregate.use-case';
+import { GetDhis2ConfigUseCase } from '../../application/use-cases/interoperability/get-dhis2-config.use-case';
+import { UpdateDhis2ConfigUseCase } from '../../application/use-cases/interoperability/update-dhis2-config.use-case';
+import { GetDhis2SyncHistoryUseCase } from '../../application/use-cases/interoperability/get-dhis2-sync-history.use-case';
+import { getSafeErrorMessage } from '../../shared/utils/error-message.util';
+import { prisma } from '../../infrastructure/database/prisma.client';
 
 const router = Router();
-const prisma = new PrismaClient();
 
 // Both routes below export/sync full patient-level or aggregate clinical
 // data to external systems — previously only wrapped in authMiddleware, so
@@ -151,11 +154,56 @@ router.post('/dhis2/sync', authMiddleware, ADMIN_ONLY, async (req: Request, res:
     }
 
     const useCase = new SyncDhis2AggregateUseCase(prisma);
-    const result = await useCase.execute(req.user!.tenantId, parseInt(month), parseInt(year));
+    const result = await useCase.execute(req.user!.tenantId, parseInt(month), parseInt(year), req.user!.id);
     res.json(result);
   } catch (error: any) {
     console.error('DHIS2 sync error:', error);
-    res.status(500).json({ error: 'Failed to sync with DHIS2' });
+    res.status(500).json({ error: getSafeErrorMessage(error, 'Failed to sync with DHIS2') });
+  }
+});
+
+/**
+ * @route GET /api/interoperability/dhis2/config
+ * @desc Get this tenant's DHIS2 integration settings — never returns the
+ *       raw password, only whether one is set.
+ * @access Private (Admin)
+ */
+router.get('/dhis2/config', authMiddleware, ADMIN_ONLY, async (req: Request, res: Response) => {
+  try {
+    const config = await new GetDhis2ConfigUseCase(prisma).execute(req.user!.tenantId);
+    res.json(config);
+  } catch (error: any) {
+    res.status(500).json({ error: getSafeErrorMessage(error, 'Failed to fetch DHIS2 configuration') });
+  }
+});
+
+/**
+ * @route PUT /api/interoperability/dhis2/config
+ * @desc Update this tenant's DHIS2 integration settings. A blank/omitted
+ *       password keeps the existing (encrypted) one — it does not clear it.
+ * @access Private (Admin)
+ */
+router.put('/dhis2/config', authMiddleware, ADMIN_ONLY, async (req: Request, res: Response) => {
+  try {
+    const config = await new UpdateDhis2ConfigUseCase(prisma).execute(req.user!.tenantId, req.body);
+    res.json(config);
+  } catch (error: any) {
+    res.status(400).json({ error: getSafeErrorMessage(error, 'Failed to update DHIS2 configuration') });
+  }
+});
+
+/**
+ * @route GET /api/interoperability/dhis2/history
+ * @desc Past DHIS2 push attempts for this tenant, most recent first.
+ * @access Private (Admin)
+ */
+router.get('/dhis2/history', authMiddleware, ADMIN_ONLY, async (req: Request, res: Response) => {
+  try {
+    const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : undefined;
+    const history = await new GetDhis2SyncHistoryUseCase(prisma).execute(req.user!.tenantId, limit);
+    res.json(history);
+  } catch (error: any) {
+    res.status(500).json({ error: getSafeErrorMessage(error, 'Failed to fetch DHIS2 sync history') });
   }
 });
 

@@ -49,6 +49,24 @@ export class RecordConsumableUsageUseCase {
       throw new NotFoundError('Patient', dto.patientId);
     }
 
+    if (dto.admissionId) {
+      const admission = await this.prisma.admission.findFirst({
+        where: { id: dto.admissionId, tenantId, patientId: dto.patientId },
+      });
+      if (!admission) {
+        throw new NotFoundError('Admission', dto.admissionId);
+      }
+    }
+
+    if (dto.consultationId) {
+      const consultation = await this.prisma.consultation.findFirst({
+        where: { id: dto.consultationId, tenantId, patientId: dto.patientId },
+      });
+      if (!consultation) {
+        throw new NotFoundError('Consultation', dto.consultationId);
+      }
+    }
+
     const batch = await this.prisma.consumableBatch.findFirst({
       where: {
         id: dto.batchId,

@@ -18,10 +18,12 @@ import { GetPatientUseCase } from '../../application/use-cases/patient/get-patie
 import { UpdatePatientUseCase } from '../../application/use-cases/patient/update-patient.use-case';
 import { DeletePatientUseCase } from '../../application/use-cases/patient/delete-patient.use-case';
 import { GetPatientClinicalSummaryUseCase } from '../../application/use-cases/patient/get-patient-clinical-summary.use-case';
+import { GetUnnamedNewbornsUseCase } from '../../application/use-cases/patient/get-unnamed-newborns.use-case';
 import { PatientRepository } from '../../infrastructure/database/repositories/patient.repository';
 import { PatientIdGenerator } from '../../infrastructure/generators/patient-id.generator';
 import { prisma } from '../../infrastructure/database/prisma.client';
 import { verificationService } from '../../application/services/verification.service';
+import { getSafeErrorMessage } from '../../shared/utils/error-message.util';
 
 // Initialize dependencies
 const patientRepository = new PatientRepository(prisma);
@@ -34,6 +36,36 @@ const getPatientUseCase = new GetPatientUseCase(patientRepository);
 const updatePatientUseCase = new UpdatePatientUseCase(patientRepository);
 const deletePatientUseCase = new DeletePatientUseCase(patientRepository);
 const getPatientClinicalSummaryUseCase = new GetPatientClinicalSummaryUseCase(prisma);
+const getUnnamedNewbornsUseCase = new GetUnnamedNewbornsUseCase(prisma);
+
+/**
+ * GET /api/patients/unnamed-newborns
+ * Follow-up worklist for newborns still carrying their placeholder
+ * identity from delivery (see record-delivery-outcome.use-case.ts).
+ */
+export const getUnnamedNewborns = async (req: Request, res: Response) => {
+  try {
+    const tenantId = req.user?.tenantId;
+    if (!tenantId) {
+      return res.status(401).json({ success: false, message: 'Unauthorized' });
+    }
+
+    const page = req.query.page ? parseInt(req.query.page as string) : 1;
+    const limit = req.query.limit ? parseInt(req.query.limit as string) : 50;
+    const skip = (page - 1) * limit;
+    const { newborns, total } = await getUnnamedNewbornsUseCase.execute(tenantId, { limit, skip });
+    return res.status(200).json({
+      success: true,
+      data: newborns,
+      total,
+      page,
+      totalPages: Math.ceil(total / limit) || 1,
+    });
+  } catch (error: any) {
+    logger.error('Error fetching unnamed newborns:', error);
+    return res.status(500).json({ success: false, message: getSafeErrorMessage(error, 'Failed to fetch unnamed newborns') });
+  }
+};
 
 /**
  * POST /api/patients
@@ -216,9 +248,9 @@ export const getPatientClinicalSummary = async (req: Request, res: Response) => 
   } catch (error: any) {
     logger.error('Error getting patient clinical summary:', error);
 
-    return res.status(500).json({
+    return res.status(error.statusCode || 500).json({
       success: false,
-      message: 'Failed to get patient clinical summary',
+      message: error.statusCode ? error.message : 'Failed to get patient clinical summary',
     });
   }
 };
@@ -349,16 +381,18 @@ export const deletePatient = async (req: Request, res: Response) => {
   } catch (error: any) {
     logger.error('Error deleting patient:', error);
 
-    if (error.message === 'Patient not found') {
-      return res.status(404).json({
-        success: false,
-        message: error.message,
-      });
-    }
-
-    return res.status(500).json({
+    // NotFoundError('Patient', id) carries its own statusCode (404) and a
+    // message that includes the identifier — checking error.statusCode
+    // directly (as updatePatient's equivalent branch already does) instead
+    // of matching an exact message string means this doesn't silently break
+    // if that message format ever changes, unlike a literal
+    // error.message === 'Patient not found' check, which this route
+    // previously used and which never actually matched (the real message
+    // is "Patient with identifier '<id>' not found"), always falling
+    // through to a 500 for what should have been a 404.
+    return res.status(error.statusCode || 500).json({
       success: false,
-      message: 'Failed to delete patient',
+      message: error.statusCode ? error.message : 'Failed to delete patient',
     });
   }
 };

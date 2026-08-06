@@ -118,7 +118,11 @@ export class VerifyGatewayPaymentUseCase {
 
       const current = await tx.invoice.findUniqueOrThrow({ where: { id: payment.invoiceId } });
       const newPaidAmount = Number(current.paidAmount) + Number(payment.amount);
-      const newBalance = Number(current.totalAmount) - newPaidAmount;
+      // current.balance, not totalAmount — see record-payment.use-case.ts:
+      // totalAmount includes any insurance-covered portion the patient never
+      // owed, so deriving from it here would silently reintroduce that
+      // amount as still outstanding.
+      const newBalance = Number(current.balance) - Number(payment.amount);
 
       let paymentStatus: 'UNPAID' | 'PARTIALLY_PAID' | 'PAID';
       if (newBalance === 0) {

@@ -1,74 +1,78 @@
-import React from 'react';
+import React, { Suspense } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from 'react-query';
 import { AuthProvider, useAuth, getRoleHomePage } from './contexts/AuthContext';
 import { ToastProvider } from './components/ToastContainer';
 
-// Pages
-import LoginPage from './pages/LoginPage';
-import ForgotPasswordPage from './pages/ForgotPasswordPage';
-import DashboardPage from './pages/DashboardPage';
-import PatientsPage from './pages/PatientsPage';
-import AppointmentsPage from './pages/AppointmentsPage';
-import ConsultationsPage from './pages/ConsultationsPage';
-import LabPage from './pages/LabPage';
-import PharmacyPage from './pages/PharmacyPage';
-import InventoryPage from './pages/InventoryPage';
-import MedicationsPage from './pages/MedicationsPage';
-import BillingPage from './pages/BillingPage';
+// Pages — lazy-loaded so each route's JS only downloads when actually
+// visited, instead of one bundle containing every page in the app up front.
+const LoginPage = React.lazy(() => import('./pages/LoginPage'));
+const ForgotPasswordPage = React.lazy(() => import('./pages/ForgotPasswordPage'));
+const DashboardPage = React.lazy(() => import('./pages/DashboardPage'));
+const PatientsPage = React.lazy(() => import('./pages/PatientsPage'));
+const AppointmentsPage = React.lazy(() => import('./pages/AppointmentsPage'));
+const ConsultationsPage = React.lazy(() => import('./pages/ConsultationsPage'));
+const PharmacyPage = React.lazy(() => import('./pages/PharmacyPage'));
+const InventoryPage = React.lazy(() => import('./pages/InventoryPage'));
+const MedicationsPage = React.lazy(() => import('./pages/MedicationsPage'));
+const BillingPage = React.lazy(() => import('./pages/BillingPage'));
 
 // Billing Pages
-import ServiceCatalogPage from './pages/billing/ServiceCatalogPage';
-import InvoiceListPage from './pages/billing/InvoiceListPage';
-import CreateInvoicePage from './pages/billing/CreateInvoicePage';
-import InvoiceDetailPage from './pages/billing/InvoiceDetailPage';
-import PaymentListPage from './pages/billing/PaymentListPage';
-import OutstandingBalancesPage from './pages/billing/OutstandingBalancesPage';
-import RefundListPage from './pages/billing/RefundListPage';
-import UnbilledQueuePage from './pages/billing/UnbilledQueuePage';
+const ServiceCatalogPage = React.lazy(() => import('./pages/billing/ServiceCatalogPage'));
+const InvoiceListPage = React.lazy(() => import('./pages/billing/InvoiceListPage'));
+const CreateInvoicePage = React.lazy(() => import('./pages/billing/CreateInvoicePage'));
+const InvoiceDetailPage = React.lazy(() => import('./pages/billing/InvoiceDetailPage'));
+const PaymentListPage = React.lazy(() => import('./pages/billing/PaymentListPage'));
+const OutstandingBalancesPage = React.lazy(() => import('./pages/billing/OutstandingBalancesPage'));
+const RefundListPage = React.lazy(() => import('./pages/billing/RefundListPage'));
+const UnbilledQueuePage = React.lazy(() => import('./pages/billing/UnbilledQueuePage'));
 
 // User Management Pages
-import UserListPage from './pages/users/UserListPage';
-import UserDetailPage from './pages/users/UserDetailPage';
-import CreateUserPage from './pages/users/CreateUserPage';
-import TenantsPage from './pages/TenantsPage';
-import CreateTenantPage from './pages/CreateTenantPage';
-import ExemptionPoliciesPage from './pages/ExemptionPoliciesPage';
-import InsuranceProvidersPage from './pages/InsuranceProvidersPage';
+const UserListPage = React.lazy(() => import('./pages/users/UserListPage'));
+const UserDetailPage = React.lazy(() => import('./pages/users/UserDetailPage'));
+const CreateUserPage = React.lazy(() => import('./pages/users/CreateUserPage'));
+const TenantsPage = React.lazy(() => import('./pages/TenantsPage'));
+const CreateTenantPage = React.lazy(() => import('./pages/CreateTenantPage'));
+const ExemptionPoliciesPage = React.lazy(() => import('./pages/ExemptionPoliciesPage'));
+const InsuranceProvidersPage = React.lazy(() => import('./pages/InsuranceProvidersPage'));
 
 // Settings Pages
-import SettingsPage from './pages/SettingsPage';
+const SettingsPage = React.lazy(() => import('./pages/SettingsPage'));
 
 // Reports Pages
-import ReportsPage from './pages/ReportsPage';
+const ReportsPage = React.lazy(() => import('./pages/ReportsPage'));
 
 // Additional Modules
-import ConsumablesPage from './pages/ConsumablesPage';
-import ForceChangePasswordPage from './pages/ForceChangePasswordPage';
-import InpatientDetailsPage from './pages/InpatientDetailsPage';
-import InpatientPage from './pages/InpatientPage';
-import LaborWardPage from './pages/LaborWardPage';
-import SurgeryLogPage from './pages/SurgeryLogPage';
-import InteroperabilityPage from './pages/InteroperabilityPage';
-import SyncConflictsPage from './pages/SyncConflictsPage';
-import TriageDashboardPage from './pages/TriageDashboardPage';
-import VerificationPage from './pages/VerificationPage';
-import WardManagementPage from './pages/WardManagementPage';
-import MchDashboardPage from './pages/MchDashboardPage';
-import ImmunizationDuePage from './pages/mch/ImmunizationDuePage';
-import AuditDashboardPage from './pages/audit/AuditDashboardPage';
-import BillingDashboard from './pages/billing/BillingDashboard';
-import InsuranceClaimsDashboard from './pages/billing/InsuranceClaimsDashboard';
-import LabQueuePage from './pages/LabQueuePage';
-import LabReportPrintPage from './pages/lab/LabReportPrintPage';
-import ReceiptPrintPage from './pages/billing/ReceiptPrintPage';
-import DischargeSummaryPrintPage from './pages/inpatient/DischargeSummaryPrintPage';
-import LabCatalogPage from './pages/lab/LabCatalogPage';
+const ConsumablesPage = React.lazy(() => import('./pages/ConsumablesPage'));
+const ForceChangePasswordPage = React.lazy(() => import('./pages/ForceChangePasswordPage'));
+const InpatientDetailsPage = React.lazy(() => import('./pages/InpatientDetailsPage'));
+const InpatientPage = React.lazy(() => import('./pages/InpatientPage'));
+const LaborWardPage = React.lazy(() => import('./pages/LaborWardPage'));
+const SurgeryLogPage = React.lazy(() => import('./pages/SurgeryLogPage'));
+const InteroperabilityPage = React.lazy(() => import('./pages/InteroperabilityPage'));
+const SyncConflictsPage = React.lazy(() => import('./pages/SyncConflictsPage'));
+const TriageDashboardPage = React.lazy(() => import('./pages/TriageDashboardPage'));
+const VerificationPage = React.lazy(() => import('./pages/VerificationPage'));
+const WardManagementPage = React.lazy(() => import('./pages/WardManagementPage'));
+const MchDashboardPage = React.lazy(() => import('./pages/MchDashboardPage'));
+const ImmunizationDuePage = React.lazy(() => import('./pages/mch/ImmunizationDuePage'));
+const PostnatalDuePage = React.lazy(() => import('./pages/mch/PostnatalDuePage'));
+const UnnamedNewbornsPage = React.lazy(() => import('./pages/mch/UnnamedNewbornsPage'));
+const AuditDashboardPage = React.lazy(() => import('./pages/audit/AuditDashboardPage'));
+const BillingDashboard = React.lazy(() => import('./pages/billing/BillingDashboard'));
+const InsuranceClaimsDashboard = React.lazy(() => import('./pages/billing/InsuranceClaimsDashboard'));
+const LabQueuePage = React.lazy(() => import('./pages/LabQueuePage'));
+const LabReportPrintPage = React.lazy(() => import('./pages/lab/LabReportPrintPage'));
+const ReceiptPrintPage = React.lazy(() => import('./pages/billing/ReceiptPrintPage'));
+const DischargeSummaryPrintPage = React.lazy(() => import('./pages/inpatient/DischargeSummaryPrintPage'));
+const NhmisMonthlyReturnPrintPage = React.lazy(() => import('./pages/reports/NhmisMonthlyReturnPrintPage'));
+const LabCatalogPage = React.lazy(() => import('./pages/lab/LabCatalogPage'));
 
-// Layout & Components
+// Layout & Components — not lazy: needed immediately on every route.
 import MainLayout from './components/layout/MainLayout';
 import ProtectedRoute from './components/ProtectedRoute';
 import BrandingProvider from './components/BrandingProvider';
+import PageLoader from './components/common/PageLoader';
 
 // Redirects user to their role-appropriate home page
 const RoleRedirect: React.FC = () => {
@@ -102,6 +106,7 @@ function App() {
         <Router>
           <AuthProvider>
             <BrandingProvider>
+              <Suspense fallback={<PageLoader variant="full" />}>
               <Routes>
                 {/* Public routes */}
                 <Route path="/login" element={<LoginPage />} />
@@ -129,6 +134,14 @@ function App() {
                   element={
                     <ProtectedRoute>
                       <DischargeSummaryPrintPage />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="/reports/nhmis-monthly-return"
+                  element={
+                    <ProtectedRoute requiredRoles={['SUPER_ADMIN', 'ADMIN']}>
+                      <NhmisMonthlyReturnPrintPage />
                     </ProtectedRoute>
                   }
                 />
@@ -201,6 +214,8 @@ function App() {
                   <Route path="force-change-password" element={<ForceChangePasswordPage />} />
                   <Route path="mch" element={<MchDashboardPage />} />
                   <Route path="immunizations/due" element={<ImmunizationDuePage />} />
+                  <Route path="postnatal/due" element={<PostnatalDuePage />} />
+                  <Route path="newborns/unnamed" element={<UnnamedNewbornsPage />} />
 
                   {/* Reports & Analytics - Admin only */}
                   <Route
@@ -281,6 +296,7 @@ function App() {
                 {/* 404 catch-all */}
                 <Route path="*" element={<Navigate to="/login" replace />} />
               </Routes>
+              </Suspense>
             </BrandingProvider>
           </AuthProvider>
         </Router>

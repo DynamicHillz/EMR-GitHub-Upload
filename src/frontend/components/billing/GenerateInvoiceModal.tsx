@@ -28,7 +28,7 @@ interface Patient {
 
 interface BillableItem {
   id: string;
-  type: 'PRESCRIPTION' | 'LAB_TEST' | 'CONSULTATION' | 'ADMISSION' | 'CONSUMABLE' | 'TRANSFUSION' | 'SURGERY' | 'LABOR';
+  type: 'PRESCRIPTION' | 'LAB_TEST' | 'CONSULTATION' | 'ADMISSION' | 'CONSUMABLE' | 'TRANSFUSION' | 'SURGERY' | 'LABOR' | 'POSTNATAL';
   description: string;
   detail: string;
   quantity: number;
@@ -130,7 +130,7 @@ const GenerateInvoiceModal: React.FC<GenerateInvoiceModalProps> = ({ onClose, on
       // unbilled inpatient admissions (room + administered drugs), unbilled
       // consumable usage (syringes, gloves, gauze, etc.), and unbilled
       // transfusions/surgeries/deliveries in parallel
-      const [presRes, labRes, conRes, admRes, consumableRes, transfusionRes, operationRes, laborRes] = await Promise.all([
+      const [presRes, labRes, conRes, admRes, consumableRes, transfusionRes, operationRes, laborRes, postnatalRes] = await Promise.all([
         fetch(`${API_BASE_URL}/pharmacy/prescriptions?billingStatus=UNBILLED&patientId=${patient.id}`, {
           headers: { Authorization: `Bearer ${token}` },
         }),
@@ -155,9 +155,12 @@ const GenerateInvoiceModal: React.FC<GenerateInvoiceModalProps> = ({ onClose, on
         fetch(`${API_BASE_URL}/labor/records/billable?patientId=${patient.id}`, {
           headers: { Authorization: `Bearer ${token}` },
         }),
+        fetch(`${API_BASE_URL}/postnatal/records/billable?patientId=${patient.id}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        }),
       ]);
 
-      const [presData, labData, conData, admData, consumableData, transfusionData, operationData, laborData] = await Promise.all([
+      const [presData, labData, conData, admData, consumableData, transfusionData, operationData, laborData, postnatalData] = await Promise.all([
         presRes.json(),
         labRes.json(),
         conRes.json(),
@@ -166,6 +169,7 @@ const GenerateInvoiceModal: React.FC<GenerateInvoiceModalProps> = ({ onClose, on
         transfusionRes.json(),
         operationRes.json(),
         laborRes.json(),
+        postnatalRes.json(),
       ]);
 
       const items: BillableItem[] = [];
@@ -322,6 +326,21 @@ const GenerateInvoiceModal: React.FC<GenerateInvoiceModalProps> = ({ onClose, on
         });
       }
 
+      // Unbilled postnatal (PNC) follow-up visits
+      const postnatalVisits = postnatalData.data || [];
+      for (const v of postnatalVisits) {
+        items.push({
+          id: v.id,
+          type: 'POSTNATAL',
+          description: v.description,
+          detail: v.detail,
+          quantity: v.quantity,
+          unitPrice: v.unitPrice,
+          total: v.total,
+          selected: true,
+        });
+      }
+
       setBillableItems(items);
       if (items.length === 0) {
         setError('No unbilled services found for this patient. Prescriptions must be dispensed, lab tests completed, and consultations finalized before generating an invoice.');
@@ -386,6 +405,8 @@ const GenerateInvoiceModal: React.FC<GenerateInvoiceModalProps> = ({ onClose, on
         .filter(i => i.type === 'SURGERY').map(i => i.id);
       const laborRecordIds = selectedItems
         .filter(i => i.type === 'LABOR').map(i => i.id);
+      const postnatalVisitIds = selectedItems
+        .filter(i => i.type === 'POSTNATAL').map(i => i.id);
 
       const invoice = await billingService.generateInvoice({
         patientId: selectedPatient!.id,
@@ -397,6 +418,7 @@ const GenerateInvoiceModal: React.FC<GenerateInvoiceModalProps> = ({ onClose, on
         transfusionChartIds: transfusionChartIds.length ? transfusionChartIds : undefined,
         operationNoteIds: operationNoteIds.length ? operationNoteIds : undefined,
         laborRecordIds: laborRecordIds.length ? laborRecordIds : undefined,
+        postnatalVisitIds: postnatalVisitIds.length ? postnatalVisitIds : undefined,
         additionalItems: manualItems.length
           ? manualItems.map(i => ({ serviceName: i.serviceName, quantity: i.quantity, unitPrice: i.unitPrice }))
           : undefined,

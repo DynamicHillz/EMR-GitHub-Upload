@@ -1,9 +1,11 @@
 import React, { useState } from 'react';
 import { ancService } from '../../services/anc.service';
-import { X, Activity, Droplet, Heart, AlertCircle, Syringe, ClipboardCheck, Pill, Trash2 } from 'lucide-react';
+import { X, Activity, Droplet, AlertCircle, Syringe, ClipboardCheck, Pill, Trash2 } from 'lucide-react';
 import MedicationAutocomplete, { Medication } from '../common/MedicationAutocomplete';
 import { DURATION_OPTIONS, mapDosageFormToRoute } from '../../utils/prescriptionHelpers';
 import Dropdown from '../common/Dropdown';
+import DangerSignBanner from '../common/DangerSignBanner';
+import { useToast } from '../ToastContainer';
 
 interface RecordAncVisitModalProps {
   patientId: string;
@@ -43,6 +45,7 @@ const getAncDangerSigns = (formData: { systolicBP: string; diastolicBP: string; 
 };
 
 const RecordAncVisitModal: React.FC<RecordAncVisitModalProps> = ({ patientId, pregnancyId, onClose, onSuccess }) => {
+  const toast = useToast();
   const [submitting, setSubmitting] = useState(false);
   const [activeTab, setActiveTab] = useState('vitals');
   const [stagedMedications, setStagedMedications] = useState<StagedMedication[]>([]);
@@ -104,7 +107,7 @@ const RecordAncVisitModal: React.FC<RecordAncVisitModalProps> = ({ patientId, pr
     const apiBaseUrl = import.meta.env.VITE_API_URL || `${window.location.protocol}//${window.location.hostname}:3000`;
     for (const med of stagedMedications) {
       try {
-        await fetch(`${apiBaseUrl}/api/prescriptions`, {
+        const res = await fetch(`${apiBaseUrl}/api/prescriptions`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
           body: JSON.stringify({
@@ -120,8 +123,27 @@ const RecordAncVisitModal: React.FC<RecordAncVisitModalProps> = ({ patientId, pr
             instructions: med.instructions,
           }),
         });
+        const result = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          // fetch() only rejects on a network failure, not an HTTP error
+          // status — without this check a failed prescription (e.g. a
+          // validation error) was silently treated as if it had succeeded.
+          toast.error(`Failed to prescribe ${med.medicationName}`, result.message || 'Please add it again from the Prescriptions tab.');
+          continue;
+        }
+        // The allergy/interaction check already runs server-side either
+        // way — this just makes sure the clinician actually sees a flag
+        // raised during an ANC visit, matching how ward rounds/discharge
+        // already surface it, instead of it being silently discarded.
+        if (result.data?.allergyWarning || result.data?.interactionWarning) {
+          const parts: string[] = [];
+          if (result.data.allergyWarning && result.data.allergyDetails?.length) parts.push(`Allergy: ${result.data.allergyDetails.join(', ')}`);
+          if (result.data.interactionWarning && result.data.interactionDetails?.length) parts.push(`Interaction: ${result.data.interactionDetails.join(', ')}`);
+          toast.warning(`Warning: ${med.medicationName}`, parts.join(' — '));
+        }
       } catch (error) {
         console.error('Failed to create prescription for ANC visit:', error);
+        toast.error(`Failed to prescribe ${med.medicationName}`, 'Please add it again from the Prescriptions tab.');
       }
     }
   };
@@ -195,19 +217,7 @@ const RecordAncVisitModal: React.FC<RecordAncVisitModalProps> = ({ patientId, pr
               {/* VITALS */}
               <div className={activeTab === 'vitals' ? 'block' : 'hidden'}>
                 <h3 className="text-lg font-medium text-gray-900 mb-4 border-b pb-2">Maternal & Fetal Assessment</h3>
-                {dangerSigns.length > 0 && (
-                  <div className="mb-4 p-3 bg-red-100 border-2 border-red-500 rounded-lg">
-                    <div className="flex items-start gap-2">
-                      <AlertCircle className="w-5 h-5 text-red-700 flex-shrink-0 mt-0.5" />
-                      <div>
-                        <p className="font-bold text-red-900 text-sm">Danger Sign(s) Detected</p>
-                        <ul className="text-red-800 text-sm mt-1 list-disc list-inside">
-                          {dangerSigns.map((sign) => <li key={sign}>{sign}</li>)}
-                        </ul>
-                      </div>
-                    </div>
-                  </div>
-                )}
+                <DangerSignBanner signs={dangerSigns} />
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="block text-sm font-medium text-gray-700">Gestational Age (Weeks)</label>

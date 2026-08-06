@@ -42,6 +42,22 @@ export async function cleanDatabase(prisma: PrismaClient, tenantId: string) {
   await prisma.insuranceClaim.deleteMany({ where: { tenantId } });
   await prisma.invoiceLineItem.deleteMany({ where: { invoice: { tenantId } } });
   await prisma.invoice.deleteMany({ where: { tenantId } });
+  await prisma.dischargeSummary.deleteMany({ where: { tenantId } });
+  await prisma.admissionDiagnosis.deleteMany({ where: { tenantId } });
+  await prisma.medicationAdministration.deleteMany({ where: { tenantId } });
+  // Maternity models — must run before admission (LaborRecord.admissionId is
+  // a required FK) and before patient (all of these reference Patient), in
+  // FK-dependency order (children before the parents they reference).
+  await prisma.worklistDismissal.deleteMany({ where: { tenantId } });
+  await prisma.partographObservation.deleteMany({ where: { tenantId } });
+  await prisma.postnatalVisit.deleteMany({ where: { tenantId } });
+  await prisma.laborRecord.deleteMany({ where: { tenantId } });
+  await prisma.ancVisit.deleteMany({ where: { tenantId } });
+  await prisma.ancPregnancy.deleteMany({ where: { tenantId } });
+  await prisma.nextOfKin.deleteMany({ where: { tenantId } });
+  await prisma.admission.deleteMany({ where: { tenantId } });
+  await prisma.bed.deleteMany({ where: { tenantId } });
+  await prisma.ward.deleteMany({ where: { tenantId } });
   await prisma.exemptionPolicy.deleteMany({ where: { tenantId } });
   await prisma.patientInsurance.deleteMany({ where: { tenantId } });
   await prisma.insuranceProvider.deleteMany({ where: { tenantId } });
@@ -416,6 +432,81 @@ export async function createTestPrescription(
       quantity: overrides.quantity ?? 14,
       status: overrides.status || 'PENDING',
       dispensedAt: overrides.dispensedAt
+    }
+  });
+}
+
+/**
+ * Create a test ward
+ */
+export async function createTestWard(
+  prisma: PrismaClient,
+  tenantId: string,
+  overrides: Partial<{ name: string; type: string; capacity: number; dailyCost: number }> = {}
+) {
+  return prisma.ward.create({
+    data: {
+      tenantId,
+      name: overrides.name || 'General Ward',
+      type: overrides.type || 'General',
+      capacity: overrides.capacity ?? 10,
+      dailyCost: overrides.dailyCost ?? 5000
+    }
+  });
+}
+
+/**
+ * Create a test bed within a ward
+ */
+export async function createTestBed(
+  prisma: PrismaClient,
+  tenantId: string,
+  wardId: string,
+  overrides: Partial<{ bedNumber: string; status: string }> = {}
+) {
+  return prisma.bed.create({
+    data: {
+      tenantId,
+      wardId,
+      bedNumber: overrides.bedNumber || `BED-${uuidv4().slice(0, 8)}`,
+      status: overrides.status || 'AVAILABLE'
+    }
+  });
+}
+
+/**
+ * Create a test admission, defaulting to a currently-admitted patient in
+ * an OCCUPIED bed (mirrors what InpatientService.admitPatient does).
+ */
+export async function createTestAdmission(
+  prisma: PrismaClient,
+  tenantId: string,
+  patientId: string,
+  bedId: string,
+  admittedById: string,
+  overrides: Partial<{
+    reason: string;
+    status: string;
+    admissionDate: Date;
+    dischargeDate: Date | null;
+    bedClearedAt: Date | null;
+    billingStatus: string;
+  }> = {}
+) {
+  await prisma.bed.update({ where: { id: bedId }, data: { status: 'OCCUPIED' } });
+
+  return prisma.admission.create({
+    data: {
+      tenantId,
+      patientId,
+      bedId,
+      admittedById,
+      reason: overrides.reason || 'Test admission',
+      status: overrides.status || 'ADMITTED',
+      admissionDate: overrides.admissionDate || new Date(),
+      dischargeDate: overrides.dischargeDate,
+      bedClearedAt: overrides.bedClearedAt,
+      billingStatus: overrides.billingStatus || 'UNBILLED'
     }
   });
 }

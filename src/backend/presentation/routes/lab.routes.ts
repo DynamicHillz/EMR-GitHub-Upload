@@ -5,6 +5,16 @@
 import { Router } from 'express';
 import { asyncHandler } from '../middleware/errorHandler';
 import { requireRole } from '../middleware/auth';
+import { validateRequest } from '../middleware/validation';
+import {
+  createLabDictionaryItemSchema,
+  updateLabDictionaryItemSchema,
+  updateLabTestStatusSchema,
+  submitLabResultsSchema,
+  reviewLabResultsSchema,
+  updateSpecimenDetailsSchema,
+} from '../../application/validators/lab.validator';
+import { orderLabTestSchema } from '../../application/validators/consultation.validator';
 import {
   createLabTest,
   getLabTestQueue,
@@ -36,14 +46,14 @@ const CAN_REVIEW = requireRole(['DOCTOR']);
 const CAN_MANAGE_CATALOG = requireRole(['SUPER_ADMIN', 'ADMIN', 'LAB_TECH']);
 
 router.get('/dictionary', CAN_VIEW, asyncHandler(getLabDictionary));
-router.post('/dictionary', CAN_MANAGE_CATALOG, asyncHandler(createLabDictionaryItem));
-router.put('/dictionary/:id', CAN_MANAGE_CATALOG, asyncHandler(updateLabDictionaryItem));
+router.post('/dictionary', CAN_MANAGE_CATALOG, validateRequest(createLabDictionaryItemSchema, 'body'), asyncHandler(createLabDictionaryItem));
+router.put('/dictionary/:id', CAN_MANAGE_CATALOG, validateRequest(updateLabDictionaryItemSchema, 'body'), asyncHandler(updateLabDictionaryItem));
 router.get('/tests', CAN_VIEW, asyncHandler(getLabTestQueue));
 router.get('/tests/:id', CAN_VIEW, asyncHandler(getLabTestById));
-router.post('/tests', CAN_ORDER, asyncHandler(createLabTest));
-router.put('/tests/:id/status', CAN_PROCESS, asyncHandler(updateLabTestStatus));
-router.put('/tests/:id/results', CAN_PROCESS, asyncHandler(submitLabResults));
-router.put('/tests/:id/specimen', CAN_PROCESS, asyncHandler(updateSpecimenDetails));
-router.post('/tests/:id/review', CAN_REVIEW, asyncHandler(reviewLabResults));
+router.post('/tests', CAN_ORDER, validateRequest(orderLabTestSchema, 'body'), asyncHandler(createLabTest));
+router.put('/tests/:id/status', CAN_PROCESS, validateRequest(updateLabTestStatusSchema, 'body'), asyncHandler(updateLabTestStatus));
+router.put('/tests/:id/results', CAN_PROCESS, validateRequest(submitLabResultsSchema, 'body'), asyncHandler(submitLabResults));
+router.put('/tests/:id/specimen', CAN_PROCESS, validateRequest(updateSpecimenDetailsSchema, 'body'), asyncHandler(updateSpecimenDetails));
+router.post('/tests/:id/review', CAN_REVIEW, validateRequest(reviewLabResultsSchema, 'body'), asyncHandler(reviewLabResults));
 
 export default router;

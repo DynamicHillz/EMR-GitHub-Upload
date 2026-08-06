@@ -1,5 +1,5 @@
 import axios, { AxiosInstance } from 'axios';
-import { Ward, Admission, WardRound, MedicationAdministration, OperationNote, OperationNotesLogResponse } from '../types/inpatient';
+import { Ward, Admission, WardRound, MedicationAdministration, OperationNote, OperationNotesLogResponse, OverstayStatus, MedicationWarning } from '../types/inpatient';
 
 const getApiBaseUrl = () => {
   if (import.meta.env.VITE_API_BASE_URL) {
@@ -36,8 +36,8 @@ class InpatientService {
     });
   }
 
-  async getWards(): Promise<Ward[]> {
-    const response = await this.api.get('/wards');
+  async getWards(status?: 'ACTIVE' | 'INACTIVE'): Promise<Ward[]> {
+    const response = await this.api.get('/wards', { params: status ? { status } : undefined });
     return response.data;
   }
 
@@ -53,6 +53,11 @@ class InpatientService {
 
   async deleteWard(id: string): Promise<void> {
     await this.api.delete(`/wards/${id}`);
+  }
+
+  async reactivateWard(id: string): Promise<Ward> {
+    const response = await this.api.post(`/wards/${id}/reactivate`);
+    return response.data;
   }
 
   async getAdmissions(status?: string): Promise<Admission[]> {
@@ -75,8 +80,24 @@ class InpatientService {
     return response.data;
   }
 
-  async dischargePatient(id: string, data: { notes?: string, finalNotes?: string, followUpPlan?: string, finalDiagnosisId?: string, ttoMedications?: any, prescriptions?: any[] }): Promise<Admission> {
+  async dischargePatient(id: string, data: {
+    notes?: string, finalNotes?: string, followUpPlan?: string, finalDiagnosisId?: string, ttoMedications?: any, prescriptions?: any[],
+    // Maternity-specific — only sent when the admission has a linked, delivered LaborRecord.
+    breastfeedingCounselingDone?: boolean, familyPlanningMethodDiscussed?: string, newbornDangerSignsCounseled?: boolean,
+    postnatalFollowUpDate?: string, maternalConditionAtDischarge?: string, maternalConditionNotes?: string,
+    newbornConditionAtDischarge?: string, newbornConditionNotes?: string,
+  }): Promise<Admission & { bedCleared: boolean; medicationWarnings?: MedicationWarning[] }> {
     const response = await this.api.post(`/admissions/${id}/discharge`, data);
+    return response.data;
+  }
+
+  async getOverstayStatus(): Promise<OverstayStatus[]> {
+    const response = await this.api.get('/admissions/overstay-status');
+    return response.data;
+  }
+
+  async confirmBedVacated(id: string): Promise<Admission> {
+    const response = await this.api.post(`/admissions/${id}/confirm-bed-vacated`);
     return response.data;
   }
 
@@ -85,7 +106,22 @@ class InpatientService {
     return response.data;
   }
 
-  async addWardRound(id: string, data: { notes: string; vitals?: any; plan?: string }): Promise<WardRound> {
+  async addWardRound(id: string, data: {
+    notes: string;
+    vitals?: any;
+    plan?: string;
+    medicationChanges?: Array<{
+      action: 'ADD' | 'DISCONTINUE';
+      prescriptionId?: string;
+      medicationId?: string;
+      medicationName?: string;
+      route?: string;
+      dosage?: string;
+      frequency?: string;
+      duration?: string;
+      instructions?: string;
+    }>;
+  }): Promise<WardRound> {
     const response = await this.api.post(`/admissions/${id}/ward-rounds`, data);
     return response.data;
   }

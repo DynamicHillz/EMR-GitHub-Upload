@@ -16,7 +16,8 @@ import { logger } from './config/logger';
 import { errorHandler } from './presentation/middleware/errorHandler';
 import { authMiddleware } from './presentation/middleware/auth';
 import { auditRequest } from './presentation/middleware/audit.middleware';
-import { connectDatabase, disconnectDatabase } from './infrastructure/database/prisma.client';
+import { connectDatabase, disconnectDatabase, prisma } from './infrastructure/database/prisma.client';
+import { deriveLicenseStatus } from './infrastructure/security/license.util';
 
 // Import routes
 import authRoutes from './presentation/routes/auth.routes';
@@ -30,6 +31,7 @@ import pharmacyRoutes from './presentation/routes/pharmacy.routes';
 import billingRoutes from './presentation/routes/billing.routes';
 import reportsRoutes from './presentation/routes/reports.routes';
 import laborRoutes from './presentation/routes/labor.routes';
+import postnatalRoutes from './presentation/routes/postnatal.routes';
 import billingConfigRoutes from './presentation/routes/billing-config.routes';
 import syncRoutes from './presentation/routes/sync.routes';
 import userRoutes from './presentation/routes/user.routes';
@@ -39,7 +41,6 @@ import triageRoutes from './presentation/routes/triage.routes';
 import auditRoutes from './presentation/routes/audit.routes';
 import clinicalRoutes from './presentation/routes/clinical.routes';
 import interoperabilityRoutes from './presentation/routes/interoperability.routes';
-import outpatientVitalRoutes from './presentation/routes/outpatient-vital.routes';
 import verificationRoutes from './presentation/routes/verification.routes';
 import insuranceRoutes from './presentation/routes/insurance.routes';
 import exemptionRoutes from './presentation/routes/exemption.routes';
@@ -48,6 +49,7 @@ import immunizationRoutes from './presentation/routes/immunization.routes';
 import notificationRoutes from './presentation/routes/notification.routes';
 import tenantRoutes from './presentation/routes/tenant.routes';
 import fraudPreventionRoutes from './presentation/routes/fraud-prevention.routes';
+import licenseRoutes from './presentation/routes/license.routes';
 import { startScheduler, stopScheduler } from './application/services/scheduler.service';
 import { handlePaymentWebhook } from './presentation/controllers/payment-webhook.controller';
 
@@ -87,10 +89,16 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 // guessable or tied to sensitive data.
 app.use('/uploads', express.static(path.join(__dirname, '../../uploads')));
 
-// Rate limiting
+// Rate limiting — general ceiling for ordinary clinical usage across the
+// whole clinic LAN sharing one server IP (or one shared IP if multiple
+// workstations sit behind a single router), not a defense against
+// credential attacks — that's what auth.routes.ts's dedicated, much
+// stricter limiter is for. Raised from a 100/min default that could
+// genuinely be hit during a shift-start burst (several staff logging in
+// and loading dashboards within the same minute) on a busy clinic.
 const limiter = rateLimit({
   windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '60000'),
-  max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || '100'),
+  max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || '400'),
   message: 'Too many requests from this IP, please try again later.',
   standardHeaders: true,
   legacyHeaders: false,
@@ -138,11 +146,11 @@ app.use('/api/sync', authMiddleware, auditRequest, syncRoutes);
 app.use('/api/users', authMiddleware, auditRequest, userRoutes);
 app.use('/api/inpatients', authMiddleware, auditRequest, inpatientRoutes);
 app.use('/api/labor', authMiddleware, auditRequest, laborRoutes);
+app.use('/api/postnatal', authMiddleware, auditRequest, postnatalRoutes);
 app.use('/api/triage', authMiddleware, auditRequest, triageRoutes);
 app.use('/api/audit', authMiddleware, auditRequest, auditRoutes);
 app.use('/api/clinical', authMiddleware, auditRequest, clinicalRoutes);
 app.use('/api/interoperability', authMiddleware, auditRequest, interoperabilityRoutes);
-app.use('/api/outpatient-vitals', authMiddleware, auditRequest, outpatientVitalRoutes);
 // Deliberately no authMiddleware — this is the public "scan a QR code on a
 // printed document" verification endpoint (verification.routes.ts), used by
 // patients/insurers/anyone with no EMR account. It was previously mounted
@@ -157,6 +165,7 @@ app.use('/api/immunization', authMiddleware, auditRequest, immunizationRoutes);
 app.use('/api/notifications', authMiddleware, auditRequest, notificationRoutes);
 app.use('/api/tenants', authMiddleware, auditRequest, tenantRoutes);
 app.use('/api/fraud-prevention', authMiddleware, auditRequest, fraudPreventionRoutes);
+app.use('/api/license', authMiddleware, auditRequest, licenseRoutes);
 
 // 404 handler
 app.use((req: Request, res: Response) => {
@@ -187,6 +196,24 @@ const startServer = async () => {
 
     logger.info('🔌 Connecting to database...');
     await connectDatabase();
+
+    // Informational only — never affects boot, per the "soft warning, never
+    // block care" licensing decision. Surfaces in `pm2 logs` so a lapsed
+    // license/maintenance period is visible without anyone opening the UI.
+    try {
+      const tenants = await prisma.tenant.findMany({ select: { clinicName: true, licenseToken: true } });
+      for (const tenant of tenants) {
+        const { status, daysRemaining } = deriveLicenseStatus(tenant.licenseToken);
+        const line = `License status for "${tenant.clinicName}": ${status}${daysRemaining !== null ? ` (${daysRemaining}d relative to maintenance expiry)` : ''}`;
+        if (status === 'ACTIVE') {
+          logger.info(`📜 ${line}`);
+        } else {
+          logger.warn(`📜 ${line}`);
+        }
+      }
+    } catch (err) {
+      logger.error('Failed to check license status at startup (non-fatal):', err);
+    }
 
     startScheduler();
 

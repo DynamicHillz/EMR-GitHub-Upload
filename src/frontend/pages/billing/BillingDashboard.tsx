@@ -39,20 +39,25 @@ const BillingDashboard: React.FC = () => {
     try {
       setLoading(true);
 
-      const [invoices, payments, outstanding, aging, refunds] = await Promise.all([
-        billingService.getInvoices({}),
+      const [invoicesResult, payments, outstandingResult, aging, refunds] = await Promise.all([
+        billingService.getInvoices({ limit: 5 }),
         billingService.getPayments({}),
-        billingService.getOutstandingInvoices(),
+        billingService.getOutstandingInvoices({ limit: 5 }),
         billingService.getAgingAnalysis(),
         billingService.getRefunds({ status: 'PENDING' }),
       ]);
+      const { invoices, total: totalInvoices } = invoicesResult;
+      const { invoices: outstanding } = outstandingResult;
 
-      const totalOutstanding = outstanding.reduce((sum, inv) => sum + inv.balance, 0);
+      // aging.totalOutstanding is the real total across every outstanding
+      // invoice (computed server-side) — outstanding here is only the first
+      // page, so summing its balances would understate the true figure.
+      const totalOutstanding = aging.totalOutstanding;
       const totalPaymentsAmount = payments.reduce((sum, pay) => sum + pay.amount, 0);
 
       setStats({
         totalOutstanding,
-        totalInvoices: invoices.length,
+        totalInvoices,
         totalPayments: totalPaymentsAmount,
         pendingRefunds: refunds.length,
       });

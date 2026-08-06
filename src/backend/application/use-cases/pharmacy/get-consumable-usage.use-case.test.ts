@@ -33,20 +33,19 @@ describe('GetConsumableUsageUseCase', () => {
     useCase = new GetConsumableUsageUseCase(mockPrisma);
   });
 
-  it('should query non-deleted usage records scoped to the tenant with no extra filters by default', async () => {
+  it('defaults to a 90-day usedAt bound for the tenant-wide list (no patientId, no explicit range)', async () => {
     mockPrisma.consumableUsage.findMany.mockResolvedValue([]);
 
     await useCase.execute(tenantId);
 
-    expect(mockPrisma.consumableUsage.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { tenantId, isDeleted: false },
-        orderBy: { usedAt: 'desc' },
-      })
-    );
+    const where = mockPrisma.consumableUsage.findMany.mock.calls[0][0].where;
+    expect(where.tenantId).toBe(tenantId);
+    expect(where.isDeleted).toBe(false);
+    const ninetyDaysAgo = Date.now() - 90 * 24 * 60 * 60 * 1000;
+    expect(Math.abs(where.usedAt.gte.getTime() - ninetyDaysAgo)).toBeLessThan(5000);
   });
 
-  it('should apply the patientId filter when provided', async () => {
+  it('does NOT apply a default date bound when scoped to a single patient — an old unbilled item must still surface for invoicing', async () => {
     mockPrisma.consumableUsage.findMany.mockResolvedValue([]);
 
     await useCase.execute(tenantId, { patientId: 'patient-1' });
@@ -58,14 +57,26 @@ describe('GetConsumableUsageUseCase', () => {
     );
   });
 
-  it('should apply the billingStatus filter when provided', async () => {
+  it('applies the billingStatus filter alongside the default bound when no patientId is given', async () => {
     mockPrisma.consumableUsage.findMany.mockResolvedValue([]);
 
     await useCase.execute(tenantId, { billingStatus: 'UNBILLED' });
 
+    const where = mockPrisma.consumableUsage.findMany.mock.calls[0][0].where;
+    expect(where).toMatchObject({ tenantId, isDeleted: false, billingStatus: 'UNBILLED' });
+    expect(where.usedAt.gte).toBeInstanceOf(Date);
+  });
+
+  it('uses an explicit startDate/endDate instead of the default 90-day bound', async () => {
+    mockPrisma.consumableUsage.findMany.mockResolvedValue([]);
+    const startDate = new Date('2026-01-01T00:00:00Z');
+    const endDate = new Date('2026-02-01T00:00:00Z');
+
+    await useCase.execute(tenantId, { startDate, endDate });
+
     expect(mockPrisma.consumableUsage.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { tenantId, isDeleted: false, billingStatus: 'UNBILLED' },
+        where: { tenantId, isDeleted: false, usedAt: { gte: startDate, lte: endDate } },
       })
     );
   });

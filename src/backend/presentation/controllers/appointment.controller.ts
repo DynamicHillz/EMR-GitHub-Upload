@@ -11,6 +11,7 @@ import { GetAppointmentsUseCase } from '../../application/use-cases/appointment/
 import { CheckInAppointmentUseCase } from '../../application/use-cases/appointment/check-in-appointment.use-case';
 import { CancelAppointmentUseCase } from '../../application/use-cases/appointment/cancel-appointment.use-case';
 import { GetWaitingQueueUseCase } from '../../application/use-cases/appointment/get-waiting-queue.use-case';
+import { AppointmentValidator } from '../../application/validators/appointment.validator';
 import { AppointmentRepository } from '../../infrastructure/database/repositories/appointment.repository';
 import { PatientRepository } from '../../infrastructure/database/repositories/patient.repository';
 import { prisma } from '../../infrastructure/database/prisma.client';
@@ -193,6 +194,11 @@ export const updateAppointment = async (req: Request, res: Response) => {
 
     const { id } = req.params;
 
+    const validation = AppointmentValidator.validateUpdateAppointment(req.body);
+    if (!validation.valid) {
+      return res.status(400).json({ success: false, message: 'Validation failed', error: validation.errors.join(', ') });
+    }
+
     if (req.body.appointmentDate || req.body.appointmentTime) {
       const appointment = await appointmentRepository.findById(id, tenantId);
       if (!appointment) return res.status(404).json({ success: false, message: 'Appointment not found' });
@@ -240,6 +246,6 @@ export const deleteAppointment = async (req: Request, res: Response) => {
     return res.status(200).json({ success: true, message: 'Appointment deleted successfully' });
   } catch (error: any) {
     logger.error('Error deleting appointment:', error);
-    return res.status(500).json({ success: false, message: 'Failed to delete appointment' });
+    return res.status(error.statusCode || 500).json({ success: false, message: error.statusCode ? error.message : 'Failed to delete appointment' });
   }
 };

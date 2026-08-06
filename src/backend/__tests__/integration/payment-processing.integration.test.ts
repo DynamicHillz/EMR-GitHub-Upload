@@ -70,6 +70,7 @@ describe('Payment Processing Integration', () => {
         paymentMethod: 'CASH',
         paymentDate: new Date(),
         notes: 'Full payment in cash',
+        cashReceivedByName: 'Bisi Adeyemi',
       };
 
       // Act
@@ -125,6 +126,7 @@ describe('Payment Processing Integration', () => {
         invoiceId: partialInvoiceId,
         amount: 5000,
         paymentMethod: 'CASH',
+        cashReceivedByName: 'Bisi Adeyemi',
       };
 
       // Act
@@ -330,6 +332,7 @@ describe('Payment Processing Integration', () => {
         invoiceId: invoice.id,
         amount: 1000,
         paymentMethod: 'CASH',
+        cashReceivedByName: 'Bisi Adeyemi',
       };
 
       // Act

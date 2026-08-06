@@ -19,6 +19,10 @@ export interface RecordPaymentDto {
   mobileNumber?: string;
   notes?: string;
 
+  // Cash payments only: the staff member who physically received the cash
+  // (not necessarily the same person logged in as processedById).
+  cashReceivedByName?: string;
+
   // Fraud prevention fields
   receiptPhotoUrl?: string;      // Photo of physical receipt (required for cash)
   proofDocumentUrl?: string;     // Additional proof document (bank slip, etc.)

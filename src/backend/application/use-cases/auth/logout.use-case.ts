@@ -9,7 +9,7 @@ import { logger } from '../../../config/logger';
 export class LogoutUseCase {
   constructor(private prisma: PrismaClient) {}
 
-  async execute(userId: string, refreshToken?: string): Promise<{ message: string }> {
+  async execute(userId: string, refreshToken?: string, requestMeta?: { ipAddress?: string; userAgent?: string }): Promise<{ message: string }> {
     try {
       // If refresh token provided, revoke it
       if (refreshToken) {
@@ -42,6 +42,8 @@ export class LogoutUseCase {
               email: user.email,
               timestamp: new Date().toISOString(),
             }),
+            ipAddress: requestMeta?.ipAddress || null,
+            userAgent: requestMeta?.userAgent || null,
           },
         });
 

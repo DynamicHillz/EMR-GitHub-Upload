@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { auditService, AuditLog } from '../../services/audit.service';
+import { auditService, AuditLog, InvoiceAuditLogEntry, PaymentAuditLogEntry } from '../../services/audit.service';
 import InpatientService from '../../services/InpatientService';
 import ErrorAlert from '../../components/common/ErrorAlert';
 import { useConfirm } from '../../hooks/useConfirm';
@@ -29,13 +29,29 @@ const AuditDashboardPage: React.FC = () => {
     action: '',
     search: ''
   });
+  // Uncommitted search text bound directly to the input — filters.search
+  // (the value actually used to fetch) only ever gets set once, together
+  // with the page reset, after the debounce below settles. Keeping them
+  // as one atomic update avoids a race where an early, partially-typed
+  // fetch (triggered because `page` resetting via handleFilterChange used
+  // to fire the main effect immediately, before debounce) could resolve
+  // after — and overwrite — the correct debounced result.
+  const [searchInput, setSearchInput] = useState('');
 
   // Modal State
   const [selectedLog, setSelectedLog] = useState<AuditLog | null>(null);
+  // Drill-down: richer InvoiceAuditLog/PaymentAuditLog history for the
+  // selected log's entity — fetched on demand, supplementary to the main
+  // log entry (never shown anywhere else in the app until now).
+  const [entityAuditTrail, setEntityAuditTrail] = useState<(InvoiceAuditLogEntry | PaymentAuditLogEntry)[]>([]);
 
   // Archive state
   const [archiveType, setArchiveType] = useState('patients');
   const [archivedRecords, setArchivedRecords] = useState<any[]>([]);
+  // Server defaults to the last 90 days — checked when hunting for
+  // something older than that (rare enough not to warrant loading it by
+  // default on every archive-tab open).
+  const [archiveShowAllTime, setArchiveShowAllTime] = useState(false);
 
   // Dictionaries for UUID resolution
   const [uuidDict, setUuidDict] = useState<Record<string, string>>({});
@@ -71,18 +87,21 @@ const AuditDashboardPage: React.FC = () => {
     } else {
       fetchArchive();
     }
-  }, [activeTab, page, archiveType, filters.startDate, filters.endDate, filters.entityType, filters.action]);
+  }, [activeTab, page, archiveType, archiveShowAllTime, filters.startDate, filters.endDate, filters.entityType, filters.action, filters.search]);
 
-  // Debounced Search
+  // Debounced search: commits searchInput into filters.search (and resets
+  // the page) as a single update once typing pauses. The effect above,
+  // which depends on filters.search, is the only thing that ever triggers
+  // the actual fetch for a search change — nothing here calls fetchLogs
+  // directly, so there's no way for an intermediate, partially-typed fetch
+  // to fire and race the final one.
   useEffect(() => {
-    if (activeTab === 'logs') {
-      const timeoutId = setTimeout(() => {
-        setPage(1);
-        fetchLogs();
-      }, 500);
-      return () => clearTimeout(timeoutId);
-    }
-  }, [filters.search]);
+    const timeoutId = setTimeout(() => {
+      setFilters(prev => ({ ...prev, search: searchInput }));
+      setPage(1);
+    }, 500);
+    return () => clearTimeout(timeoutId);
+  }, [searchInput]);
 
   const fetchLogs = async () => {
     setLoading(true);
@@ -101,8 +120,15 @@ const AuditDashboardPage: React.FC = () => {
   const fetchArchive = async () => {
     setLoading(true);
     try {
-      const records = await auditService.getArchivedRecords(archiveType);
-      setArchivedRecords(records);
+      const data = await auditService.getArchivedRecords(archiveType, {
+        page,
+        limit: 50,
+        // Server defaults to the last 90 days when sinceDate is omitted —
+        // going back to 2000 is just a simple way to say "no lower bound".
+        sinceDate: archiveShowAllTime ? '2000-01-01' : undefined,
+      });
+      setArchivedRecords(data.records);
+      setTotalPages(data.totalPages);
     } catch (err: any) {
       setError(getErrorMessage(err, `Failed to fetch archived ${archiveType}`));
     } finally {
@@ -133,6 +159,26 @@ const AuditDashboardPage: React.FC = () => {
     }
   };
 
+  useEffect(() => {
+    setEntityAuditTrail([]);
+    const entityId = selectedLog?.entityId;
+    if (!selectedLog || !entityId) return;
+
+    const fetchTrail = async () => {
+      try {
+        if (selectedLog.entityType === 'INVOICE') {
+          setEntityAuditTrail(await auditService.getInvoiceAuditTrail(entityId));
+        } else if (selectedLog.entityType === 'PAYMENT') {
+          setEntityAuditTrail(await auditService.getPaymentAuditTrail(entityId));
+        }
+      } catch {
+        // Supplementary detail only — a failed fetch just means the extra
+        // section doesn't render below, not an error worth surfacing.
+      }
+    };
+    fetchTrail();
+  }, [selectedLog]);
+
   const handleFilterChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     setFilters({ ...filters, [e.target.name]: e.target.value });
     setPage(1);
@@ -148,7 +194,7 @@ const AuditDashboardPage: React.FC = () => {
           `"${new Date(log.timestamp).toLocaleString()}"`,
           `"${log.action}"`,
           `"${log.entityType}"`,
-          `"${log.entityName || log.entityId}"`,
+          `"${log.entityName || log.entityId || ''}"`,
           `"${log.userName || log.userId || 'System'}"`,
           `"${log.ipAddress || ''}"`,
           csvCell(log.userAgent),
@@ -338,10 +384,10 @@ const AuditDashboardPage: React.FC = () => {
                 <input
                   type="text"
                   name="search"
-                  value={filters.search}
-                  onChange={handleFilterChange}
+                  value={searchInput}
+                  onChange={(e) => setSearchInput(e.target.value)}
                   className="input pl-10 w-full sm:w-64"
-                  placeholder="User ID, action, entity..."
+                  placeholder="Name, User ID, action, entity..."
                 />
               </div>
             </div>
@@ -358,8 +404,31 @@ const AuditDashboardPage: React.FC = () => {
                 <option value="MEDICATION">Medication</option>
                 <option value="INVOICE">Invoice</option>
                 <option value="PAYMENT">Payment</option>
+                <option value="REFUND">Refund</option>
+                <option value="SERVICE_CATALOG">Service Catalog</option>
+                <option value="BILLING">Billing (Other)</option>
                 <option value="INPATIENT">Inpatient</option>
                 <option value="WARD">Ward</option>
+                <option value="LAB">Lab</option>
+                <option value="PHARMACY">Pharmacy (Other)</option>
+                <option value="CLINICAL">Clinical</option>
+                <option value="INSURANCE_PROVIDER">Insurance Provider</option>
+                <option value="PATIENT_INSURANCE">Patient Insurance (Copay)</option>
+                <option value="INSURANCE_CLAIM">Insurance Claim</option>
+                <option value="EXEMPTION_POLICY">Exemption Policy</option>
+                <option value="ANC">ANC</option>
+                <option value="IMMUNIZATION">Immunization</option>
+                <option value="TRIAGE">Triage</option>
+                <option value="OUTPATIENT_VITAL">Outpatient Vital</option>
+                <option value="LABOR">Labor &amp; Delivery</option>
+                <option value="TENANT">Tenant</option>
+                <option value="FRAUD_PREVENTION_SETTINGS">Fraud Prevention Settings</option>
+                <option value="NOTIFICATION">Notification</option>
+                <option value="SYNC">Sync</option>
+                <option value="VERIFICATION">Verification</option>
+                <option value="INTEROPERABILITY">Interoperability</option>
+                <option value="REPORT">Report</option>
+                <option value="DASHBOARD">Dashboard</option>
                 <option value="SYSTEM">System</option>
               </Dropdown>
             </div>
@@ -387,7 +456,11 @@ const AuditDashboardPage: React.FC = () => {
             </div>
             
             <button
-              onClick={() => setFilters({ startDate: '', endDate: '', entityType: '', action: '', search: '' })}
+              onClick={() => {
+                setFilters({ startDate: '', endDate: '', entityType: '', action: '', search: '' });
+                setSearchInput('');
+                setPage(1);
+              }}
               className="btn bg-gray-100 text-gray-700 hover:bg-gray-200 ml-auto"
             >
               Clear Filters
@@ -423,7 +496,7 @@ const AuditDashboardPage: React.FC = () => {
                       </span>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {log.entityType} <br/> <span className="text-xs text-gray-400">{uuidDict[log.entityId] ? uuidDict[log.entityId] : (log.entityName || log.entityId)}</span>
+                      {log.entityType} <br/> <span className="text-xs text-gray-400">{(log.entityId && uuidDict[log.entityId]) ? uuidDict[log.entityId] : (log.entityName || '—')}</span>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                       {log.userName || log.userId || 'System'}
@@ -484,7 +557,7 @@ const AuditDashboardPage: React.FC = () => {
           <div className="bg-white p-4 rounded-lg shadow border border-gray-200 flex items-end gap-4">
             <div>
               <label className="block text-xs font-medium text-gray-700 mb-1">Entity Type</label>
-              <Dropdown value={archiveType} onChange={(e) => setArchiveType(e.target.value)} className="input">
+              <Dropdown value={archiveType} onChange={(e) => { setArchiveType(e.target.value); setPage(1); }} className="input">
                 <option value="patients">Patients</option>
                 <option value="appointments">Appointments</option>
                 <option value="consultations">Consultations</option>
@@ -493,6 +566,14 @@ const AuditDashboardPage: React.FC = () => {
                 <option value="payments">Payments</option>
               </Dropdown>
             </div>
+            <label className="flex items-center gap-2 text-sm text-gray-700 pb-2">
+              <input
+                type="checkbox"
+                checked={archiveShowAllTime}
+                onChange={(e) => { setArchiveShowAllTime(e.target.checked); setPage(1); }}
+              />
+              Show all time (default: last 90 days)
+            </label>
             <p className="text-sm text-gray-500 pb-2">Soft-deleted records — restoring one makes it active and visible again everywhere in the app.</p>
           </div>
 
@@ -525,12 +606,34 @@ const AuditDashboardPage: React.FC = () => {
                 {archivedRecords.length === 0 && !loading && (
                   <tr>
                     <td colSpan={3} className="px-6 py-4 text-center text-sm text-gray-500">
-                      No archived {archiveType} found.
+                      No archived {archiveType} found{archiveShowAllTime ? '' : ' in the last 90 days'}.
                     </td>
                   </tr>
                 )}
               </tbody>
             </table>
+
+            {totalPages > 1 && (
+              <div className="px-6 py-4 border-t border-gray-200 flex justify-between items-center bg-gray-50">
+                <span className="text-sm text-gray-700">Page {page} of {totalPages}</span>
+                <div className="flex space-x-2">
+                  <button
+                    disabled={page === 1}
+                    onClick={() => setPage((p) => Math.max(1, p - 1))}
+                    className="px-3 py-1 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50"
+                  >
+                    Previous
+                  </button>
+                  <button
+                    disabled={page === totalPages}
+                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                    className="px-3 py-1 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50"
+                  >
+                    Next
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -558,7 +661,11 @@ const AuditDashboardPage: React.FC = () => {
                 <div>
                   <p className="text-xs text-gray-500 uppercase tracking-wider">Entity</p>
                   <p className="text-sm font-medium">{selectedLog.entityType}</p>
-                  <p className="text-xs text-gray-500">{uuidDict[selectedLog.entityId] ? `${uuidDict[selectedLog.entityId]} (${selectedLog.entityId})` : selectedLog.entityId}</p>
+                  <p className="text-xs text-gray-500">
+                    {selectedLog.entityId
+                      ? (uuidDict[selectedLog.entityId] ? `${uuidDict[selectedLog.entityId]} (${selectedLog.entityId})` : selectedLog.entityId)
+                      : 'No single record — a list/aggregate view'}
+                  </p>
                 </div>
                 <div>
                   <p className="text-xs text-gray-500 uppercase tracking-wider">IP Address</p>
@@ -582,6 +689,31 @@ const AuditDashboardPage: React.FC = () => {
                     <div className="bg-gray-900 rounded-md p-4 overflow-x-auto text-sm text-green-400 font-mono">
                       <pre>{selectedLog.newValues ? renderReadableJson(selectedLog.newValues) : 'N/A'}</pre>
                     </div>
+                  </div>
+                </div>
+              )}
+              {entityAuditTrail.length > 0 && (
+                <div className="mb-6">
+                  <p className="text-xs text-gray-500 uppercase tracking-wider mb-2">
+                    Full {selectedLog.entityType === 'INVOICE' ? 'Invoice' : 'Payment'} Audit History
+                  </p>
+                  <div className="border border-gray-200 rounded-md divide-y divide-gray-100">
+                    {entityAuditTrail.map((entry) => (
+                      <div key={entry.id} className="p-3 text-sm">
+                        <div className="flex justify-between items-baseline">
+                          <span className="font-semibold text-gray-900">{entry.action}</span>
+                          <span className="text-xs text-gray-500">{new Date(entry.createdAt).toLocaleString()}</span>
+                        </div>
+                        {('changesSummary' in entry ? entry.changesSummary : entry.notes) && (
+                          <p className="text-gray-600 mt-1">{('changesSummary' in entry ? entry.changesSummary : entry.notes)}</p>
+                        )}
+                        {(entry.previousValues || entry.newValues) && (
+                          <pre className="mt-2 bg-gray-900 text-green-400 text-xs font-mono rounded p-2 overflow-x-auto">
+                            {JSON.stringify({ before: entry.previousValues, after: entry.newValues }, null, 2)}
+                          </pre>
+                        )}
+                      </div>
+                    ))}
                   </div>
                 </div>
               )}

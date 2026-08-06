@@ -102,7 +102,10 @@ export const logout = async (req: Request, res: Response) => {
 
     // Execute use case
     const logoutUseCase = new LogoutUseCase(prisma);
-    const result = await logoutUseCase.execute(userId, refreshToken);
+    const result = await logoutUseCase.execute(userId, refreshToken, {
+      ipAddress: req.ip,
+      userAgent: req.header('User-Agent'),
+    });
 
     res.json(result);
   } catch (error: any) {

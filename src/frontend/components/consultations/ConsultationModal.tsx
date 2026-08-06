@@ -792,7 +792,7 @@ const ConsultationModal: React.FC<ConsultationModalProps> = ({
 
           {/* Diagnoses */}
           <div className="mb-6">
-            <h4 className="font-semibold text-lg border-b pb-2 mb-4">WHO ICD-10 Diagnoses</h4>
+            <h4 className="font-semibold text-lg border-b pb-2 mb-4">Diagnoses (WHO ICD-11 / ICD-10)</h4>
             {canEdit && (
               <div className="mb-4">
                 <DiagnosisAutocomplete 

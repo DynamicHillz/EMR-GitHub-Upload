@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Ward, Patient } from '../../types/inpatient';
 import InpatientService from '../../services/InpatientService';
 import Dropdown from '../common/Dropdown';
+import DiagnosisAutocomplete, { Diagnosis } from '../common/DiagnosisAutocomplete';
 
 interface AdmissionModalProps {
   onClose: () => void;
@@ -23,11 +24,9 @@ const AdmissionModal: React.FC<AdmissionModalProps> = ({ onClose, onSuccess, war
     isolationRequired: false,
     infectionRisk: '',
     primaryDiagnosisId: '',
-    diagnosisSearch: '',
     admissionType: 'MEDICAL'
   });
-  const [diagnoses, setDiagnoses] = useState<Array<{ id: string; name: string; code: string }>>([]);
-  const [isSearchingDiagnosis, setIsSearchingDiagnosis] = useState(false);
+  const [selectedDiagnosis, setSelectedDiagnosis] = useState<Diagnosis | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -64,33 +63,6 @@ const AdmissionModal: React.FC<AdmissionModalProps> = ({ onClose, onSuccess, war
     }
   };
 
-  // Search Diagnoses
-  const searchDiagnoses = async (query: string) => {
-    if (query.length < 2) {
-      setDiagnoses([]);
-      return;
-    }
-
-    setIsSearchingDiagnosis(true);
-    try {
-      const apiBaseUrl = import.meta.env.VITE_API_URL || `${window.location.protocol}//${window.location.hostname}:3000`;
-      const response = await fetch(`${apiBaseUrl}/api/clinical/diagnoses?query=${encodeURIComponent(query)}`, {
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem('token')}`,
-        },
-      });
-
-      if (response.ok) {
-        const result = await response.json();
-        setDiagnoses(result.data || []);
-      }
-    } catch (error) {
-      console.error('Error searching diagnoses:', error);
-    } finally {
-      setIsSearchingDiagnosis(false);
-    }
-  };
-
   useEffect(() => {
     const timer = setTimeout(() => {
       searchPatients(patientSearch);
@@ -98,14 +70,6 @@ const AdmissionModal: React.FC<AdmissionModalProps> = ({ onClose, onSuccess, war
 
     return () => clearTimeout(timer);
   }, [patientSearch]);
-
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      if (formData.diagnosisSearch) searchDiagnoses(formData.diagnosisSearch);
-    }, 300);
-
-    return () => clearTimeout(timer);
-  }, [formData.diagnosisSearch]);
 
   const selectedWard = wards.find(w => w.id === formData.wardId);
   const availableBeds = selectedWard?.beds?.filter(b => {
@@ -209,39 +173,28 @@ const AdmissionModal: React.FC<AdmissionModalProps> = ({ onClose, onSuccess, war
 
                   {/* Primary Diagnosis */}
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Primary Diagnosis (ICD-11)</label>
-                    <input
-                      type="text"
-                      value={formData.diagnosisSearch}
-                      onChange={(e) => {
-                        setFormData({ ...formData, diagnosisSearch: e.target.value, primaryDiagnosisId: '' });
-                      }}
-                      placeholder="Search diagnosis..."
-                      className="input w-full"
-                      disabled={loading}
-                    />
-                    {isSearchingDiagnosis && <p className="text-sm text-gray-500 mt-1">Searching...</p>}
-                    {diagnoses.length > 0 && !formData.primaryDiagnosisId && (
-                      <div className="mt-2 border border-gray-200 rounded-md max-h-40 overflow-y-auto">
-                        {diagnoses.map((diag) => (
-                          <button
-                            key={diag.id}
-                            type="button"
-                            onClick={() => {
-                              setFormData({ 
-                                ...formData, 
-                                primaryDiagnosisId: diag.id,
-                                diagnosisSearch: `${diag.code} - ${diag.name}` 
-                              });
-                              setDiagnoses([]);
-                            }}
-                            className="w-full text-left px-3 py-2 hover:bg-primary-50 border-b border-gray-100 last:border-b-0"
-                          >
-                            <div className="font-medium text-gray-900">{diag.name}</div>
-                            <div className="text-sm text-gray-500">{diag.code}</div>
-                          </button>
-                        ))}
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Primary Diagnosis</label>
+                    {selectedDiagnosis ? (
+                      <div className="flex items-center justify-between p-2 border border-gray-200 rounded-md bg-gray-50">
+                        <span className="text-sm font-medium">{selectedDiagnosis.code} - {selectedDiagnosis.name}</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedDiagnosis(null);
+                            setFormData({ ...formData, primaryDiagnosisId: '' });
+                          }}
+                          className="text-xs text-primary-600 hover:underline"
+                        >
+                          Change
+                        </button>
                       </div>
+                    ) : (
+                      <DiagnosisAutocomplete
+                        onSelect={(diagnosis) => {
+                          setSelectedDiagnosis(diagnosis);
+                          setFormData({ ...formData, primaryDiagnosisId: diagnosis.id });
+                        }}
+                      />
                     )}
                   </div>
 

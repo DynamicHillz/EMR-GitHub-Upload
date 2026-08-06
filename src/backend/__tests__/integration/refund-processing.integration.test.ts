@@ -72,6 +72,7 @@ describe('Refund Processing Integration', () => {
           invoiceId: invoice.id,
           amount: 5000,
           paymentMethod: 'CASH',
+          cashReceivedByName: 'Bisi Adeyemi',
         },
         tenantId,
         cashierId
@@ -220,6 +221,7 @@ describe('Refund Processing Integration', () => {
           invoiceId: invoice.id,
           amount: 10000,
           paymentMethod: 'CASH',
+          cashReceivedByName: 'Bisi Adeyemi',
         },
         tenantId,
         cashierId
@@ -295,6 +297,7 @@ describe('Refund Processing Integration', () => {
           invoiceId: invoice.id,
           amount: 8000,
           paymentMethod: 'CASH',
+          cashReceivedByName: 'Bisi Adeyemi',
         },
         tenantId,
         cashierId
@@ -350,6 +353,7 @@ describe('Refund Processing Integration', () => {
           invoiceId: invoice.id,
           amount: 5000,
           paymentMethod: 'CASH',
+          cashReceivedByName: 'Bisi Adeyemi',
         },
         tenantId,
         cashierId
@@ -461,6 +465,7 @@ describe('Refund Processing Integration', () => {
           invoiceId: invoice.id,
           amount: 2000,
           paymentMethod: 'CASH',
+          cashReceivedByName: 'Bisi Adeyemi',
         },
         tenantId,
         cashierId

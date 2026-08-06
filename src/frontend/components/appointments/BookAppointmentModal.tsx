@@ -39,6 +39,7 @@ const APPOINTMENT_TYPES = [
   'Lab Test',
   'Imaging',
   'Procedure',
+  'Postnatal Follow-up',
 ];
 
 const BookAppointmentModal: React.FC<BookAppointmentModalProps> = ({

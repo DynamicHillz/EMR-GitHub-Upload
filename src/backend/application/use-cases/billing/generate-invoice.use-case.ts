@@ -18,6 +18,7 @@ export interface GenerateInvoiceDto {
   transfusionChartIds?: string[];
   operationNoteIds?: string[];
   laborRecordIds?: string[];
+  postnatalVisitIds?: string[];
   additionalItems?: {
     serviceName: string;
     quantity: number;
@@ -46,6 +47,7 @@ interface LineItem {
   transfusionChartId?: string;
   operationNoteId?: string;
   laborRecordId?: string;
+  postnatalVisitId?: string;
 }
 
 // Shared "not already billed, not cancelled/deleted" guard for every billing
@@ -82,7 +84,23 @@ export class GenerateInvoiceUseCase {
       return service || null;
     };
 
-    // Check for Active Insurance Policy
+    // HMO full coverage — this clinic doesn't enroll patients in a
+    // copay-percentage plan; HMO membership is established once at
+    // registration (Patient.hmoProviderId), and an HMO patient never pays
+    // out of pocket at all. Checked first, ahead of exemptions/legacy
+    // copay insurance, since whoever is actually responsible for payment
+    // (the HMO) should always win.
+    const hmoProvider = patient.hmoProviderId
+      ? await this.prisma.insuranceProvider.findFirst({
+          where: { id: patient.hmoProviderId, tenantId, isActive: true }
+        })
+      : null;
+    const isHmoCovered = patient.patientType === 'HMO' && !!hmoProvider;
+
+    // Legacy: a genuine partial-copay private insurer, tracked via a manual
+    // PatientInsurance enrollment. Kept as a secondary path — never
+    // auto-applied for an HMO-covered patient, since isHmoCovered above
+    // already takes precedence.
     const activeInsurance = await this.prisma.patientInsurance.findFirst({
       where: {
         patientId: dto.patientId,
@@ -128,11 +146,16 @@ export class GenerateInvoiceUseCase {
       let insuranceCoverage = 0;
       let patientOutOfPocket = subtotal;
 
-      if (applicableExemption) {
+      if (isHmoCovered) {
+        // Full coverage — the HMO is billed for everything, the patient
+        // pays nothing out of pocket.
+        insuranceCoverage = subtotal;
+        patientOutOfPocket = 0;
+      } else if (applicableExemption) {
         insuranceCoverage = subtotal * (Number(applicableExemption.discountPercentage) / 100);
         patientOutOfPocket = subtotal - insuranceCoverage;
       } else if (activeInsurance) {
-        // e.g. copay percentage is what patient pays
+        // Legacy partial-copay path — copay percentage is what patient pays.
         const copay = subtotal * (Number(activeInsurance.copayPercentage) / 100);
         patientOutOfPocket = copay;
         insuranceCoverage = subtotal - copay;
@@ -428,11 +451,47 @@ export class GenerateInvoiceUseCase {
       }
     }
 
+    // Add postnatal (PNC) follow-up visits — same "only billable once
+    // recorded, unbilled" gate as labor/delivery above.
+    if (dto.postnatalVisitIds && dto.postnatalVisitIds.length > 0) {
+      const postnatalVisits = await this.prisma.postnatalVisit.findMany({
+        where: notYetBilled({
+          id: { in: dto.postnatalVisitIds },
+          tenantId,
+          patientId: dto.patientId,
+          billingStatus: 'UNBILLED'
+        })
+      });
+
+      for (const visit of postnatalVisits) {
+        const service = getServicePrice('PROCEDURE', 'postnatal');
+        const unitPrice = Number(service?.basePrice || 5000); // Default price
+        const taxRate = Number(service?.taxRate || 0);
+
+        const subtotal = unitPrice + (unitPrice * (taxRate / 100));
+        const { insuranceCoverage, patientOutOfPocket } = calculateCoverage(subtotal);
+
+        lineItems.push({
+          serviceCode: 'PROCEDURE',
+          description: `Postnatal Follow-up: ${visit.contactType}`,
+          quantity: 1,
+          unitPrice,
+          discount: 0,
+          tax: unitPrice * (taxRate / 100),
+          subtotal,
+          insuranceCoverage,
+          patientOutOfPocket,
+          postnatalVisitId: visit.id
+        });
+      }
+    }
+
     // Add admission services (room charge + administered medications) — kept
     // in sync with InpatientService.getBillableAdmissions' pricing so the
     // billable-admissions preview and the actual invoice never disagree.
     if (dto.admissionIds && dto.admissionIds.length > 0) {
-      const admissions = await this.prisma.admission.findMany({
+      // @ts-ignore - Temporary fix for schema alignment
+      const admissions: any[] = await this.prisma.admission.findMany({
         where: notYetBilled({
           id: { in: dto.admissionIds },
           tenantId,
@@ -449,29 +508,88 @@ export class GenerateInvoiceUseCase {
         }
       });
 
+      const tenantForGrace = await this.prisma.tenant.findUnique({
+        where: { id: tenantId },
+        select: { overstayGraceDays: true }
+      });
+      const graceDays = tenantForGrace?.overstayGraceDays ?? 2;
+
       for (const admission of admissions) {
         const msPerDay = 1000 * 60 * 60 * 24;
         const start = new Date(admission.admissionDate).getTime();
-        const end = new Date(admission.dischargeDate || new Date()).getTime();
-        const days = Math.max(1, Math.ceil((end - start) / msPerDay));
+        const dischargeTime = admission.dischargeDate ? new Date(admission.dischargeDate).getTime() : null;
+        // Bed-hold aware end boundary: for a discharged admission whose bed
+        // is still held (Admission.bedClearedAt still null), billing must
+        // reach all the way to now, not stop at the discharge date — that's
+        // the whole point of overstay billing.
+        const endBoundary = dischargeTime
+          ? (admission.bedClearedAt ? new Date(admission.bedClearedAt).getTime() : Date.now())
+          : Date.now();
         const unitPrice = admission.bed.ward.dailyCost || 0;
 
         if (unitPrice > 0) {
-          const subtotal = days * unitPrice;
-          const { insuranceCoverage, patientOutOfPocket } = calculateCoverage(subtotal);
+          if (dischargeTime && endBoundary > dischargeTime) {
+            // Discharged, and the bed has been held past the discharge date
+            // (possibly past the grace period too) — split into a normal
+            // stay line (unchanged, capped at discharge) and a separately
+            // labeled overstay line so the patient/cashier can see why the
+            // bill grew after discharge, not just a bigger unexplained total.
+            const normalDays = Math.max(1, Math.ceil((dischargeTime - start) / msPerDay));
+            const graceCutoff = dischargeTime + graceDays * msPerDay;
+            const overstayDays = endBoundary > graceCutoff
+              ? Math.max(1, Math.ceil((endBoundary - graceCutoff) / msPerDay))
+              : 0;
 
-          lineItems.push({
-            serviceCode: 'ACCOMMODATION',
-            description: `Ward: ${admission.bed.ward.name} (Bed: ${admission.bed.bedNumber}) - ${days} day(s) stay`,
-            quantity: days,
-            unitPrice,
-            discount: 0,
-            tax: 0,
-            subtotal,
-            insuranceCoverage,
-            patientOutOfPocket,
-            admissionId: admission.id
-          });
+            const normalSubtotal = normalDays * unitPrice;
+            const normalCoverage = calculateCoverage(normalSubtotal);
+            lineItems.push({
+              serviceCode: 'ACCOMMODATION',
+              description: `Ward: ${admission.bed.ward.name} (Bed: ${admission.bed.bedNumber}) - ${normalDays} day(s) stay`,
+              quantity: normalDays,
+              unitPrice,
+              discount: 0,
+              tax: 0,
+              subtotal: normalSubtotal,
+              insuranceCoverage: normalCoverage.insuranceCoverage,
+              patientOutOfPocket: normalCoverage.patientOutOfPocket,
+              admissionId: admission.id
+            });
+
+            if (overstayDays > 0) {
+              const overstaySubtotal = overstayDays * unitPrice;
+              const overstayCoverage = calculateCoverage(overstaySubtotal);
+              lineItems.push({
+                serviceCode: 'ACCOMMODATION_OVERSTAY',
+                description: `Overstay — bed held after discharge past ${graceDays}-day grace period - ${overstayDays} day(s)`,
+                quantity: overstayDays,
+                unitPrice,
+                discount: 0,
+                tax: 0,
+                subtotal: overstaySubtotal,
+                insuranceCoverage: overstayCoverage.insuranceCoverage,
+                patientOutOfPocket: overstayCoverage.patientOutOfPocket,
+                admissionId: admission.id
+              });
+            }
+          } else {
+            // Still admitted (ongoing stay) — unchanged from before.
+            const days = Math.max(1, Math.ceil((endBoundary - start) / msPerDay));
+            const subtotal = days * unitPrice;
+            const { insuranceCoverage, patientOutOfPocket } = calculateCoverage(subtotal);
+
+            lineItems.push({
+              serviceCode: 'ACCOMMODATION',
+              description: `Ward: ${admission.bed.ward.name} (Bed: ${admission.bed.bedNumber}) - ${days} day(s) stay`,
+              quantity: days,
+              unitPrice,
+              discount: 0,
+              tax: 0,
+              subtotal,
+              insuranceCoverage,
+              patientOutOfPocket,
+              admissionId: admission.id
+            });
+          }
         }
 
         for (const medAdmin of admission.medicationAdministrations) {
@@ -538,6 +656,18 @@ export class GenerateInvoiceUseCase {
     
     // If there's a global discount, we subtract it from patient's out of pocket
     const balance = Math.max(0, totalPatientOutOfPocket - Number(discount));
+
+    // A fully HMO-covered (or fully exempted) invoice has nothing left for
+    // the patient to pay right from generation — it should read as PAID
+    // immediately, not sit as UNPAID/ISSUED and clutter Outstanding
+    // Balances for money nobody owes.
+    const initialPaymentStatus: 'UNPAID' | 'PAID' = balance === 0 ? 'PAID' : 'UNPAID';
+    const initialInvoiceStatus: 'ISSUED' | 'PAID' = balance === 0 ? 'PAID' : 'ISSUED';
+
+    // Which provider is actually responsible for the insurance-covered
+    // portion of this invoice, if any — the HMO tier takes the patient's
+    // linked provider; the legacy copay tier takes the enrollment's provider.
+    const coverageProviderId = isHmoCovered ? hmoProvider!.id : activeInsurance?.providerId;
 
     // Concurrency control: Execute updates and creation atomically
     const invoice = await this.prisma.$transaction(async (tx) => {
@@ -622,6 +752,16 @@ export class GenerateInvoiceUseCase {
         }
       }
 
+      if (dto.postnatalVisitIds?.length) {
+        const updateResult = await tx.postnatalVisit.updateMany({
+          where: { id: { in: dto.postnatalVisitIds }, tenantId, billingStatus: 'UNBILLED' },
+          data: { billingStatus: 'BILLED' }
+        });
+        if (updateResult.count !== dto.postnatalVisitIds.length) {
+          throw new ValidationError('One or more postnatal visits have already been billed.');
+        }
+      }
+
       // 2. Generate invoice number
       const invoiceNumber = await this.generateInvoiceNumber(tenantId);
 
@@ -639,8 +779,8 @@ export class GenerateInvoiceUseCase {
           totalAmount,
           paidAmount: 0,
           balance,
-          paymentStatus: 'UNPAID',
-          status: 'ISSUED',
+          paymentStatus: initialPaymentStatus,
+          status: initialInvoiceStatus,
           notes: dto.notes,
           items: {
             create: lineItems as any
@@ -651,7 +791,7 @@ export class GenerateInvoiceUseCase {
               userId: issuedById,
               action: 'CREATED',
               notes: 'Invoice generated',
-              newValues: { totalAmount, balance, status: 'ISSUED' } as any
+              newValues: { totalAmount, balance, status: initialInvoiceStatus } as any
             }
           }
         },
@@ -660,13 +800,14 @@ export class GenerateInvoiceUseCase {
         }
       });
 
-      // 4. Auto-create Insurance Claim if coverage > 0
-      if (totalInsuranceCoverage > 0 && activeInsurance) {
+      // 4. Auto-create Insurance Claim if coverage > 0 — against whichever
+      // provider was actually responsible (HMO tier or legacy copay tier).
+      if (totalInsuranceCoverage > 0 && coverageProviderId) {
         await tx.insuranceClaim.create({
           data: {
             tenantId,
             invoiceId: createdInvoice.id,
-            insuranceId: activeInsurance.providerId,
+            insuranceId: coverageProviderId,
             amountClaimed: totalInsuranceCoverage,
             status: 'DRAFT'
           }

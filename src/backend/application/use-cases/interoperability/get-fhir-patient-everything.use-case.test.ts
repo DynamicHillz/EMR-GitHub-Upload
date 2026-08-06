@@ -49,6 +49,7 @@ describe('GetFhirPatientEverythingUseCase', () => {
       patient: { findFirst: jest.fn() },
       consultation: { findMany: jest.fn().mockResolvedValue([]) },
       consultationDiagnosis: { findMany: jest.fn().mockResolvedValue([]) },
+      diagnosisCodeMapping: { findMany: jest.fn().mockResolvedValue([]) },
       labResultValue: { findMany: jest.fn().mockResolvedValue([]) },
       prescription: { findMany: jest.fn().mockResolvedValue([]) },
       labTestRecord: { findMany: jest.fn().mockResolvedValue([]) },
@@ -110,6 +111,35 @@ describe('GetFhirPatientEverythingUseCase', () => {
     });
     const types = result.entry!.map(e => e.resource!.resourceType);
     expect(types.filter(t => t === 'Condition')).toHaveLength(1);
+  });
+
+  it('should batch-resolve code mappings in a single query and attach the additional coding to the right Condition', async () => {
+    mockPrisma.patient.findFirst.mockResolvedValue(basePatient);
+    mockPrisma.consultationDiagnosis.findMany.mockResolvedValue([
+      { id: 'diag-1', isPrimary: true, certainty: 'CONFIRMED', consultation: { patientId }, diagnosis: { code: '1A00', name: 'Cholera', type: 'ICD-11' } },
+      { id: 'diag-2', isPrimary: false, certainty: 'CONFIRMED', consultation: { patientId }, diagnosis: { code: 'I10', name: 'Hypertension', type: 'ICD-10' } },
+    ]);
+    mockPrisma.diagnosisCodeMapping.findMany.mockResolvedValue([
+      { id: 'm1', sourceSystem: 'ICD-11', sourceCode: '1A00', targetSystem: 'ICD-10', targetCode: 'A00', mapKind: 'EXACT', note: 'Cholera' },
+    ]);
+
+    const result = await useCase.execute(patientId, tenantId);
+
+    expect(mockPrisma.diagnosisCodeMapping.findMany).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.diagnosisCodeMapping.findMany).toHaveBeenCalledWith({
+      where: {
+        OR: [
+          { sourceSystem: 'ICD-11', sourceCode: '1A00' },
+          { sourceSystem: 'ICD-10', sourceCode: 'I10' },
+        ],
+      },
+    });
+
+    const conditions = result.entry!.filter(e => e.resource!.resourceType === 'Condition').map(e => e.resource as fhir4.Condition);
+    const cholera = conditions.find(c => c.id === 'diag-1')!;
+    const hypertension = conditions.find(c => c.id === 'diag-2')!;
+    expect(cholera.code?.coding).toHaveLength(2); // primary ICD-11 + resolved ICD-10
+    expect(hypertension.code?.coding).toHaveLength(1); // no mapping for this one — unchanged
   });
 
   it('should include a MedicationRequest for each prescription and a DiagnosticReport for each lab test record', async () => {

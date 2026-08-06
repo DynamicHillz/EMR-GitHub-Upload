@@ -61,6 +61,13 @@ export class RecordPaymentUseCase {
       throw new ValidationError(`Payment amount (₦${dto.amount}) exceeds invoice balance (₦${invoice.balance})`);
     }
 
+    // The person physically receiving cash isn't always the person logged
+    // in recording it — require it explicitly rather than assuming
+    // processedById always matches who took the money.
+    if (dto.paymentMethod === 'CASH' && !dto.cashReceivedByName?.trim()) {
+      throw new ValidationError('Cash payments require the name of the staff member who received the cash.');
+    }
+
     // ============ FRAUD PREVENTION CHECKS ============
     const fraudCheck = await this.fraudService.checkPayment({
       amount: dto.amount,
@@ -133,7 +140,14 @@ export class RecordPaymentUseCase {
       const current = await tx.invoice.findUniqueOrThrow({ where: { id: dto.invoiceId } });
 
       const newPaidAmount = Number(current.paidAmount) + dto.amount;
-      const newBalance = Number(current.totalAmount) - newPaidAmount;
+      // current.balance — not totalAmount — is the anchor: totalAmount is the
+      // FULL billed amount (including any insurance-covered portion, which
+      // the patient never owed), while balance already tracks only what's
+      // left of the patient's own out-of-pocket responsibility. Decrementing
+      // it directly preserves that invariant regardless of exemptions/HMO/
+      // copay coverage; re-deriving from totalAmount silently added the
+      // insurance-covered portion back as if the patient still owed it.
+      const newBalance = Number(current.balance) - dto.amount;
 
       let paymentStatus: 'UNPAID' | 'PARTIALLY_PAID' | 'PAID' | 'REFUNDED';
       let invoiceStatus: 'DRAFT' | 'ISSUED' | 'FINALIZED' | 'PAID' | 'PARTIALLY_PAID' | 'CANCELLED' | 'REFUNDED' | 'LOCKED';
@@ -166,6 +180,7 @@ export class RecordPaymentUseCase {
           cardBrand: dto.cardBrand,
           mobileProvider: dto.mobileProvider,
           mobileNumber: dto.mobileNumber,
+          cashReceivedByName: dto.paymentMethod === 'CASH' ? dto.cashReceivedByName?.trim() : undefined,
           status: 'COMPLETED',
           notes: dto.notes,
 

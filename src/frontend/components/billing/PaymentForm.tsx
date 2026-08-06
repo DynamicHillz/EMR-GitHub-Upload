@@ -10,17 +10,20 @@ import {
   PaymentMethod,
   PaymentGateway,
   Invoice,
+  Payment,
 } from '../../types/billing.types';
 import billingService from '../../services/billing.service';
 import Dropdown from '../common/Dropdown';
+import { useAuth } from '../../contexts/AuthContext';
 
 interface PaymentFormProps {
   invoice: Invoice;
-  onSuccess?: () => void;
+  onSuccess?: (payment: Payment) => void;
   onCancel?: () => void;
 }
 
 const PaymentForm: React.FC<PaymentFormProps> = ({ invoice, onSuccess, onCancel }) => {
+  const { user } = useAuth();
   const [paymentType, setPaymentType] = useState<'manual' | 'gateway'>('manual');
   const [manualData, setManualData] = useState<RecordPaymentDto>({
     invoiceId: invoice.id,
@@ -37,10 +40,12 @@ const PaymentForm: React.FC<PaymentFormProps> = ({ invoice, onSuccess, onCancel 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [approverName, setApproverName] = useState('');
+  const [cashReceivedByName, setCashReceivedByName] = useState('');
   // Real system-generated receipts now exist, so this requirement is
   // tenant-configurable rather than always mandatory for cash — defaults
-  // to true (current behavior) until the setting loads.
-  const [requireReceiptPhotoForCash, setRequireReceiptPhotoForCash] = useState(true);
+  // to false (2026-07-31: a photo-upload workflow isn't realistic for most
+  // Nigerian clinics) until the tenant's actual setting loads.
+  const [requireReceiptPhotoForCash, setRequireReceiptPhotoForCash] = useState(false);
   // Approval thresholds are tenant-configurable — these defaults match the
   // schema defaults and only apply until the real settings load.
   const [approvalThresholds, setApprovalThresholds] = useState({
@@ -98,15 +103,20 @@ const PaymentForm: React.FC<PaymentFormProps> = ({ invoice, onSuccess, onCancel 
       setError('This payment exceeds the approval threshold — enter the approving supervisor\'s name before recording it.');
       return;
     }
+    if (manualData.paymentMethod === 'CASH' && !cashReceivedByName.trim()) {
+      setError('Enter the name of the staff member who received the cash before recording this payment.');
+      return;
+    }
 
     setIsSubmitting(true);
 
     try {
-      await billingService.recordPayment({
+      const result = await billingService.recordPayment({
         ...manualData,
         approverName: requiresApproval ? approverName.trim() : undefined,
+        cashReceivedByName: manualData.paymentMethod === 'CASH' ? cashReceivedByName.trim() : undefined,
       });
-      onSuccess?.();
+      onSuccess?.(result.payment);
     } catch (err: any) {
       setError(err.response?.data?.message || 'Failed to record payment');
     } finally {
@@ -233,6 +243,36 @@ const PaymentForm: React.FC<PaymentFormProps> = ({ invoice, onSuccess, onCancel 
                 <option value="MOBILE_MONEY">Mobile Money</option>
                 <option value="INSURANCE">Insurance</option>
               </Dropdown>
+            </div>
+
+            {manualData.paymentMethod === 'CASH' && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Cash Received By <span className="text-red-600">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={cashReceivedByName}
+                  onChange={(e) => setCashReceivedByName(e.target.value)}
+                  required
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+                  placeholder="Name of staff member who received the cash"
+                />
+              </div>
+            )}
+
+            {/* Automatically captured from the logged-in session, not
+                editable — the name typed above is who *received* the cash
+                (may be a colleague), this is who's actually recording the
+                payment right now. Shown so that's visible up front, not
+                just after the fact on the printed receipt. */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Recorded By
+              </label>
+              <div className="w-full px-3 py-2 border border-gray-200 rounded-md bg-gray-50 text-gray-700">
+                {user ? `${user.firstName} ${user.lastName}` : '—'}
+              </div>
             </div>
 
             <div>

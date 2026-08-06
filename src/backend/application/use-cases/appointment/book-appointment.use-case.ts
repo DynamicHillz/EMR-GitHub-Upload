@@ -5,6 +5,7 @@
  * Includes double-booking prevention and validation
  */
 
+import { Prisma } from '@prisma/client';
 import { IAppointmentRepository } from '../../../domain/interfaces/IAppointmentRepository';
 import { IPatientRepository } from '../../../domain/interfaces/IPatientRepository';
 import { CreateAppointmentDto, CreateAppointmentResponse } from '../../dtos/appointment/CreateAppointment.dto';
@@ -89,6 +90,18 @@ export class BookAppointmentUseCase {
         },
       };
     } catch (error) {
+      // A partial unique index on the DB backs the findOverlapping check
+      // above with a real atomicity guarantee — two concurrent requests can
+      // both pass the check-then-act findOverlapping call, but only one can
+      // win the insert; the loser hits this P2002, not a generic overlap.
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        return {
+          success: false,
+          message: 'Time slot unavailable',
+          error: 'This slot was just booked by someone else — please pick another time.',
+        };
+      }
+
       logger.error('Error booking appointment:', error);
       return {
         success: false,

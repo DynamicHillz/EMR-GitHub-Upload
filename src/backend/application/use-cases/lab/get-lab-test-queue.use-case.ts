@@ -36,6 +36,7 @@ export interface LabTestQueueFilters {
   status?: LabTestStatus;
   urgency?: TestUrgency;
   limit?: number;
+  skip?: number;
   patientId?: string;
   billingStatus?: 'UNBILLED' | 'BILLED';
 }
@@ -117,6 +118,7 @@ export class GetLabTestQueueUseCase {
         { createdAt: 'asc' },
       ],
       take: filters?.limit,
+      skip: filters?.skip,
     });
 
     // Calculate patient age and format response

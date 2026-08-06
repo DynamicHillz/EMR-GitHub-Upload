@@ -177,6 +177,21 @@ export class ConsultationRepository implements IConsultationRepository {
     if (!diagnoses || diagnoses.length === 0) return;
     for (const diag of diagnoses) {
       if (diag.code && diag.name) {
+        // A shared/global reference row (e.g. bulk-imported ICD-10 — see
+        // seed-icd10-catalog.ts) for this code may already exist. Without
+        // this check, the upsert below is keyed on {tenantId, code}, which
+        // would never match a {tenantId: null, code} global row — it would
+        // silently CREATE a duplicate tenant-scoped row with the same code
+        // instead of reusing the shared one.
+        const globalEntry = await this.prisma.diagnosisCatalog.findFirst({
+          where: { tenantId: null, code: diag.code },
+        });
+
+        if (globalEntry) {
+          diag.diagnosisId = globalEntry.id;
+          continue;
+        }
+
         const catalogEntry = await this.prisma.diagnosisCatalog.upsert({
           where: { tenantId_code: { tenantId, code: diag.code } },
           update: { name: diag.name, type: diag.type || 'ICD-11' },

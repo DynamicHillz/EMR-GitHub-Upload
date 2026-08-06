@@ -424,6 +424,10 @@ export const generateInvoice = async (req: Request, res: Response) => {
       prescriptionIds: req.body.prescriptionIds,
       admissionIds: req.body.admissionIds,
       consumableUsageIds: req.body.consumableUsageIds,
+      transfusionChartIds: req.body.transfusionChartIds,
+      operationNoteIds: req.body.operationNoteIds,
+      laborRecordIds: req.body.laborRecordIds,
+      postnatalVisitIds: req.body.postnatalVisitIds,
       additionalItems: req.body.additionalItems,
       discount: req.body.discount,
       notes: req.body.notes
@@ -670,9 +674,11 @@ export const recordPayment = async (req: Request, res: Response) => {
       mobileProvider: req.body.mobileProvider,
       mobileNumber: req.body.mobileNumber,
       notes: req.body.notes,
+      cashReceivedByName: req.body.cashReceivedByName,
       // Fraud prevention fields
       receiptPhotoUrl: req.body.receiptPhotoUrl,
       proofDocumentUrl: req.body.proofDocumentUrl,
+      approverName: req.body.approverName,
     };
 
     // Capture fraud prevention context from request
@@ -782,7 +788,7 @@ export const getFraudPreventionSettingsForPaymentForm = async (req: Request, res
     return res.status(200).json({
       success: true,
       data: settings || {
-        requireReceiptPhotoForCash: true,
+        requireReceiptPhotoForCash: false,
         requireReferenceForBankTransfer: true,
         requireReferenceForMobileMoney: true,
         cashApprovalThreshold: 50000,
@@ -815,7 +821,10 @@ export const getPaymentReceipt = async (req: Request, res: Response) => {
     const payment = await prisma.payment.findFirst({
       where: { id, tenantId },
       include: {
-        invoice: { include: { items: true } },
+        // Receipt intentionally shows no line-item breakdown — see
+        // ReceiptPrintPage.tsx — so only invoiceNumber is needed here, not
+        // the items.
+        invoice: { select: { invoiceNumber: true } },
         patient: { select: { id: true, firstName: true, lastName: true, patientId: true, phone: true, email: true } },
         processedBy: { select: { firstName: true, lastName: true } },
       },
@@ -880,7 +889,7 @@ export const emailPaymentReceipt = async (req: Request, res: Response) => {
     const payment = await prisma.payment.findFirst({
       where: { id, tenantId },
       include: {
-        invoice: { include: { items: true } },
+        invoice: { select: { invoiceNumber: true } },
         patient: { select: { firstName: true, lastName: true, email: true } },
       },
     });
@@ -923,7 +932,9 @@ export const getOutstandingInvoices = async (req: Request, res: Response) => {
       });
     }
 
-    const result = await getOutstandingInvoicesUseCase.execute(tenantId);
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = parseInt(req.query.limit as string) || 100;
+    const result = await getOutstandingInvoicesUseCase.execute(tenantId, page, limit);
 
     return res.status(200).json({
       success: true,
@@ -1079,8 +1090,8 @@ export const approveRefund = async (req: Request, res: Response) => {
   } catch (error: any) {
     logger.error('Error approving refund:', error);
 
-    if (error.message === 'Refund request not found' || error.message.includes('Cannot approve')) {
-      return res.status(400).json({
+    if (error.name === 'ConflictError' || error.message === 'Refund request not found' || error.message.includes('Cannot approve')) {
+      return res.status(error.statusCode || 400).json({
         success: false,
         message: error.message
       });
@@ -1129,8 +1140,8 @@ export const rejectRefund = async (req: Request, res: Response) => {
   } catch (error: any) {
     logger.error('Error rejecting refund:', error);
 
-    if (error.message === 'Refund request not found' || error.message.includes('Cannot reject')) {
-      return res.status(400).json({
+    if (error.name === 'ConflictError' || error.message === 'Refund request not found' || error.message.includes('Cannot reject')) {
+      return res.status(error.statusCode || 400).json({
         success: false,
         message: error.message
       });

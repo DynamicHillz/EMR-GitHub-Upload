@@ -230,6 +230,7 @@ const InvoiceDetail: React.FC<InvoiceDetailProps> = ({
               <th style="padding:8px 12px;text-align:left;border-bottom:1px solid #e5e7eb;">Date</th>
               <th style="padding:8px 12px;text-align:left;border-bottom:1px solid #e5e7eb;">Method</th>
               <th style="padding:8px 12px;text-align:left;border-bottom:1px solid #e5e7eb;">Reference</th>
+              <th style="padding:8px 12px;text-align:left;border-bottom:1px solid #e5e7eb;">Cash Received By</th>
               <th style="padding:8px 12px;text-align:right;border-bottom:1px solid #e5e7eb;">Amount</th>
             </tr>
           </thead>
@@ -239,6 +240,7 @@ const InvoiceDetail: React.FC<InvoiceDetailProps> = ({
                 <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;">${new Date(p.paymentDate).toLocaleDateString('en-NG')}</td>
                 <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;">${p.paymentMethod.replace('_', ' ')}</td>
                 <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;">${p.referenceNumber || '-'}</td>
+                <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;">${p.paymentMethod === 'CASH' ? (p.cashReceivedByName || '-') : '-'}</td>
                 <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;text-align:right;color:#16a34a;font-weight:600;">${formatCurrencyPrint(p.amount)}</td>
               </tr>
             `).join('')}
@@ -365,6 +367,133 @@ const InvoiceDetail: React.FC<InvoiceDetailProps> = ({
     };
   };
 
+  // Patient-facing bill: the itemized invoice above is for internal
+  // clinic records/audit — patients get this instead, showing only who
+  // they are and what they owe, with no line-item breakdown of charges.
+  const handleGenerateBill = async () => {
+    if (!invoice) return;
+
+    let brandingData = branding;
+    if (!brandingData) {
+      try {
+        const token = localStorage.getItem('token');
+        const res = await fetch(`${window.location.protocol}//${window.location.hostname}:3000/api/branding`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const data = await res.json();
+        brandingData = data.data;
+        setBranding(brandingData);
+      } catch (err) {
+        console.error('Could not load branding for print');
+      }
+    }
+
+    const clinicName = brandingData?.clinicName || 'St. Stephen Medical Centre';
+    const clinicAddress = brandingData?.address || '';
+    const clinicPhone = brandingData?.phone || '';
+    const logoUrl = brandingData?.logoUrl || '';
+
+    const formatCurrencyPrint = (amount: number) =>
+      new Intl.NumberFormat('en-NG', { style: 'currency', currency: 'NGN' }).format(amount);
+
+    // Same verification link the internal invoice print uses — scanning it
+    // takes staff straight to this invoice's real record, so a bill can be
+    // checked against the clinic's system rather than trusted on sight.
+    const verifyUrl = `${window.location.origin}/billing/invoices/${invoice.id}`;
+    const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=110x110&data=${encodeURIComponent(verifyUrl)}`;
+    const generatedAt = new Date().toLocaleString('en-NG');
+
+    const billContent = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Bill ${invoice.invoiceNumber} - ${clinicName}</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: Arial, sans-serif; color: #111; padding: 24px; }
+    @media print { body { padding: 12px; } }
+    .bill-frame { max-width: 600px; margin: 0 auto; position: relative; border: 3px double #1d4ed8; padding: 32px; overflow: hidden; }
+    .watermark {
+      position: absolute; top: 50%; left: 50%;
+      transform: translate(-50%, -50%) rotate(-30deg);
+      font-size: 46pt; font-weight: 700; color: #1d4ed8; opacity: 0.06;
+      white-space: nowrap; pointer-events: none; z-index: 0;
+    }
+    .bill-content { position: relative; z-index: 1; }
+  </style>
+</head>
+<body>
+  <div class="bill-frame">
+    <div class="watermark">${clinicName.toUpperCase()}</div>
+    <div class="bill-content">
+      <div style="text-align:center;padding-bottom:20px;border-bottom:3px solid #1d4ed8;margin-bottom:24px;">
+        ${logoUrl ? `<img src="${logoUrl}" alt="${clinicName}" style="max-height:70px;max-width:180px;object-fit:contain;margin-bottom:8px;" />` : ''}
+        <div style="font-size:20pt;font-weight:700;color:#1d4ed8;">${clinicName}</div>
+        ${clinicAddress ? `<div style="font-size:10pt;color:#4b5563;margin-top:2px;">${clinicAddress}</div>` : ''}
+        ${clinicPhone ? `<div style="font-size:10pt;color:#4b5563;">Tel: ${clinicPhone}</div>` : ''}
+      </div>
+
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:24px;">
+        <div style="font-size:16pt;font-weight:700;color:#374151;letter-spacing:1px;">BILL</div>
+        <div style="text-align:right;font-size:8pt;color:#6b7280;">
+          <div>Ref: <strong>${invoice.invoiceNumber}</strong></div>
+          <div>Issued: ${generatedAt}</div>
+        </div>
+      </div>
+
+      <div style="margin-bottom:24px;">
+        <div style="font-size:10pt;font-weight:700;text-transform:uppercase;color:#6b7280;margin-bottom:8px;">Patient</div>
+        <div style="font-size:15pt;font-weight:700;">${invoice.patient?.firstName || ''} ${invoice.patient?.lastName || ''}</div>
+        ${invoice.patient?.patientId ? `<div style="font-size:10pt;color:#4b5563;">Patient ID: <strong>${invoice.patient.patientId}</strong></div>` : ''}
+        ${invoice.patient?.phone ? `<div style="font-size:10pt;color:#4b5563;">${invoice.patient.phone}</div>` : ''}
+      </div>
+
+      <div style="text-align:center;padding:24px;background:#f9fafb;border-radius:8px;">
+        <div style="font-size:11pt;color:#6b7280;margin-bottom:6px;">Amount to Pay</div>
+        <div style="font-size:28pt;font-weight:700;color:#111;">${formatCurrencyPrint(invoice.balance)}</div>
+      </div>
+
+      <div style="margin-top:24px;text-align:center;font-size:8pt;color:#9ca3af;">
+        Please make payment at the cashier's desk.
+      </div>
+
+      <div style="margin-top:28px;padding-top:16px;border-top:1px solid #e5e7eb;display:flex;justify-content:space-between;align-items:flex-end;gap:16px;">
+        <div style="font-size:7pt;color:#9ca3af;max-width:380px;">
+          <div style="font-weight:700;color:#4b5563;">Document Verification (Clinic Staff Only)</div>
+          <div>The QR code opens this bill's record in the clinic's internal system — staff login required, not for patient self-verification.</div>
+          <div style="margin-top:2px;">Document ID: <strong>${invoice.id}</strong></div>
+          <div style="margin-top:4px;">This document is issued by ${clinicName} and is only valid when checked against the clinic's internal records by staff. Any alteration of this document constitutes fraud.</div>
+        </div>
+        <div style="text-align:center;flex-shrink:0;">
+          <img src="${qrUrl}" alt="Staff verification QR code" style="width:90px;height:90px;" />
+          <div style="font-size:7pt;color:#6b7280;margin-top:2px;">For clinic staff</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>`;
+
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) return;
+    printWindow.document.write(billContent);
+    printWindow.document.close();
+    printWindow.onload = () => {
+      printWindow.print();
+      printWindow.onafterprint = () => printWindow.close();
+    };
+  };
+
+  // Once the invoice is fully paid there's nothing left to bill — the
+  // "Generate Bill" slot switches to re-printing the receipt for the
+  // payment that settled it, since that's what the patient actually needs
+  // at that point.
+  const handleGenerateReceipt = () => {
+    const latestPayment = payments.find((p) => p.status === 'COMPLETED') || payments[0];
+    if (!latestPayment) return;
+    window.open(`/billing/payments/${latestPayment.id}/receipt`, '_blank');
+  };
+
   const formatCurrency = (amount: number) =>
     new Intl.NumberFormat('en-NG', { style: 'currency', currency: 'NGN' }).format(amount);
 
@@ -452,6 +581,20 @@ const InvoiceDetail: React.FC<InvoiceDetailProps> = ({
             className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors">
             Print / Download
           </button>
+          {invoice.balance > 0 && invoice.status !== 'CANCELLED' && (
+            <button onClick={handleGenerateBill}
+              title="Simplified bill for the patient — patient details and amount due only, no line-item breakdown"
+              className="px-4 py-2 bg-teal-600 text-white rounded-md hover:bg-teal-700 transition-colors">
+              Generate Bill
+            </button>
+          )}
+          {invoice.balance <= 0 && payments.length > 0 && (
+            <button onClick={handleGenerateReceipt}
+              title="Receipt for the payment that settled this invoice — issue this to the patient"
+              className="px-4 py-2 bg-teal-600 text-white rounded-md hover:bg-teal-700 transition-colors">
+              Generate Receipt
+            </button>
+          )}
           {hasRole(CAN_EDIT_INVOICE_ROLES) && (invoice.status === 'DRAFT' || invoice.status === 'ISSUED') && (
             <button onClick={() => setShowEditModal(true)}
               className="px-4 py-2 bg-amber-600 text-white rounded-md hover:bg-amber-700 transition-colors">
@@ -654,6 +797,7 @@ const InvoiceDetail: React.FC<InvoiceDetailProps> = ({
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Reference</th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Method</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Cash Received By</th>
                   <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Amount</th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
                   <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase print:hidden">Actions</th>
@@ -665,20 +809,29 @@ const InvoiceDetail: React.FC<InvoiceDetailProps> = ({
                     <td className="px-4 py-3 text-sm text-gray-900">{formatDateTime(payment.paymentDate)}</td>
                     <td className="px-4 py-3 text-sm text-gray-900">{payment.referenceNumber || '-'}</td>
                     <td className="px-4 py-3 text-sm text-gray-900">{payment.paymentMethod.replace('_', ' ')}</td>
+                    <td className="px-4 py-3 text-sm text-gray-900">{payment.paymentMethod === 'CASH' ? (payment.cashReceivedByName || '-') : '-'}</td>
                     <td className="px-4 py-3 text-sm text-right font-medium text-green-600">{formatCurrency(payment.amount)}</td>
                     <td className="px-4 py-3 text-sm">
                       <span className="px-2 py-1 text-xs font-semibold rounded-full bg-green-100 text-green-800">
                         {payment.status}
                       </span>
                     </td>
-                    <td className="px-4 py-3 text-sm text-right print:hidden">
+                    <td className="px-4 py-3 text-sm text-right print:hidden space-x-3">
                       {payment.status === 'COMPLETED' && (
-                        <button
-                          onClick={() => setRefundingPayment(payment)}
-                          className="text-red-600 hover:text-red-800 text-xs font-medium"
-                        >
-                          Request Refund
-                        </button>
+                        <>
+                          <button
+                            onClick={() => window.open(`/billing/payments/${payment.id}/receipt`, '_blank')}
+                            className="text-blue-600 hover:text-blue-800 text-xs font-medium"
+                          >
+                            Receipt
+                          </button>
+                          <button
+                            onClick={() => setRefundingPayment(payment)}
+                            className="text-red-600 hover:text-red-800 text-xs font-medium"
+                          >
+                            Request Refund
+                          </button>
+                        </>
                       )}
                     </td>
                   </tr>
@@ -710,7 +863,7 @@ const InvoiceDetail: React.FC<InvoiceDetailProps> = ({
 
       {/* Edit Invoice Modal */}
       {showEditModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-start justify-center z-50 p-4 overflow-y-auto">
           <div className="max-w-lg w-full max-h-[90vh] overflow-y-auto">
             <EditInvoiceModal
               invoice={invoice}
@@ -731,7 +884,7 @@ const InvoiceDetail: React.FC<InvoiceDetailProps> = ({
 
       {/* Request Refund Modal */}
       {refundingPayment && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-start justify-center z-50 p-4 overflow-y-auto">
           <div className="max-w-lg w-full max-h-[90vh] overflow-y-auto">
             <RefundForm
               payment={refundingPayment}

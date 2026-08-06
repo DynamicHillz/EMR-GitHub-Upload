@@ -40,6 +40,12 @@ router.post(
   insuranceController.addPatientInsurance.bind(insuranceController)
 );
 
+router.put(
+  '/patients/:patientId/:policyId',
+  requireRole(['SUPER_ADMIN', 'ADMIN', 'CASHIER']),
+  insuranceController.updatePatientInsurance.bind(insuranceController)
+);
+
 // Insurance Claims
 router.get(
   '/claims',
