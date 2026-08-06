@@ -13,7 +13,6 @@ yarn-error.log*
 
 # Build outputs
 dist/
-dist-electron/
 build/
 
 # Logs
@@ -78,3 +77,9 @@ backups/
 # TLS cert/key generated locally via mkcert — machine-specific, private key
 certs/
 .claude/
+
+# License signing private key — NEVER commit. Whoever holds this can forge
+# a valid license for any install. Only config/license-public-key.pem (the
+# verify-only half) is meant to be checked in. See LICENSING.md.
+license-private-key.pem
+*.lic
