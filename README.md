@@ -4,7 +4,7 @@
 
 ![Version](https://img.shields.io/badge/version-1.0.0-blue)
 ![License](https://img.shields.io/badge/license-PROPRIETARY-red)
-![Tests](https://img.shields.io/badge/tests-474%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-768%20passing-brightgreen)
 ![Node](https://img.shields.io/badge/node-%3E%3D18.0.0-green)
 
 ---
@@ -13,7 +13,7 @@
 
 ## About this project
 
-Built for **St. Stephen Medical Centre**, a private clinic, to replace paper-based patient records with a full digital workflow — registration, consultations, lab, pharmacy, billing, and inpatient care — running on a single Windows PC at the clinic, with no dependency on cloud infrastructure or reliable internet.
+Built for **St. Stephen Medical Centre**, a private clinic, to replace paper-based patient records with a full digital workflow — registration, consultations, lab, pharmacy, billing, and inpatient care — running on a single Windows PC at the clinic. The core clinical workflow (registration, consultations, lab, pharmacy, inpatient care, cash billing) works fully offline against the on-prem PostgreSQL database and doesn't need internet access at all. A handful of features are genuinely cloud-dependent and degrade to "unavailable" (not "broken") without connectivity: card/mobile-money payment processing (Flutterwave/Moniepoint/Paystack), the off-site encrypted backup copy (Backblaze B2 / Google Drive — the local `pg_dump` still runs regardless), DHIS2 aggregate reporting, SMS appointment reminders, and Sentry error monitoring.
 
 This was built AI-assisted, directed end-to-end through Claude Code: every product decision, architectural tradeoff, feature scope, and deployment step below was specified, reviewed, and tested by hand — including catching and fixing real production bugs (a mixed-content HTTPS regression that broke login) and building an offline-deployment procedure for regions where a stable internet connection during setup isn't a safe assumption.
 
@@ -32,17 +32,17 @@ This was built AI-assisted, directed end-to-end through Claude Code: every produ
 - **Triage, MCH** — antenatal care, immunization schedules, labour & delivery with partograph tracking
 - **Interoperability** — read-only FHIR R4 export (Patient, Encounter, Condition, Observation, MedicationRequest, DiagnosticReport, plus a per-patient `$everything` Bundle), backed by a `CapabilityStatement` at `/fhir/metadata` that declares exactly what's implemented — no inbound FHIR, no write operations, no resource types beyond the six listed; DHIS2 aggregate reporting
 - **Audit logging** — 7-year retention for regulatory compliance (NDPR)
-- **Offline-first** — an IndexedDB write queue and encrypted read cache keep the app usable through connectivity drops, with a PWA service worker precaching the app shell
+- **Offline-first** — an IndexedDB write queue and encrypted read cache keep the core clinical workflow usable through connectivity drops, with a PWA service worker precaching the app shell (see "About this project" above for the specific features that do need internet access)
 
 ## Why this isn't "just another CRUD app"
 
 The interesting engineering here isn't the feature list — it's what it takes to run real clinical software reliably in the actual conditions of a Nigerian clinic:
 
 - **HTTPS on a LAN, not just localhost** — browsers only allow service workers to register under a secure context, so every workstation reaching the clinic server over the LAN needed real TLS, not a self-signed shortcut, via a locally-trusted CA (`mkcert`).
-- **Automated, verified backups** — a scheduled `pg_dump` job with an actual restore drill into a scratch database, not just "a backup script exists."
+- **Automated, verified backups** — a scheduled `pg_dump` job with an actual restore drill into a scratch database, not just "a backup script exists," plus an encrypted off-site copy (Backblaze B2 / Google Drive) so the backup doesn't share a single point of failure with the machine it's backing up.
 - **Boot-time recovery** — the app survives a Windows reboot or power cycle unattended, since there's no IT staff on-site to restart it manually.
 - **Offline deployment packaging** — when the internet is too unreliable to trust for `npm install` or `git clone`, the entire dependency tree and required installers can be packaged onto a USB drive instead.
-- **474 automated tests** across 70 suites — unit coverage for every backend domain (pharmacy, lab, billing, user management, appointments, auth, interoperability) plus integration tests for the highest-risk flows (payments, refunds, drug interactions, lab results).
+- **768 automated tests** across 110 suites — unit coverage for every backend domain (pharmacy, lab, billing, user management, appointments, auth, interoperability, maternity/postnatal, licensing) plus integration tests for the highest-risk flows (payments, refunds, drug interactions, lab results, delivery outcomes).
 
 See [`CLINIC_DEPLOYMENT_CHECKLIST.md`](CLINIC_DEPLOYMENT_CHECKLIST.md) for the actual step-by-step procedure used to stand up a new clinic server from a bare Windows PC.
 
@@ -54,7 +54,7 @@ See [`CLINIC_DEPLOYMENT_CHECKLIST.md`](CLINIC_DEPLOYMENT_CHECKLIST.md) for the a
 
 **Frontend**: React 18 + TypeScript, Vite, Tailwind CSS, React Router, React Hook Form. Global state is plain React Context — no Redux/Zustand overhead for an app this size.
 
-**Database**: PostgreSQL via Prisma ORM — 60 models / 40 enums, with a real tracked migration history (`prisma migrate`), not ad-hoc schema pushes.
+**Database**: PostgreSQL via Prisma ORM — 73 models / 48 enums, with a real tracked migration history (`prisma migrate`), not ad-hoc schema pushes.
 
 **Process management**: PM2 in production, with Windows boot-recovery configured so the app comes back online automatically after a reboot with no manual intervention.
 
@@ -84,8 +84,9 @@ src/
 | Auth | JWT (8h expiry), bcrypt (cost factor 12), role-based access control (8 roles) |
 | Payments | Flutterwave, Moniepoint, Paystack |
 | Process management | PM2 |
-| Testing | Jest, ts-jest — 474 tests |
+| Testing | Jest, ts-jest — 768 tests |
 | Offline | Service Worker (Workbox), IndexedDB |
+| Backups | `pg_dump` (local, daily) + encrypted off-site copy (Backblaze B2 / Google Drive) |
 
 ---
 
